@@ -1,0 +1,7 @@
+﻿split_rule_id,effective_period,position_or_type,basic_salary_rate,performance_base_rate
+SPLIT_01,2026-04,南京大学,1.0,0.0
+SPLIT_02,2026-04,BOSS,1.0,0.0
+SPLIT_03,2026-04,实习生,1.0,0.0
+SPLIT_04,2026-04,人力劳务,1.0,0.0
+SPLIT_05,2026-04,部门负责人,0.6,0.4
+SPLIT_06,2026-04,员工,0.7,0.3

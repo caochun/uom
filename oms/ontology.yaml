@@ -1,0 +1,1211 @@
+name: oms
+description: "薪资核算与人力成本结算领域。覆盖月度薪资批次、员工薪资档案、考勤绩效、社保公积金待扣/补扣、累计个税、公司顾问劳务费、工资条、成本归集、审批锁定与导出归档。"
+
+objects:
+  Person:
+    kind: entity
+    data_source: external_api
+    mutability: mutable
+    summary: "自然人"
+    description: "自然人身份主档。员工、顾问等只是自然人与公司建立的不同业务关系，不应重复保存姓名、证件和联系方式。"
+    properties:
+      person_id: {type: str, required: true, description: "自然人编号，系统唯一标识"}
+      name: {type: str, description: "姓名，仅展示和人工核对"}
+      id_type: {type: str, description: "证件类型"}
+      id_number: {type: str, description: "证件号码，敏感字段"}
+      phone: {type: str, description: "联系方式"}
+      bank_account: {type: str, description: "银行账号，敏感字段"}
+      status: {type: str, description: "状态: 有效/停用"}
+
+  Employee:
+    kind: entity
+    data_source: external_api
+    mutability: mutable
+    summary: "员工身份"
+    description: "自然人在员工体系中的身份记录。员工与公司的雇佣或任职关系应使用 EmploymentRelationship 判断；自然人姓名、证件和联系方式保存在 Person。"
+    properties:
+      employee_id: {type: str, required: true, description: "员工编号，系统唯一标识"}
+      person_id: {type: str, description: "自然人编号"}
+      employee_number: {type: str, description: "外部工号，可为空"}
+      department: {type: str, description: "部门"}
+      position: {type: str, description: "岗位或人员类型"}
+      employment_type: {type: str, description: "人员类型: 正式员工/实习生/人力劳务/BOSS/南京大学等"}
+      hire_date: {type: str, description: "入职日期"}
+      salary_start_date: {type: str, description: "起薪日期"}
+      termination_date: {type: str, description: "离职日期"}
+      status: {type: str, description: "在职状态: 在职/离职/停薪"}
+
+  EmploymentRelationship:
+    kind: entity
+    data_source: human_confirmed
+    mutability: append_only
+    summary: "员工任职关系"
+    description: "员工身份与公司在一段时间内存在的雇佣、任职或劳务关系。这是组织基础事实，薪资业务基于它取快照，但它本身不是发薪记录。"
+    properties:
+      employment_relationship_id: {type: str, required: true, description: "员工任职关系编号"}
+      employee_id: {type: str, description: "员工编号"}
+      person_id: {type: str, description: "自然人编号"}
+      effective_date: {type: str, description: "生效日期"}
+      expiry_date: {type: str, description: "失效日期，空表示当前有效"}
+      company_id: {type: str, description: "建立雇佣、任职或劳务关系的公司主体"}
+      internal_affiliation_id: {type: str, description: "该期间的内部归属，可为空"}
+      relationship_type: {type: str, description: "关系类型: 劳动合同/实习/劳务/任职/其他"}
+      relationship_reason: {type: str, description: "关系原因: 入职/公司调转/内部归属调整/导入初始化/人工更正"}
+      source: {type: str, description: "来源: Excel/HR系统/人工维护"}
+      notes: {type: str, description: "备注"}
+
+  Company:
+    kind: entity
+    data_source: human_confirmed
+    mutability: mutable
+    summary: "公司主体"
+    description: "参与薪资结算、社保公积金、个税申报和成本归集的法律或结算主体。"
+    properties:
+      company_id: {type: str, required: true, description: "公司编号"}
+      company_name: {type: str, description: "公司名称"}
+      payroll_enabled: {type: int, description: "是否参与薪资结算: 1=是 0=否"}
+      tax_entity_name: {type: str, description: "个税申报主体名称"}
+      social_security_account: {type: str, description: "社保账户或代码"}
+      housing_fund_account: {type: str, description: "公积金账户"}
+
+  InternalAffiliation:
+    kind: lookup_table
+    data_source: human_confirmed
+    mutability: mutable
+    summary: "内部归属"
+    description: "公司内部人员归属或分类，例如南大尚诚（人力）。不是独立结算公司。"
+    properties:
+      affiliation_id: {type: str, required: true, description: "内部归属编号"}
+      company_id: {type: str, description: "所属公司主体"}
+      name: {type: str, description: "内部归属名称"}
+      description: {type: str, description: "说明"}
+
+  SalaryProfile:
+    kind: entity
+    data_source: human_confirmed
+    mutability: append_only
+    summary: "薪资档案版本"
+    description: "员工薪资、社保基数、公积金基数等版本化档案。调薪或基数变化应新增版本，不覆盖历史。"
+    properties:
+      salary_profile_id: {type: str, required: true, description: "薪资档案版本编号"}
+      employee_id: {type: str, description: "员工编号"}
+      effective_date: {type: str, description: "生效日期"}
+      expiry_date: {type: str, description: "失效日期"}
+      roster_salary: {type: float, description: "花名册薪资"}
+      monthly_salary_base: {type: float, description: "月薪基数"}
+      social_security_base: {type: float, description: "社保缴费基数"}
+      housing_fund_base: {type: float, description: "公积金缴费基数"}
+      position_or_type: {type: str, description: "该薪资档案版本适用的岗位或人员类型，用于匹配薪资拆分规则"}
+
+  PayrollRun:
+    kind: entity
+    data_source: agent_generated
+    mutability: mutable
+    summary: "月度薪资批次"
+    description: "一次工资归属月的薪资核算批次。显式区分工资归属月、发放月、个税所属期和社保公积金缴费月。"
+    status_transitions:
+      draft: [calculating, cancelled]
+      calculating: [validated, draft, cancelled]
+      validated: [submitted, calculating, cancelled]
+      submitted: [locked, rejected]
+      rejected: [draft]
+      locked: [paid, correction_requested]
+      correction_requested: [draft]
+      paid: [archived]
+      archived: []
+      cancelled: []
+    constraints:
+      - when: {status: "locked"}
+        excluded_functions: [generate_payroll_lines, calculate_payroll, validate_payroll, import_attendance_adjustments, import_performance_grades]
+        reason: "薪资批次锁定后不能重新生成、导入或计算；需要走更正流程。"
+      - when: {status: "paid"}
+        excluded_functions: [generate_payroll_lines, calculate_payroll, validate_payroll, submit_payroll_for_approval, approve_payroll]
+        reason: "已发放批次只能归档或发起更正。"
+    properties:
+      payroll_run_id: {type: str, required: true, description: "薪资批次编号"}
+      payroll_period: {type: str, description: "工资归属月，格式 YYYY-MM"}
+      attendance_period: {type: str, description: "考勤月份，格式 YYYY-MM"}
+      performance_period: {type: str, description: "绩效月份，格式 YYYY-MM"}
+      pay_date: {type: str, description: "发放日期，格式 YYYY-MM-DD"}
+      payment_period: {type: str, description: "发放月，格式 YYYY-MM"}
+      contribution_period: {type: str, description: "默认社保公积金缴费月，格式 YYYY-MM"}
+      tax_period: {type: str, description: "个税所属期，格式 YYYY-MM"}
+      status: {type: str, description: "批次状态"}
+      source_workbook: {type: str, description: "来源 Excel 或导入文件"}
+      created_by: {type: str, description: "创建人"}
+      created_at: {type: str, description: "创建时间"}
+
+  PayrollInputSnapshot:
+    kind: entity
+    data_source: agent_generated
+    mutability: append_only
+    summary: "薪资输入快照"
+    description: "一次薪资批次在计算前冻结的输入事实集合。事实源可以变化，但已生成的快照不可变，后续计算应基于快照而不是当前主数据。"
+    properties:
+      snapshot_id: {type: str, required: true, description: "薪资输入快照编号"}
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      payroll_period: {type: str, description: "工资归属月，格式 YYYY-MM"}
+      snapshot_time: {type: str, description: "快照生成时间"}
+      source_note: {type: str, description: "快照来源说明"}
+      status: {type: str, description: "状态: built/validated/used/void"}
+
+  PayrollEmployeeSnapshot:
+    kind: entity
+    data_source: agent_generated
+    mutability: append_only
+    summary: "员工薪资输入快照"
+    description: "某次薪资输入快照中单个员工的冻结状态，包括员工姓名、归属、公司、内部归属、薪资档案和计算基数。"
+    properties:
+      employee_snapshot_id: {type: str, required: true, description: "员工薪资快照编号"}
+      snapshot_id: {type: str, description: "薪资输入快照编号"}
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      employee_id: {type: str, description: "来源员工编号"}
+      person_id: {type: str, description: "来源自然人编号"}
+      employee_name_snapshot: {type: str, description: "快照时员工姓名"}
+      employment_relationship_id: {type: str, description: "来源员工任职关系记录"}
+      payroll_company_id: {type: str, description: "来源薪资结算公司编号"}
+      payroll_company_name_snapshot: {type: str, description: "快照时薪资结算公司名称"}
+      internal_affiliation_id: {type: str, description: "来源内部归属编号"}
+      internal_affiliation_name_snapshot: {type: str, description: "快照时内部归属名称"}
+      salary_profile_id: {type: str, description: "来源薪资档案版本"}
+      position_snapshot: {type: str, description: "快照时岗位或人员类型"}
+      employment_status_snapshot: {type: str, description: "快照时在职状态"}
+      monthly_salary_base: {type: float, description: "月薪基数快照"}
+      monthly_salary_total: {type: float, description: "月薪资总额快照"}
+      social_security_base: {type: float, description: "社保基数快照"}
+      housing_fund_base: {type: float, description: "公积金基数快照"}
+
+  PayrollLine:
+    kind: entity
+    data_source: agent_generated
+    mutability: mutable
+    summary: "员工月度工资明细"
+    description: "员工在某个薪资批次中的工资核算行。扣除前应发工资不等于最终实发工资。"
+    properties:
+      payroll_line_id: {type: str, required: true, description: "工资明细编号"}
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      employee_snapshot_id: {type: str, description: "本行计算所依据的员工薪资输入快照"}
+      employee_id: {type: str, description: "员工编号"}
+      person_id: {type: str, description: "自然人编号"}
+      employee_name_snapshot: {type: str, description: "姓名快照"}
+      employment_relationship_id: {type: str, description: "本月使用的员工任职关系记录"}
+      payroll_company_id: {type: str, description: "薪资结算公司"}
+      payroll_company_name_snapshot: {type: str, description: "薪资结算公司名称快照"}
+      internal_affiliation_id: {type: str, description: "内部归属"}
+      internal_affiliation_name_snapshot: {type: str, description: "内部归属名称快照"}
+      salary_profile_id: {type: str, description: "使用的薪资档案版本"}
+      monthly_salary_base: {type: float, description: "月薪基数"}
+      monthly_salary_total: {type: float, description: "月薪资总额"}
+      position: {type: str, description: "本月岗位或人员类型"}
+      basic_salary: {type: float, description: "基本薪资"}
+      performance_salary_base: {type: float, description: "绩效薪资基数"}
+      performance_grade: {type: str, description: "绩效等级"}
+      performance_salary: {type: float, description: "绩效薪资"}
+      overtime_salary: {type: float, description: "加班薪资"}
+      attendance_adjustment: {type: float, description: "考勤补扣"}
+      other_adjustment: {type: float, description: "其他补扣"}
+      gross_pay_before_deduction: {type: float, description: "扣除前应发工资，Excel 中常叫实际应发薪资"}
+      personal_social_security: {type: float, description: "本次扣个人社保"}
+      personal_housing_fund: {type: float, description: "本次扣个人公积金"}
+      personal_income_tax: {type: float, description: "本月个税"}
+      net_pay: {type: float, description: "实发工资，允许为负数"}
+      employer_social_security: {type: float, description: "公司承担社保"}
+      employer_housing_fund: {type: float, description: "公司承担公积金"}
+      company_total_cost: {type: float, description: "公司总成本"}
+      exception_notes: {type: str, description: "异常说明，例如负数实发、补扣、多公司归属"}
+      applied_rule_ids: {type: str, description: "本行计算应用的规则编号列表，逗号分隔"}
+      calculation_trace: {type: str, description: "计算过程摘要，JSON 字符串或可读文本"}
+
+  PayrollItem:
+    kind: entity
+    data_source: agent_generated
+    mutability: append_only
+    summary: "工资项明细"
+    description: "员工月度工资明细中的单个工资项、扣款项、税务项或公司成本项。PayrollLine 保存汇总结果，PayrollItem 保存可扩展的分项计算过程。"
+    properties:
+      payroll_item_id: {type: str, required: true, description: "工资项编号"}
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      payroll_line_id: {type: str, description: "工资明细编号"}
+      employee_snapshot_id: {type: str, description: "员工薪资输入快照编号"}
+      employee_id: {type: str, description: "员工编号"}
+      person_id: {type: str, description: "自然人编号"}
+      employment_relationship_id: {type: str, description: "员工任职关系记录"}
+      item_code: {type: str, description: "工资项编码，例如 BASIC_SALARY/PERFORMANCE_SALARY/PERSONAL_TAX"}
+      item_name: {type: str, description: "工资项名称"}
+      item_category: {type: str, description: "工资项分类: earning/deduction/tax/employer_cost/info"}
+      amount: {type: float, description: "金额，扣款项和税项保存为正数，由 item_category 表示方向"}
+      currency: {type: str, description: "币种，默认 CNY"}
+      taxable: {type: int, description: "是否计入个税收入: 1=是 0=否"}
+      affects_net_pay: {type: int, description: "是否影响实发工资: 1=是 0=否"}
+      cost_company_id: {type: str, description: "成本产生公司，可为空"}
+      source_object_type: {type: str, description: "来源对象类型"}
+      source_object_id: {type: str, description: "来源对象编号"}
+      applied_rule_ids: {type: str, description: "本工资项计算应用的规则编号列表，逗号分隔"}
+      calculation_trace: {type: str, description: "工资项计算过程摘要，JSON 字符串或可读文本"}
+
+  AttendanceSummary:
+    kind: entity
+    data_source: external_api
+    mutability: mutable
+    summary: "月度考勤汇总"
+    description: "员工某月考勤结果。可先由 Excel 或钉钉导入，一期不要求完整排班。"
+    properties:
+      attendance_id: {type: str, required: true, description: "考勤汇总编号"}
+      employee_id: {type: str, description: "员工编号"}
+      attendance_period: {type: str, description: "考勤月份，格式 YYYY-MM"}
+      source: {type: str, description: "来源: Excel/钉钉/人工"}
+      absence_days: {type: float, description: "缺勤天数"}
+      sick_leave_days: {type: float, description: "病假天数"}
+      personal_leave_days: {type: float, description: "事假天数"}
+      absenteeism_days: {type: float, description: "旷工天数"}
+      attendance_adjustment: {type: float, description: "考勤补扣金额"}
+      notes: {type: str, description: "备注"}
+
+  PerformanceRecord:
+    kind: entity
+    data_source: external_api
+    mutability: mutable
+    summary: "月度绩效记录"
+    description: "员工某月绩效等级。工资归属月使用同月绩效，不延后到下月。"
+    properties:
+      performance_record_id: {type: str, required: true, description: "绩效记录编号"}
+      employee_id: {type: str, description: "员工编号"}
+      performance_period: {type: str, description: "绩效月份，格式 YYYY-MM"}
+      performance_grade: {type: str, description: "绩效等级: A/B/C/D/E/无等级"}
+      source: {type: str, description: "来源"}
+      notes: {type: str, description: "备注"}
+
+  PayrollAdjustment:
+    kind: entity
+    data_source: human_confirmed
+    mutability: append_only
+    summary: "工资补扣调整"
+    description: "考勤和其他补发扣记录。其他补扣必须保留原因。"
+    properties:
+      adjustment_id: {type: str, required: true, description: "补扣记录编号"}
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      employee_id: {type: str, description: "员工编号"}
+      adjustment_type: {type: str, description: "类型: 考勤/其他"}
+      amount: {type: float, description: "金额，补发为正，扣款为负"}
+      reason: {type: str, description: "原因"}
+      source: {type: str, description: "来源: 考勤结果/人工录入/导入"}
+
+  SocialInsuranceContribution:
+    kind: entity
+    data_source: human_confirmed
+    mutability: mutable
+    summary: "社保缴费记录"
+    description: "员工某缴费月在某公司产生的社保费用，记录公司承担和个人承担。"
+    properties:
+      contribution_id: {type: str, required: true, description: "社保记录编号"}
+      employee_id: {type: str, description: "员工编号"}
+      contribution_company_id: {type: str, description: "社保产生公司"}
+      contribution_period: {type: str, description: "缴费月，格式 YYYY-MM"}
+      contribution_base: {type: float, description: "缴费基数"}
+      employer_pension: {type: float, description: "单位养老"}
+      employer_injury: {type: float, description: "单位工伤"}
+      employer_unemployment: {type: float, description: "单位失业"}
+      employer_medical: {type: float, description: "单位医疗"}
+      employer_maternity: {type: float, description: "单位生育"}
+      employer_total: {type: float, description: "单位合计"}
+      personal_pension: {type: float, description: "个人养老"}
+      personal_unemployment: {type: float, description: "个人失业"}
+      personal_medical: {type: float, description: "个人医疗"}
+      personal_serious_illness: {type: float, description: "个人大病"}
+      personal_total: {type: float, description: "个人合计"}
+      status: {type: str, description: "状态: pending_deduction/deducted/waived/adjusted"}
+      applied_rule_ids: {type: str, description: "本记录计算应用的规则编号列表，逗号分隔"}
+      calculation_trace: {type: str, description: "计算过程摘要，JSON 字符串或可读文本"}
+
+  HousingFundContribution:
+    kind: entity
+    data_source: human_confirmed
+    mutability: mutable
+    summary: "公积金缴费记录"
+    description: "员工某缴费月在某公司产生的住房公积金费用，比例和取整规则按公司月份配置。"
+    properties:
+      housing_fund_id: {type: str, required: true, description: "公积金记录编号"}
+      employee_id: {type: str, description: "员工编号"}
+      contribution_company_id: {type: str, description: "公积金产生公司"}
+      contribution_period: {type: str, description: "缴费月，格式 YYYY-MM"}
+      contribution_base: {type: float, description: "公积金基数"}
+      employer_rate: {type: float, description: "单位比例"}
+      personal_rate: {type: float, description: "个人比例"}
+      employer_amount: {type: float, description: "单位公积金"}
+      personal_amount: {type: float, description: "个人公积金"}
+      total_amount: {type: float, description: "合计"}
+      rounding_rule: {type: str, description: "取整规则，例如 ROUND0"}
+      status: {type: str, description: "状态: pending_deduction/deducted/waived/adjusted"}
+      applied_rule_ids: {type: str, description: "本记录计算应用的规则编号列表，逗号分隔"}
+      calculation_trace: {type: str, description: "计算过程摘要，JSON 字符串或可读文本"}
+
+  ContributionDeduction:
+    kind: entity
+    data_source: agent_generated
+    mutability: mutable
+    summary: "社保公积金扣款台账"
+    description: "记录社保或公积金费用是否已在某个工资归属月扣除。用于入职补扣、离职停扣、调转补扣等场景。"
+    properties:
+      deduction_id: {type: str, required: true, description: "扣款台账编号"}
+      employee_id: {type: str, description: "员工编号"}
+      person_id: {type: str, description: "自然人编号"}
+      employee_snapshot_id: {type: str, description: "关联的员工薪资输入快照，可为空"}
+      employment_relationship_id: {type: str, description: "关联的员工任职关系记录，可为空"}
+      deduction_type: {type: str, description: "扣款类型: 社保/公积金"}
+      contribution_record_id: {type: str, description: "社保或公积金记录编号"}
+      contribution_company_id: {type: str, description: "费用产生公司"}
+      contribution_period: {type: str, description: "缴费月"}
+      personal_amount: {type: float, description: "个人承担金额"}
+      employer_amount: {type: float, description: "公司承担金额"}
+      deducted_payroll_run_id: {type: str, description: "实际扣在哪个薪资批次"}
+      deducted_payroll_period: {type: str, description: "实际扣在哪个工资归属月"}
+      deduction_reason: {type: str, description: "正常扣款/入职补扣/调转补扣/离职停扣/人工调整"}
+      status: {type: str, description: "pending/deducted/waived"}
+      applied_rule_ids: {type: str, description: "本台账应用的规则编号列表，逗号分隔"}
+      calculation_trace: {type: str, description: "扣款规则和金额来源摘要，JSON 字符串或可读文本"}
+
+  TaxLedger:
+    kind: entity
+    data_source: agent_generated
+    mutability: mutable
+    summary: "工资薪金个税累计台账"
+    description: "按员工和个税所属期保存累计预扣法所需数据。劳务报酬不进入该台账。"
+    properties:
+      tax_ledger_id: {type: str, required: true, description: "个税台账编号"}
+      employee_id: {type: str, description: "员工编号"}
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      tax_period: {type: str, description: "个税所属期，格式 YYYY-MM"}
+      tax_entity_company_id: {type: str, description: "个税申报主体"}
+      current_income: {type: float, description: "本期收入"}
+      cumulative_income: {type: float, description: "累计收入"}
+      cumulative_deductions: {type: float, description: "累计扣除"}
+      cumulative_basic_deduction: {type: float, description: "累计减除费用"}
+      cumulative_taxable_income: {type: float, description: "累计应纳税所得额"}
+      cumulative_tax_payable: {type: float, description: "累计应纳税额"}
+      previous_cumulative_tax_withheld: {type: float, description: "上月累计已扣个税"}
+      current_tax: {type: float, description: "本月个税"}
+      source: {type: str, description: "来源: 系统计算/上月Excel/个税系统导入"}
+      reconciliation_status: {type: str, description: "核对状态: 未核对/一致/有差异"}
+      applied_rule_ids: {type: str, description: "本台账计算应用的规则编号列表，逗号分隔"}
+      calculation_trace: {type: str, description: "累计预扣计算过程摘要，JSON 字符串或可读文本"}
+
+  ConsultantEngagement:
+    kind: entity
+    data_source: human_confirmed
+    mutability: append_only
+    summary: "顾问服务关系"
+    description: "自然人与公司建立的顾问或劳务服务关系。顾问不是自然人本身，也不是正式员工身份，不进入工资薪金累计个税。"
+    properties:
+      consultant_engagement_id: {type: str, required: true, description: "顾问服务关系编号"}
+      person_id: {type: str, description: "自然人编号"}
+      company_id: {type: str, description: "服务公司"}
+      service_start_date: {type: str, description: "服务开始日期"}
+      service_end_date: {type: str, description: "服务结束日期"}
+      engagement_type: {type: str, description: "服务类型: 顾问/劳务/其他"}
+      status: {type: str, description: "状态: 有效/停用"}
+
+  ConsultantFeeSettlement:
+    kind: entity
+    data_source: agent_generated
+    mutability: mutable
+    summary: "顾问劳务费结算"
+    description: "公司顾问的月度劳务费结算。按劳务报酬口径计税，可进入人力成本，但不进入正式员工工资薪金台账。"
+    properties:
+      settlement_id: {type: str, required: true, description: "顾问费结算编号"}
+      consultant_engagement_id: {type: str, description: "顾问服务关系编号"}
+      person_id: {type: str, description: "自然人编号"}
+      settlement_period: {type: str, description: "结算月份，格式 YYYY-MM"}
+      company_id: {type: str, description: "结算公司"}
+      gross_service_fee: {type: float, description: "含税劳务金额"}
+      net_of_tax_fee: {type: float, description: "不含税劳务金额"}
+      taxable_income: {type: float, description: "应纳税所得额"}
+      withheld_tax: {type: float, description: "代扣劳务个税"}
+      net_payment: {type: float, description: "实发金额"}
+      tax_method: {type: str, description: "税务口径: 劳务报酬"}
+      status: {type: str, description: "状态: draft/calculated/approved/paid"}
+
+  Payslip:
+    kind: entity
+    data_source: agent_generated
+    mutability: append_only
+    summary: "工资条"
+    description: "员工可见的本次发薪明细。必须展示本次实际发了什么、扣了什么，以及社保公积金扣款月份和原因。"
+    properties:
+      payslip_id: {type: str, required: true, description: "工资条编号"}
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      payroll_line_id: {type: str, description: "工资明细编号"}
+      employee_id: {type: str, description: "员工编号"}
+      gross_pay_before_deduction: {type: float, description: "实际应发工资"}
+      social_security_deduction: {type: float, description: "社保扣款合计"}
+      housing_fund_deduction: {type: float, description: "公积金扣款合计"}
+      personal_income_tax: {type: float, description: "个人所得税"}
+      net_pay: {type: float, description: "实发金额"}
+      deduction_periods: {type: str, description: "社保公积金扣款月份列表"}
+      deduction_company_ids: {type: str, description: "费用产生公司列表"}
+      deduction_note: {type: str, description: "扣款明细说明"}
+
+  CostEntry:
+    kind: entity
+    data_source: agent_generated
+    mutability: append_only
+    summary: "人力成本归集明细"
+    description: "按成本产生公司、月份和费用类型归集。成本口径关注费用在哪里产生，不等同于工资条口径。"
+    properties:
+      cost_entry_id: {type: str, required: true, description: "成本明细编号"}
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      employee_id: {type: str, description: "员工编号，可为空用于顾问或汇总项"}
+      person_id: {type: str, description: "自然人编号，可为空用于汇总项"}
+      consultant_engagement_id: {type: str, description: "顾问服务关系编号，可为空"}
+      employee_snapshot_id: {type: str, description: "员工薪资输入快照编号，可为空"}
+      employment_relationship_id: {type: str, description: "成本来源对应的员工任职关系记录，可为空"}
+      cost_company_id: {type: str, description: "成本产生公司"}
+      internal_affiliation_id: {type: str, description: "内部归属"}
+      cost_period: {type: str, description: "成本月份，格式 YYYY-MM"}
+      payroll_period: {type: str, description: "工资归属月"}
+      contribution_period: {type: str, description: "社保公积金缴费月"}
+      cost_type: {type: str, description: "费用类型: 扣除前应发工资/公司社保/公司公积金/个人社保/个人公积金/个税/顾问劳务费/其他费用"}
+      amount: {type: float, description: "金额"}
+      source_record_type: {type: str, description: "来源对象类型"}
+      source_record_id: {type: str, description: "来源记录编号"}
+
+  PayrollValidationResult:
+    kind: entity
+    data_source: agent_generated
+    mutability: append_only
+    summary: "薪资校验结果"
+    description: "薪资核算校验项结果。审批前必须处理阻断类错误。"
+    properties:
+      validation_id: {type: str, required: true, description: "校验结果编号"}
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      severity: {type: str, description: "严重程度: error/warning/info"}
+      rule_code: {type: str, description: "校验规则编码"}
+      target_type: {type: str, description: "校验对象类型"}
+      target_id: {type: str, description: "校验对象编号"}
+      message: {type: str, description: "校验消息"}
+      status: {type: str, description: "状态: open/resolved/accepted"}
+
+  ApprovalRecord:
+    kind: entity
+    data_source: human_confirmed
+    mutability: append_only
+    summary: "薪资审批记录"
+    description: "人事、财务、管理层等环节的审批记录。审批通过后批次进入锁定。"
+    properties:
+      approval_id: {type: str, required: true, description: "审批记录编号"}
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      step_name: {type: str, description: "审批环节"}
+      approver: {type: str, description: "审批人"}
+      decision: {type: str, description: "审批结论: 通过/驳回"}
+      comment: {type: str, description: "意见"}
+      approved_at: {type: str, description: "审批时间"}
+
+  PayrollExport:
+    kind: entity
+    data_source: agent_generated
+    mutability: append_only
+    summary: "薪资导出记录"
+    description: "工资表、分公司明细、工资条、银行代发表、成本汇总等导出记录。"
+    properties:
+      export_id: {type: str, required: true, description: "导出编号"}
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      export_type: {type: str, description: "导出类型: 总工资表/分公司明细/工资条/银行代发/成本汇总/个税核对"}
+      company_id: {type: str, description: "导出公司，可为空"}
+      file_path: {type: str, description: "导出文件路径"}
+      exported_by: {type: str, description: "导出人"}
+      exported_at: {type: str, description: "导出时间"}
+
+  SalarySplitRule:
+    kind: rule_table
+    data_source: human_confirmed
+    mutability: mutable
+    summary: "岗位薪资拆分规则"
+    description: "按岗位或人员类型配置基本薪资比例和绩效薪资基数比例。"
+    properties:
+      split_rule_id: {type: str, required: true, description: "拆分规则编号"}
+      effective_period: {type: str, description: "生效月份，格式 YYYY-MM"}
+      position_or_type: {type: str, description: "岗位或人员类型"}
+      basic_salary_rate: {type: float, description: "基本薪资比例"}
+      performance_base_rate: {type: float, description: "绩效薪资基数比例"}
+
+  PerformanceGradeRule:
+    kind: rule_table
+    data_source: human_confirmed
+    mutability: mutable
+    summary: "绩效等级系数规则"
+    description: "绩效等级到绩效系数的配置。"
+    properties:
+      grade_rule_id: {type: str, required: true, description: "绩效规则编号"}
+      effective_period: {type: str, description: "生效月份，格式 YYYY-MM"}
+      performance_grade: {type: str, description: "绩效等级"}
+      coefficient: {type: float, description: "绩效系数"}
+
+  SocialInsuranceRule:
+    kind: rule_table
+    data_source: human_confirmed
+    mutability: mutable
+    summary: "社保比例和上下限规则"
+    description: "按公司和月份配置社保比例、工伤比例、上下限和固定大病金额。"
+    properties:
+      social_rule_id: {type: str, required: true, description: "社保规则编号"}
+      company_id: {type: str, description: "公司编号"}
+      effective_period: {type: str, description: "生效月份，格式 YYYY-MM"}
+      lower_bound: {type: float, description: "缴费下限"}
+      upper_bound: {type: float, description: "缴费上限"}
+      employer_pension_rate: {type: float, description: "单位养老比例"}
+      employer_injury_rate: {type: float, description: "单位工伤比例"}
+      employer_unemployment_rate: {type: float, description: "单位失业比例"}
+      employer_medical_rate: {type: float, description: "单位医疗比例"}
+      employer_maternity_rate: {type: float, description: "单位生育比例"}
+      personal_pension_rate: {type: float, description: "个人养老比例"}
+      personal_unemployment_rate: {type: float, description: "个人失业比例"}
+      personal_medical_rate: {type: float, description: "个人医疗比例"}
+      personal_serious_illness_amount: {type: float, description: "个人大病固定金额"}
+
+  HousingFundRule:
+    kind: rule_table
+    data_source: human_confirmed
+    mutability: mutable
+    summary: "公积金比例规则"
+    description: "按公司和月份配置公积金单位比例、个人比例和取整规则。"
+    properties:
+      housing_rule_id: {type: str, required: true, description: "公积金规则编号"}
+      company_id: {type: str, description: "公司编号"}
+      effective_period: {type: str, description: "生效月份，格式 YYYY-MM"}
+      employer_rate: {type: float, description: "单位比例"}
+      personal_rate: {type: float, description: "个人比例"}
+      rounding_rule: {type: str, description: "取整规则，例如 ROUND0"}
+
+  TaxRateRule:
+    kind: rule_table
+    data_source: human_confirmed
+    mutability: mutable
+    summary: "累计预扣个税税率规则"
+    description: "居民工资薪金累计预扣法税率表。"
+    properties:
+      tax_rule_id: {type: str, required: true, description: "税率规则编号"}
+      lower_bound: {type: float, description: "累计应纳税所得额下限"}
+      upper_bound: {type: float, description: "累计应纳税所得额上限"}
+      tax_rate: {type: float, description: "税率"}
+      quick_deduction: {type: float, description: "速算扣除"}
+
+links:
+  employee_has_salary_profiles:
+    source: Employee
+    target: SalaryProfile
+    join: {source_key: employee_id, target_key: employee_id}
+    link_type: contains
+    cardinality: "1..n"
+    description: "员工拥有多个薪资档案版本。"
+
+  person_has_employee_identities:
+    source: Person
+    target: Employee
+    join: {source_key: person_id, target_key: person_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "一个自然人可以拥有员工身份记录。"
+
+  person_has_consultant_engagements:
+    source: Person
+    target: ConsultantEngagement
+    join: {source_key: person_id, target_key: person_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "一个自然人可以拥有多个顾问或劳务服务关系。"
+
+  employee_has_employment_relationships:
+    source: Employee
+    target: EmploymentRelationship
+    join: {source_key: employee_id, target_key: employee_id}
+    link_type: contains
+    cardinality: "1..n"
+    description: "员工拥有按生效期管理的雇佣、任职或劳务关系。"
+
+  company_has_internal_affiliations:
+    source: Company
+    target: InternalAffiliation
+    join: {source_key: company_id, target_key: company_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "公司包含多个内部归属。"
+
+  payroll_run_has_lines:
+    source: PayrollRun
+    target: PayrollLine
+    join: {source_key: payroll_run_id, target_key: payroll_run_id}
+    link_type: contains
+    cardinality: "1..n"
+    description: "薪资批次包含员工工资明细。"
+
+  payroll_run_has_items:
+    source: PayrollRun
+    target: PayrollItem
+    join: {source_key: payroll_run_id, target_key: payroll_run_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "薪资批次生成工资项明细。"
+
+  payroll_run_has_input_snapshots:
+    source: PayrollRun
+    target: PayrollInputSnapshot
+    join: {source_key: payroll_run_id, target_key: payroll_run_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "薪资批次可生成一个或多个输入快照，计算应基于已确认快照。"
+
+  payroll_snapshot_has_employee_snapshots:
+    source: PayrollInputSnapshot
+    target: PayrollEmployeeSnapshot
+    join: {source_key: snapshot_id, target_key: snapshot_id}
+    link_type: contains
+    cardinality: "1..n"
+    description: "薪资输入快照包含每个员工的冻结状态。"
+
+  payroll_run_has_adjustments:
+    source: PayrollRun
+    target: PayrollAdjustment
+    join: {source_key: payroll_run_id, target_key: payroll_run_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "薪资批次包含人工或考勤补扣。"
+
+  payroll_line_for_employee:
+    source: PayrollLine
+    target: Employee
+    join: {source_key: employee_id, target_key: employee_id}
+    link_type: enables
+    cardinality: "1..1"
+    description: "工资明细引用员工档案。"
+
+  payroll_line_uses_salary_profile:
+    source: PayrollLine
+    target: SalaryProfile
+    join: {source_key: salary_profile_id, target_key: salary_profile_id}
+    link_type: enables
+    cardinality: "1..1"
+    description: "工资明细引用当月有效薪资档案版本。"
+
+  payroll_line_uses_employment_relationship:
+    source: PayrollLine
+    target: EmploymentRelationship
+    join: {source_key: employment_relationship_id, target_key: employment_relationship_id}
+    link_type: enables
+    cardinality: "1..1"
+    description: "工资明细引用工资归属月有效的员工任职关系。"
+
+  payroll_line_uses_employee_snapshot:
+    source: PayrollLine
+    target: PayrollEmployeeSnapshot
+    join: {source_key: employee_snapshot_id, target_key: employee_snapshot_id}
+    link_type: enables
+    cardinality: "1..1"
+    description: "工资明细基于冻结后的员工薪资输入快照计算。"
+
+  payroll_line_has_items:
+    source: PayrollLine
+    target: PayrollItem
+    join: {source_key: payroll_line_id, target_key: payroll_line_id}
+    link_type: contains
+    cardinality: "1..n"
+    description: "工资明细由多个工资项汇总而成。"
+
+  payroll_run_has_validation_results:
+    source: PayrollRun
+    target: PayrollValidationResult
+    join: {source_key: payroll_run_id, target_key: payroll_run_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "薪资批次产生校验结果。"
+
+  payroll_run_has_approvals:
+    source: PayrollRun
+    target: ApprovalRecord
+    join: {source_key: payroll_run_id, target_key: payroll_run_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "薪资批次包含审批记录。"
+
+  payroll_line_has_payslip:
+    source: PayrollLine
+    target: Payslip
+    join: {source_key: payroll_line_id, target_key: payroll_line_id}
+    link_type: contains
+    cardinality: "0..1"
+    description: "工资明细生成员工工资条。"
+
+  payroll_run_has_cost_entries:
+    source: PayrollRun
+    target: CostEntry
+    join: {source_key: payroll_run_id, target_key: payroll_run_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "薪资批次生成成本归集明细。"
+
+  cost_entry_uses_employment_relationship:
+    source: CostEntry
+    target: EmploymentRelationship
+    join: {source_key: employment_relationship_id, target_key: employment_relationship_id}
+    link_type: enables
+    cardinality: "0..1"
+    description: "员工成本明细可追溯到费用期间对应的员工任职关系。"
+
+  cost_entry_uses_employee_snapshot:
+    source: CostEntry
+    target: PayrollEmployeeSnapshot
+    join: {source_key: employee_snapshot_id, target_key: employee_snapshot_id}
+    link_type: enables
+    cardinality: "0..1"
+    description: "员工成本明细可追溯到本次薪资计算使用的员工快照。"
+
+  contribution_deduction_for_employee:
+    source: ContributionDeduction
+    target: Employee
+    join: {source_key: employee_id, target_key: employee_id}
+    link_type: enables
+    cardinality: "1..1"
+    description: "待扣或已扣记录归属于员工。"
+
+  consultant_engagement_has_fee_settlements:
+    source: ConsultantEngagement
+    target: ConsultantFeeSettlement
+    join: {source_key: consultant_engagement_id, target_key: consultant_engagement_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "顾问服务关系拥有月度劳务费结算记录。"
+
+functions:
+  create_payroll_run:
+    summary: "创建月度薪资批次"
+    group: "薪资核算"
+    description: "创建薪资批次并显式设置工资归属月、发放日期、发放月、社保公积金缴费月和个税所属期。"
+    function_type: business
+    writes_to: [PayrollRun]
+    involves_objects: [PayrollRun]
+    params:
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      payroll_period: {type: str, description: "工资归属月，YYYY-MM"}
+      pay_date: {type: str, description: "发放日期，YYYY-MM-DD"}
+      payment_period: {type: str, description: "发放月，YYYY-MM"}
+      contribution_period: {type: str, description: "默认社保公积金缴费月，YYYY-MM"}
+      tax_period: {type: str, description: "个税所属期，YYYY-MM"}
+    effects:
+      - {object: PayrollRun, field: status, set_to: draft}
+
+  import_attendance_adjustments:
+    summary: "导入考勤补扣"
+    group: "输入导入"
+    description: "从 Excel 或考勤系统导入月度考勤结果和考勤补扣。"
+    function_type: business
+    writes_to: [AttendanceSummary, PayrollAdjustment]
+    involves_objects: [PayrollRun, Employee, AttendanceSummary, PayrollAdjustment]
+    params:
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      source_file: {type: str, default: "", description: "来源文件路径"}
+
+  import_performance_grades:
+    summary: "导入绩效等级"
+    group: "输入导入"
+    description: "导入工资归属月对应的员工绩效等级。"
+    function_type: business
+    writes_to: [PerformanceRecord]
+    involves_objects: [PayrollRun, Employee, PerformanceRecord]
+    params:
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      source_file: {type: str, default: "", description: "来源文件路径"}
+
+  resolve_employee_state_at:
+    summary: "解析员工时点薪资状态"
+    group: "快照解析"
+    description: "给定员工和日期，解析该时点有效的自然人、任职关系、薪资档案、公司、内部归属和计算基数。"
+    function_type: lookup
+    involves_objects: [Person, Employee, EmploymentRelationship, SalaryProfile, Company, InternalAffiliation]
+    params:
+      employee_id: {type: str, description: "员工编号"}
+      as_of_date: {type: str, description: "时点日期，YYYY-MM-DD"}
+
+  resolve_rules_at:
+    summary: "解析公司月份规则"
+    group: "快照解析"
+    description: "给定公司和月份，解析有效的薪资拆分、绩效、社保、公积金和个税规则。"
+    function_type: lookup
+    involves_objects: [Company, SalarySplitRule, PerformanceGradeRule, SocialInsuranceRule, HousingFundRule, TaxRateRule]
+    params:
+      company_id: {type: str, description: "公司编号"}
+      period: {type: str, description: "月份，YYYY-MM"}
+
+  build_payroll_snapshot:
+    summary: "构建薪资输入快照"
+    group: "薪资核算"
+    description: "按工资归属月冻结自然人、员工身份、任职关系、薪资档案、公司、内部归属、考勤绩效和规则输入，生成 PayrollInputSnapshot 与 PayrollEmployeeSnapshot。"
+    function_type: business
+    writes_to: [PayrollInputSnapshot, PayrollEmployeeSnapshot, PayrollValidationResult]
+    involves_objects: [PayrollRun, Person, Employee, EmploymentRelationship, SalaryProfile, Company, InternalAffiliation, AttendanceSummary, PerformanceRecord, SalarySplitRule, PerformanceGradeRule, SocialInsuranceRule, HousingFundRule, TaxRateRule, PayrollInputSnapshot, PayrollEmployeeSnapshot]
+    hint: "薪资计算必须基于快照；快照生成后，后续主数据变化不能影响已生成快照。"
+    params:
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+
+  generate_payroll_lines:
+    summary: "生成员工工资明细"
+    group: "薪资核算"
+    description: "基于 PayrollEmployeeSnapshot 生成 PayrollLine 草稿和 PayrollItem 应发项。"
+    function_type: business
+    depends_on: [build_payroll_snapshot]
+    writes_to: [PayrollLine, PayrollItem]
+    involves_objects: [PayrollRun, PayrollInputSnapshot, PayrollEmployeeSnapshot, PerformanceRecord, PayrollAdjustment, SalarySplitRule, PerformanceGradeRule, PayrollLine, PayrollItem]
+    params:
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+    effects:
+      - {object: PayrollRun, field: status, set_to: calculating}
+
+  calculate_contributions:
+    summary: "计算社保公积金并生成扣款台账"
+    group: "社保公积金"
+    description: "按公司、缴费月、基数、比例和入离职/调转规则计算社保公积金，并生成待扣或已扣台账。"
+    function_type: business
+    writes_to: [SocialInsuranceContribution, HousingFundContribution, ContributionDeduction]
+    involves_objects: [PayrollRun, Employee, SocialInsuranceRule, HousingFundRule, SocialInsuranceContribution, HousingFundContribution, ContributionDeduction]
+    hint: "社保公积金在哪家公司产生，就必须在发该公司薪资时扣除；当月不能扣的形成 pending 记录，后续发该公司薪资时补扣。"
+    params:
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      employee_id: {type: str, default: "", description: "员工编号，可为空表示计算整批预览"}
+
+  calculate_payroll:
+    summary: "计算薪资实发"
+    group: "薪资核算"
+    description: "基于薪资输入快照和规则表计算基本薪资、绩效薪资、扣除前应发工资、个人社保、个人公积金、累计预扣个税和实发工资。"
+    function_type: business
+    depends_on: [generate_payroll_lines]
+    writes_to: [PayrollLine, PayrollItem, TaxLedger]
+    involves_objects: [PayrollRun, PayrollInputSnapshot, PayrollEmployeeSnapshot, PayrollLine, PayrollItem, SalarySplitRule, PerformanceGradeRule, SocialInsuranceRule, HousingFundRule, TaxLedger, TaxRateRule]
+    hint: "扣除前应发工资不是最终实发；社保和公积金应按规则表、基数、上下限和取整规则现场计算；个税按累计预扣法和税率表计算；计算不得直接读取当前主数据，应读取本次 PayrollInputSnapshot。"
+    params:
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      employee_id: {type: str, default: "", description: "员工编号，可为空表示计算整批预览"}
+
+  calculate_consultant_fees:
+    summary: "计算顾问劳务费"
+    group: "顾问结算"
+    description: "按顾问劳务报酬口径计算公司顾问月度劳务费，不写入工资薪金累计个税台账。"
+    function_type: business
+    writes_to: [ConsultantFeeSettlement]
+    involves_objects: [Person, ConsultantEngagement, ConsultantFeeSettlement]
+    params:
+      settlement_period: {type: str, description: "结算月份，YYYY-MM"}
+      company_id: {type: str, default: "", description: "结算公司，可为空表示全部"}
+
+  generate_payslips:
+    summary: "生成工资条"
+    group: "输出生成"
+    description: "生成员工工资条，包含社保公积金扣款月份、产生公司、扣款类型和备注。"
+    function_type: business
+    depends_on: [calculate_payroll]
+    writes_to: [Payslip]
+    involves_objects: [PayrollRun, PayrollLine, PayrollItem, ContributionDeduction, Payslip]
+    params:
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+
+  generate_cost_entries:
+    summary: "生成成本归集明细"
+    group: "成本归集"
+    description: "按成本产生公司、内部归属、月份和费用类型生成成本明细，包含正式员工和顾问劳务费。"
+    function_type: business
+    depends_on: [calculate_payroll]
+    writes_to: [CostEntry]
+    involves_objects: [PayrollRun, PayrollLine, PayrollItem, SocialInsuranceContribution, HousingFundContribution, ConsultantFeeSettlement, CostEntry]
+    hint: "工资条关注本次员工实际发扣；成本汇总关注费用在哪家公司产生。员工调公司时必须能按公司拆分。"
+    params:
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+
+  validate_payroll:
+    summary: "校验薪资批次"
+    group: "校验审批"
+    description: "执行薪资快照、员工编号、重复员工、有效薪资档案、社保公积金扣款公司、个税所属期是否等于发放月、工资条实发、成本合计等校验。"
+    function_type: business
+    depends_on: [calculate_payroll, generate_payslips, generate_cost_entries]
+    writes_to: [PayrollValidationResult]
+    involves_objects: [PayrollRun, PayrollInputSnapshot, PayrollEmployeeSnapshot, PayrollLine, PayrollItem, Payslip, CostEntry, ContributionDeduction, TaxLedger, PayrollValidationResult]
+    params:
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+    effects:
+      - {object: PayrollRun, field: status, set_to: validated}
+
+  submit_payroll_for_approval:
+    summary: "提交薪资审批"
+    group: "校验审批"
+    description: "校验完成后提交人事、财务和管理层审批。"
+    function_type: business
+    preconditions:
+      - {object: PayrollRun, field: status, operator: eq, value: validated}
+    writes_to: [ApprovalRecord]
+    involves_objects: [PayrollRun, PayrollValidationResult, ApprovalRecord]
+    params:
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+    effects:
+      - {object: PayrollRun, field: status, set_to: submitted}
+
+  approve_payroll:
+    summary: "审批并锁定薪资批次"
+    group: "校验审批"
+    description: "记录审批结论。全部必要审批通过后将薪资批次锁定。"
+    function_type: business
+    preconditions:
+      - {object: PayrollRun, field: status, operator: eq, value: submitted}
+    writes_to: [ApprovalRecord]
+    involves_objects: [PayrollRun, ApprovalRecord]
+    params:
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      approver: {type: str, description: "审批人"}
+      decision: {type: str, description: "审批结论: 通过/驳回"}
+      comment: {type: str, default: "", description: "审批意见"}
+    effects:
+      - {object: PayrollRun, field: status, set_to: locked}
+
+  export_payroll_outputs:
+    summary: "导出薪资结果"
+    group: "输出生成"
+    description: "导出总工资表、分公司工资明细、工资条、银行代发、个税核对和成本汇总等文件。"
+    function_type: business
+    preconditions:
+      - {object: PayrollRun, field: status, operator: eq, value: locked}
+    writes_to: [PayrollExport]
+    involves_objects: [PayrollRun, PayrollLine, PayrollItem, Payslip, CostEntry, PayrollExport]
+    params:
+      payroll_run_id: {type: str, description: "薪资批次编号"}
+      export_type: {type: str, description: "导出类型"}
+      company_id: {type: str, default: "", description: "公司编号，可为空"}
+
+rules:
+  payroll_salary_split_formula:
+    description: "按岗位或人员类型将月薪资总额拆分为基本薪资和绩效薪资基数。"
+    rule_type: formula
+    applies_to: [PayrollLine, PayrollItem]
+    result_field: "basic_salary, performance_salary_base"
+    status: implemented
+    source: "V3.0薪资系统需求分析 薪资拆分/工资明细规则"
+    formula: "basic_salary = monthly_salary_total * basic_salary_rate; performance_salary_base = monthly_salary_total * performance_base_rate"
+
+  payroll_performance_salary_formula:
+    description: "按绩效等级系数计算绩效薪资。"
+    rule_type: formula
+    applies_to: [PayrollLine, PayrollItem]
+    result_field: performance_salary
+    status: implemented
+    source: "V3.0薪资系统需求分析 绩效工资规则"
+    formula: "performance_salary = performance_salary_base * performance_coefficient"
+
+  payroll_gross_before_deduction_formula:
+    description: "计算扣除前应发工资，也就是 Excel 中常见的实际应发薪资口径。"
+    rule_type: formula
+    applies_to: [PayrollLine, PayrollItem]
+    result_field: gross_pay_before_deduction
+    status: implemented
+    source: "V3.0薪资系统需求分析 工资明细规则"
+    formula: "gross_pay_before_deduction = basic_salary + performance_salary + attendance_adjustment + other_adjustment"
+
+  social_security_base_bounds:
+    description: "社保缴费基数按公司规则设置上下限，低于下限按下限，高于上限按上限。"
+    rule_type: formula
+    applies_to: [SocialInsuranceContribution, PayrollLine]
+    result_field: contribution_base
+    status: implemented
+    source: "V3.0薪资系统需求分析 社保规则"
+    formula: "contribution_base = min(max(raw_social_security_base, lower_bound), upper_bound)"
+
+  social_security_employer_formula:
+    description: "单位社保按缴费基数和单位养老、工伤、失业、医疗、生育比例计算。"
+    rule_type: formula
+    applies_to: [SocialInsuranceContribution, PayrollLine]
+    result_field: employer_social_security
+    status: implemented
+    source: "V3.0薪资系统需求分析 社保规则"
+    formula: "employer_total = pension + injury + unemployment + medical + maternity"
+
+  social_security_personal_formula:
+    description: "个人社保按缴费基数和个人养老、失业、医疗比例，加个人大病固定金额计算。"
+    rule_type: formula
+    applies_to: [SocialInsuranceContribution, ContributionDeduction, PayrollLine]
+    result_field: personal_social_security
+    status: implemented
+    source: "V3.0薪资系统需求分析 社保规则"
+    formula: "personal_total = pension + unemployment + medical + serious_illness"
+
+  housing_fund_formula:
+    description: "住房公积金按公司规则的缴费基数、单位比例和个人比例计算。"
+    rule_type: formula
+    applies_to: [HousingFundContribution, ContributionDeduction, PayrollLine]
+    result_field: "employer_housing_fund, personal_housing_fund"
+    status: implemented
+    source: "V3.0薪资系统需求分析 公积金规则"
+    formula: "amount = housing_fund_base * rate"
+
+  housing_fund_round0:
+    description: "公积金规则为 ROUND0 时，单位和个人公积金金额按整数取整。"
+    rule_type: formula
+    applies_to: [HousingFundContribution, PayrollLine]
+    result_field: "employer_amount, personal_amount"
+    status: implemented
+    source: "V3.0薪资系统需求分析 公积金规则"
+    formula: "rounded_amount = round(raw_amount)"
+
+  contribution_normal_month:
+    description: "正常月份的社保公积金费用在当前薪资批次扣除，扣款公司为费用产生公司。"
+    rule_type: workflow
+    applies_to: [ContributionDeduction]
+    result_field: deduction_reason
+    status: implemented
+    source: "V3.0薪资系统需求分析 社保公积金扣款台账"
+    formula: "deduction_reason = 正常扣款; status = deducted"
+
+  contribution_onboarding_two_months:
+    description: "员工入职首次发薪可能需要扣当月和补扣上月两个月社保公积金。"
+    rule_type: workflow
+    applies_to: [ContributionDeduction]
+    result_field: deduction_reason
+    status: planned
+    source: "V3.0薪资系统需求分析 社保公积金复杂扣款场景"
+    formula: "根据入职日期、起薪日期、参保起始月和首个发薪批次生成一条或多条扣款台账"
+
+  contribution_termination_stop:
+    description: "离职人员可能不再扣发薪月对应的社保公积金，需要按停缴状态判断。"
+    rule_type: workflow
+    applies_to: [ContributionDeduction]
+    result_field: status
+    status: planned
+    source: "V3.0薪资系统需求分析 社保公积金复杂扣款场景"
+    formula: "根据离职日期、停缴月和缴费状态决定 deducted/waived/pending"
+
+  contribution_transfer_pending:
+    description: "员工公司调转时，社保公积金费用可能产生于原公司，并在后续薪资批次补扣。"
+    rule_type: workflow
+    applies_to: [ContributionDeduction, CostEntry]
+    result_field: "contribution_company_id, deducted_payroll_run_id"
+    status: planned
+    source: "V3.0薪资系统需求分析 社保公积金复杂扣款场景"
+    formula: "费用产生公司和实际扣款批次分离，用 pending 台账跨月追踪"
+
+  tax_cumulative_withholding:
+    description: "工资薪金个税按累计预扣法计算，本月个税等于累计应纳税额减去上月累计已扣税。"
+    rule_type: formula
+    applies_to: [TaxLedger, PayrollLine]
+    result_field: personal_income_tax
+    status: implemented
+    source: "V3.0薪资系统需求分析 个税规则"
+    formula: "current_tax = max(cumulative_taxable_income * tax_rate - quick_deduction - previous_cumulative_tax_withheld, 0)"
+
+  net_pay_formula:
+    description: "实发工资按扣除前应发工资减个人社保、个人公积金和本月个税计算。"
+    rule_type: formula
+    applies_to: [PayrollLine, PayrollItem, Payslip]
+    result_field: net_pay
+    status: implemented
+    source: "V3.0薪资系统需求分析 工资明细/工资条规则"
+    formula: "net_pay = gross_pay_before_deduction - personal_social_security - personal_housing_fund - personal_income_tax"
+
+  company_total_cost_formula:
+    description: "公司总成本按扣除前应发工资加单位社保和单位公积金计算。"
+    rule_type: formula
+    applies_to: [PayrollLine, PayrollItem, CostEntry]
+    result_field: company_total_cost
+    status: implemented
+    source: "V3.0薪资系统需求分析 成本归集规则"
+    formula: "company_total_cost = gross_pay_before_deduction + employer_social_security + employer_housing_fund"
+
+  negative_net_pay_warning:
+    description: "实发工资为负数时允许保存，但必须提示复核。"
+    rule_type: judgment
+    applies_to: [PayrollLine]
+    result_field: exception_notes
+    status: implemented
+    source: "V3.0薪资系统需求分析 第13节"
+    conditions:
+      - {field: net_pay, operator: lt, value: 0, result: "实发工资为负数，请确认扣款是否正确"}
+
+  consultant_not_salary_tax:
+    description: "顾问劳务费不进入工资薪金累计个税台账。"
+    rule_type: judgment
+    applies_to: [ConsultantFeeSettlement]
+    result_field: tax_method
+    status: modeled
+    source: "V3.0薪资系统需求分析 第14节"
+    conditions:
+      - {field: tax_method, operator: eq, value: "劳务报酬", result: "不进入工资薪金累计个税"}
+
+  payslip_net_pay_reconciliation:
+    description: "工资条展示的实发金额必须与工资明细行实发金额一致。"
+    rule_type: validation
+    applies_to: [Payslip, PayrollLine, PayrollValidationResult]
+    result_field: validation_id
+    status: planned
+    source: "V3.0薪资系统需求分析 工资条/校验规则"
+    formula: "Payslip.net_pay == PayrollLine.net_pay"
+
+  cost_company_split:
+    description: "成本按费用产生公司、内部归属、成本月份和费用类型归集，不简单等同于发薪公司。"
+    rule_type: aggregation
+    applies_to: [CostEntry]
+    result_field: cost_company_id
+    status: modeled
+    source: "V3.0薪资系统需求分析 成本归集规则"
+    formula: "按 source_record_type/source_record_id 追溯工资、社保、公积金、顾问费等成本来源"
+
+workflows:
+  monthly_payroll_settlement:
+    description: "月度薪资核算闭环，从创建薪资批次到审批锁定、导出发放和归档。"
+    trigger: "每月发放上月薪资，或用户发起某工资归属月核算"
+    involves_objects: [PayrollRun, PayrollInputSnapshot, PayrollEmployeeSnapshot, Person, Employee, EmploymentRelationship, SalaryProfile, PayrollLine, ContributionDeduction, TaxLedger, Payslip, CostEntry, ConsultantEngagement, ConsultantFeeSettlement, ApprovalRecord, PayrollExport]
+    steps:
+      - name: 创建薪资批次
+        function: create_payroll_run
+        description: "设置工资归属月、发放日期、发放月、社保公积金缴费月和个税所属期。"
+        next: 导入考勤补扣
+      - name: 导入考勤补扣
+        function: import_attendance_adjustments
+        description: "导入考勤汇总和考勤补扣。"
+        next: 导入绩效等级
+      - name: 导入绩效等级
+        function: import_performance_grades
+        description: "导入工资归属月同月绩效。"
+        next: 构建薪资快照
+      - name: 构建薪资快照
+        function: build_payroll_snapshot
+        description: "按工资归属月冻结员工归属、薪资档案、规则、考勤绩效等输入事实。"
+        next: 生成工资明细
+      - name: 生成工资明细
+        function: generate_payroll_lines
+        description: "基于员工薪资输入快照生成明细。"
+        next: 计算社保公积金
+      - name: 计算社保公积金
+        function: calculate_contributions
+        description: "计算缴费记录和待扣/补扣台账。"
+        next: 计算薪资实发
+      - name: 计算薪资实发
+        function: calculate_payroll
+        description: "基于薪资快照计算扣除前应发、个税和实发工资。"
+        next: 计算顾问劳务费
+      - name: 计算顾问劳务费
+        function: calculate_consultant_fees
+        description: "处理公司顾问劳务费，不进入工资薪金累计个税。"
+        next: 生成工资条
+      - name: 生成工资条
+        function: generate_payslips
+        description: "生成员工工资条和扣款明细说明。"
+        next: 生成成本明细
+      - name: 生成成本明细
+        function: generate_cost_entries
+        description: "按成本产生公司归集正式员工和顾问成本。"
+        next: 校验薪资批次
+      - name: 校验薪资批次
+        function: validate_payroll
+        description: "校验数据、计算、工资条和成本汇总一致性。"
+        next: 提交审批
+      - name: 提交审批
+        function: submit_payroll_for_approval
+        description: "提交人事、财务、管理层审批。"
+        next: 审批锁定
+      - name: 审批锁定
+        function: approve_payroll
+        description: "审批通过后锁定，锁定后不得直接修改。"
+        next: 导出结果
+      - name: 导出结果
+        function: export_payroll_outputs
+        description: "导出工资表、工资条、发放表、成本汇总等。"

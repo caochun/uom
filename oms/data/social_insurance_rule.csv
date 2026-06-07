@@ -1,0 +1,4 @@
+﻿social_rule_id,company_id,effective_period,lower_bound,upper_bound,employer_pension_rate,employer_injury_rate,employer_unemployment_rate,employer_medical_rate,employer_maternity_rate,personal_pension_rate,personal_unemployment_rate,personal_medical_rate,personal_serious_illness_amount
+SOC_RULE_COMP_SCNY,COMP_SCNY,2026-05,4952,24762,0.16,0.0032,0.005,0.07,0.008,0.08,0.005,0.02,10
+SOC_RULE_COMP_NDSC,COMP_NDSC,2026-05,4952,24762,0.16,0.0055,0.005,0.07,0.008,0.08,0.005,0.02,10
+SOC_RULE_COMP_JS,COMP_JS,2026-05,4952,24762,0.16,0.002,0.005,0.07,0.008,0.08,0.005,0.02,10

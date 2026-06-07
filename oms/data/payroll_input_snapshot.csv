@@ -1,0 +1,2 @@
+﻿snapshot_id,payroll_run_id,payroll_period,snapshot_time,source_note,status
+SNAPSHOT_202604,PAYROLL_202604,2026-04,2026-06-07T15:40:17,由 mock workbook 抽取生成的薪资输入快照,built

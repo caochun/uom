@@ -1,0 +1,2 @@
+﻿consultant_engagement_id,person_id,company_id,service_start_date,service_end_date,engagement_type,status
+CENG001,PER_CONS001,COMP_SCNY,2023-07-01,,顾问,有效

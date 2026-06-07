@@ -1,0 +1,1 @@
+﻿payroll_item_id,payroll_run_id,payroll_line_id,employee_snapshot_id,employee_id,person_id,employment_relationship_id,item_code,item_name,item_category,amount,currency,taxable,affects_net_pay,cost_company_id,source_object_type,source_object_id,applied_rule_ids,calculation_trace

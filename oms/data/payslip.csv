@@ -1,0 +1,1 @@
+﻿payslip_id,payroll_run_id,payroll_line_id,employee_id,gross_pay_before_deduction,social_security_deduction,housing_fund_deduction,personal_income_tax,net_pay,deduction_periods,deduction_company_ids,deduction_note

@@ -1,0 +1,4 @@
+﻿housing_rule_id,company_id,effective_period,employer_rate,personal_rate,rounding_rule
+HF_RULE_COMP_SCNY,COMP_SCNY,2026-05,0.1,0.1,ROUND0
+HF_RULE_COMP_NDSC,COMP_NDSC,2026-05,0.1,0.1,ROUND0
+HF_RULE_COMP_JS,COMP_JS,2026-05,0.12,0.12,ROUND0

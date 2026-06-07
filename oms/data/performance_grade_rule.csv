@@ -1,0 +1,7 @@
+﻿grade_rule_id,effective_period,performance_grade,coefficient
+PERF_RULE_01,2026-04,A,1.5
+PERF_RULE_02,2026-04,B,1.2
+PERF_RULE_03,2026-04,C,1.0
+PERF_RULE_04,2026-04,D,0.8
+PERF_RULE_05,2026-04,E,0.6
+PERF_RULE_06,2026-04,无等级,0.0

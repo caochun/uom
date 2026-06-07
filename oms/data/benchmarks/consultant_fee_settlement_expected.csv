@@ -1,0 +1,2 @@
+﻿settlement_id,consultant_engagement_id,person_id,settlement_period,company_id,gross_service_fee,net_of_tax_fee,taxable_income,withheld_tax,net_payment,tax_method,status
+CFS_202604_CENG001,CENG001,PER_CONS001,2026-04,COMP_SCNY,8000.0,7920.79,6336.63,1267.33,6732.67,劳务报酬,calculated
