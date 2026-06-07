@@ -3,73 +3,49 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>OMS Domain Runtime</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260607-1634">
+    <title>Fox OMS</title>
+    <link rel="stylesheet" href="/static/styles.css?v=oms-shell-1">
   </head>
   <body>
-    <header class="topbar">
-      <div>
-        <h1>OMS Domain Runtime</h1>
-        <p id="domainDescription">本体驱动的业务运行时</p>
+    <aside class="sidebar">
+      <div class="brand">
+        <strong>Fox OMS</strong>
+        <span>企业资源管理</span>
       </div>
-      <div class="status">
-        <span class="dot"></span>
-        Context Aware
-      </div>
-    </header>
+      <nav id="moduleNav" class="module-nav"></nav>
+    </aside>
 
-    <main class="shell">
-      <section class="domain-board">
-        <div class="section-head">
-          <div>
-            <h2>业务领域总览</h2>
-            <p>从业务域、对象关系和能力入口进入系统，而不是从聊天框进入。</p>
-          </div>
-          <button id="refreshBtn" class="icon-button" title="刷新">↻</button>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1 id="pageTitle">总览</h1>
+          <p id="pageSubtitle">正在读取企业资源状态...</p>
         </div>
-
-        <div id="healthGrid" class="health-grid"></div>
-        <div id="flowGrid" class="flow-grid"></div>
-      </section>
-
-      <section class="object-stage">
-        <div class="section-head">
-          <div>
-            <h2 id="currentTitle">当前业务对象</h2>
-            <p id="currentSubtitle">选择一个业务域或对象查看运行时上下文。</p>
-          </div>
-          <button id="explainBtn" class="primary-button">解释上下文</button>
+        <div class="global-search">
+          <input id="searchInput" placeholder="搜索员工编号、姓名或公司">
+          <button id="searchBtn">搜索</button>
         </div>
+      </header>
 
-        <div id="objectDetail" class="object-detail"></div>
-
-        <div class="explain-box">
-          <div class="box-title">嵌入式 Agent 说明</div>
-          <div id="explanation" class="markdown-body">运行时会根据当前业务对象和本体定义生成说明、入口和动作。</div>
-        </div>
-      </section>
-
-      <aside class="context-panel">
-        <h3>运行时上下文</h3>
-        <p id="contextNarrative" class="context-copy">加载中...</p>
-
-        <div class="context-section">
-          <div class="box-title">本体关系入口</div>
-          <div id="relatedEntries" class="entry-list"></div>
-        </div>
-
-        <div class="context-section">
-          <div class="box-title">能力入口</div>
-          <div id="capabilityEntries" class="entry-list"></div>
-        </div>
-
-        <div class="context-section">
-          <div class="box-title">动作结果</div>
-          <div id="actionResult" class="markdown-body">选择能力后，业务结果会出现在这里。</div>
-        </div>
-      </aside>
+      <section id="content" class="content"></section>
     </main>
 
-    <script src="/static/app.js?v=20260607-1634"></script>
+    <aside class="agent-panel">
+      <div class="panel-head">
+        <span>智能层</span>
+        <strong id="agentTitle">系统态势</strong>
+      </div>
+      <p id="agentSummary">智能层会根据当前资源和本体上下文提供摘要、建议和依据。</p>
+      <div class="panel-section">
+        <div class="panel-label">下一步</div>
+        <ul id="agentActions"></ul>
+      </div>
+      <div class="panel-section">
+        <div class="panel-label">依据</div>
+        <div id="agentEvidence" class="evidence-list"></div>
+      </div>
+    </aside>
+
+    <script src="/static/app.js?v=oms-shell-1"></script>
   </body>
 </html>

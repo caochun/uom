@@ -1,13 +1,7 @@
 const state = {
-  objectType: "PayrollRun",
-  objectId: "PAYROLL_202604",
+  app: null,
+  module: "home",
   selectedEmployee: "EMP074",
-  context: null,
-};
-
-const money = (value) => {
-  const num = Number(value || 0);
-  return num.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 async function getJson(url) {
@@ -16,384 +10,573 @@ async function getJson(url) {
   return res.json();
 }
 
-async function loadDomain() {
-  const data = await getJson("/api/domain");
-  document.querySelector("#domainDescription").textContent = data.domain.description;
-  renderHealth(data.health);
-  renderFlows(data.flows);
-  if (data.spotlight) {
-    await selectObject(data.spotlight.object_type, data.spotlight.object_id);
+async function init() {
+  state.app = await getJson("/api/app");
+  renderNav(state.app.modules);
+  renderHome(state.app);
+}
+
+function renderNav(modules) {
+  const nav = document.querySelector("#moduleNav");
+  nav.innerHTML = modules.map((module) => `
+    <button data-module="${escapeHtml(module.id)}">${escapeHtml(module.label)}</button>
+  `).join("");
+  nav.querySelectorAll("[data-module]").forEach((button) => {
+    button.addEventListener("click", () => openModule(button.dataset.module));
+  });
+  markActiveNav();
+}
+
+async function openModule(moduleId) {
+  state.module = moduleId;
+  markActiveNav();
+  if (moduleId === "home") return renderHome(state.app || await getJson("/api/app"));
+  if (moduleId === "people") return renderPeople();
+  if (moduleId === "payroll") return renderPayroll();
+  if (moduleId === "ontology") return renderOntology();
+}
+
+function markActiveNav() {
+  document.querySelectorAll("#moduleNav button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.module === state.module);
+  });
+}
+
+function setTitle(title, subtitle) {
+  document.querySelector("#pageTitle").textContent = title;
+  document.querySelector("#pageSubtitle").textContent = subtitle || "";
+}
+
+function setAgent(agent) {
+  document.querySelector("#agentTitle").textContent = agent.title || "智能层";
+  document.querySelector("#agentSummary").innerHTML = renderMarkdown(agent.summary || "");
+  document.querySelector("#agentActions").innerHTML = (agent.next_actions || [])
+    .map((item) => {
+      const action = normalizeAgentAction(item);
+      if (!action.enabled || !action.kind) {
+        return `<li><span class="agent-action disabled" title="${escapeHtml(action.disabled_reason || "")}">${escapeHtml(action.label)}</span></li>`;
+      }
+      return `<li><button class="agent-action" title="${escapeHtml(action.kind)}" data-action="${escapeHtml(JSON.stringify(action))}">${escapeHtml(action.label)}</button></li>`;
+    })
+    .join("");
+  document.querySelectorAll(".agent-action").forEach((button) => {
+    button.addEventListener("click", () => runAgentAction(parseAction(button.dataset.action)));
+  });
+  document.querySelector("#agentEvidence").innerHTML = (agent.evidence || [])
+    .map((item) => `<span>${escapeHtml(item)}</span>`)
+    .join("");
+}
+
+function normalizeAgentAction(item) {
+  if (item && typeof item === "object") {
+    return {
+      label: item.label || item.title || "打开",
+      kind: item.kind || "",
+      target: item.target || {},
+      params: item.params || {},
+      enabled: item.enabled !== false,
+      requires_confirmation: item.requires_confirmation === true,
+      disabled_reason: item.disabled_reason || "",
+      id: item.id || "",
+      side_effect: item.side_effect || "",
+    };
+  }
+  return { label: String(item || ""), kind: "", target: {}, enabled: false };
+}
+
+function runAgentAction(action) {
+  if (!action || action.enabled === false) return;
+  if (action.requires_confirmation && !window.confirm(`确认执行：${action.label}？`)) return;
+  if (action.kind === "navigate") {
+    navigateAction(action.target || {});
+  } else if (action.kind === "api_call") {
+    apiAction(action.target || {});
+  } else if (action.kind === "focus") {
+    focusAction(action.target || {});
+  } else if (action.kind === "ontology_function") {
+    ontologyFunctionAction(action);
   }
 }
 
-function renderHealth(items) {
-  const grid = document.querySelector("#healthGrid");
-  grid.innerHTML = "";
-  items.forEach((item) => {
-    const button = document.createElement("button");
-    button.className = "health-card";
-    button.innerHTML = `
-      <span>${escapeHtml(item.label)}</span>
-      <strong>${escapeHtml(item.value)}</strong>
-      <p>${escapeHtml(item.detail)}</p>
-    `;
-    button.addEventListener("click", () => selectObject(item.object_type, item.object_id));
-    grid.appendChild(button);
+function parseAction(raw) {
+  try {
+    const action = JSON.parse(raw || "{}");
+    return action && typeof action === "object" ? action : {};
+  } catch {
+    return {};
+  }
+}
+
+function navigateAction(target) {
+  if (target.module === "home") return openModule("home");
+  if (target.module === "people") return openModule("people");
+  if (target.module === "payroll") return openModule("payroll");
+  if (target.module === "ontology") return renderObject(target.object_type || "Employee", target.filters || {});
+  if (target.module === "employee") return renderEmployee(target.employee_id || state.selectedEmployee);
+}
+
+function apiAction(target) {
+  if (target.endpoint === "/api/explain/payroll") {
+    const button = document.querySelector("#explainPayrollBtn");
+    if (button) explainPayroll(state.selectedEmployee, button);
+    else renderEmployee(state.selectedEmployee).then(() => {
+      const nextButton = document.querySelector("#explainPayrollBtn");
+      if (nextButton) explainPayroll(state.selectedEmployee, nextButton);
+    });
+  }
+}
+
+function focusAction(target) {
+  if (target.id === "search") {
+    openModule("people");
+    setTimeout(() => document.querySelector("#searchInput").focus(), 0);
+  }
+}
+
+async function ontologyFunctionAction(action) {
+  const functionName = (action.target || {}).function || action.id || "ontology_function";
+  setAgent({
+    title: `执行中 · ${action.label}`,
+    summary: `正在调用本体函数 \`${functionName}\`。\n\n参数：\`${JSON.stringify(action.params || {})}\``,
+    next_actions: [{ label: "等待执行完成", kind: "", enabled: false }],
+    evidence: ["oms.actions.yaml", functionName],
   });
-}
-
-function renderFlows(flows) {
-  const grid = document.querySelector("#flowGrid");
-  grid.innerHTML = "";
-  flows.forEach((flow) => {
-    const node = document.createElement("button");
-    node.className = "flow-card";
-    const objectHtml = flow.objects.map((item) => `
-      <span>${escapeHtml(item.summary)} <b>${escapeHtml(item.count)}</b></span>
-    `).join("");
-    const functionHtml = flow.functions.map((item) => `
-      <em>${escapeHtml(item.summary)}</em>
-    `).join("");
-    node.innerHTML = `
-      <strong>${escapeHtml(flow.title)}</strong>
-      <div class="flow-objects">${objectHtml}</div>
-      <div class="flow-functions">${functionHtml}</div>
-    `;
-    node.addEventListener("click", () => selectObject(flow.object_type, flow.object_id));
-    grid.appendChild(node);
+  const params = new URLSearchParams({
+    action_id: action.id || "",
+    employee_id: state.selectedEmployee || "",
+    object_type: state.module === "payroll" ? "PayrollRun" : "Employee",
   });
+  try {
+    const data = await getJson(`/api/action/execute?${params.toString()}`);
+    const result = data.result || {};
+    const presentation = data.presentation || {};
+    setAgent({
+      title: `${data.status === "success" ? "执行完成" : "执行结果"} · ${action.label}`,
+      summary: formatActionPresentation(presentation, result, data.message || ""),
+      next_actions: (presentation.next_actions && presentation.next_actions.length) ? presentation.next_actions : [
+        { label: "查看本体能力", kind: "navigate", target: { module: "ontology", object_type: inferObjectType(action) }, enabled: true },
+        { label: "返回薪资批次", kind: "navigate", target: { module: "payroll" }, enabled: true },
+      ],
+      evidence: ["oms.actions.yaml", functionName],
+    });
+  } catch (error) {
+    setAgent({
+      title: `执行失败 · ${action.label}`,
+      summary: `调用本体函数时遇到错误：${error.message}`,
+      next_actions: [
+        { label: "查看本体能力", kind: "navigate", target: { module: "ontology", object_type: inferObjectType(action) }, enabled: true },
+      ],
+      evidence: ["api/action/execute"],
+    });
+  }
 }
 
-async function selectObject(objectType, objectId = "") {
-  state.objectType = objectType;
-  state.objectId = objectId || "";
-  if (objectType === "Employee" && objectId) state.selectedEmployee = objectId;
-  const [context, detail] = await Promise.all([
-    getJson(`/api/context?object_type=${encodeURIComponent(objectType)}&object_id=${encodeURIComponent(objectId || "")}`),
-    getJson(`/api/object?object_type=${encodeURIComponent(objectType)}&object_id=${encodeURIComponent(objectId || "")}`),
-  ]);
-  state.context = context;
-  renderContext(context);
-  renderObjectDetail(detail, context);
+function formatActionPresentation(presentation, result, fallbackMessage) {
+  if (!presentation || !presentation.summary) {
+    return `${fallbackMessage}\n\n${formatActionResult(result)}`;
+  }
+  const lines = [presentation.summary];
+  if (presentation.highlights && presentation.highlights.length) {
+    lines.push("");
+    lines.push(...presentation.highlights.map((item) => `- **${item.label}**: ${formatActionValue(item.value)}`));
+  }
+  if (presentation.warnings && presentation.warnings.length) {
+    lines.push("");
+    lines.push("### 需要注意");
+    lines.push(...presentation.warnings.map((item) => `- ${item}`));
+  }
+  return lines.join("\n");
 }
 
-function renderContext(context) {
-  const current = context.current;
-  document.querySelector("#currentTitle").textContent = current.display;
-  document.querySelector("#currentSubtitle").textContent =
-    `${current.summary} · ${current.object_type} · 共 ${current.count} 条`;
-  document.querySelector("#contextNarrative").textContent = context.narrative;
-  document.querySelector("#explanation").textContent = context.narrative;
+function inferObjectType(action) {
+  const functionName = (action.target || {}).function || "";
+  if (functionName.includes("rule")) return "Company";
+  if (functionName.includes("employee")) return "Employee";
+  return "PayrollRun";
+}
 
-  const related = document.querySelector("#relatedEntries");
-  related.innerHTML = "";
-  context.related.slice(0, 10).forEach((item) => {
-    const node = document.createElement("div");
-    node.className = "entry";
-    const samples = item.samples.map((sample) => `
-      <button class="text-link" data-object-type="${escapeHtml(item.target_type)}" data-object-id="${escapeHtml(sample.id)}">${escapeHtml(sample.label)}</button>
-    `).join("");
-    node.innerHTML = `
-      <div>
-        <strong>${escapeHtml(item.target_summary)}</strong>
-        <p>${escapeHtml(item.description)}</p>
+function formatActionResult(result) {
+  if (!result || typeof result !== "object") return String(result || "");
+  const lines = [];
+  const preferredKeys = [
+    "status",
+    "payroll_run_id",
+    "employee_id",
+    "employee_name",
+    "payroll_company_name",
+    "snapshot_id",
+    "employee_snapshot_count",
+    "generated_line_count",
+    "calculated_line_count",
+    "diff_count",
+    "warning_count",
+    "net_pay_total",
+    "social_count",
+    "housing_count",
+    "deduction_count",
+  ];
+  for (const key of preferredKeys) {
+    if (result[key] !== undefined && result[key] !== "") {
+      lines.push(`- **${key}**: ${formatActionValue(result[key])}`);
+    }
+  }
+  if (!lines.length) {
+    return `\`${JSON.stringify(result).slice(0, 1200)}\``;
+  }
+  return lines.join("\n");
+}
+
+function formatActionValue(value) {
+  if (Array.isArray(value)) return `${value.length} 条`;
+  if (value && typeof value === "object") return `\`${JSON.stringify(value).slice(0, 240)}\``;
+  return escapeHtml(value);
+}
+
+function renderHome(data) {
+  state.module = "home";
+  markActiveNav();
+  setTitle("企业资源总览", data.product.description);
+  setAgent(data.agent);
+  const dashboard = data.dashboard;
+  document.querySelector("#content").innerHTML = `
+    <div class="metric-grid">
+      ${dashboard.metrics.map(metricCard).join("")}
+    </div>
+    <section class="block">
+      <div class="section-head">
+        <h2>需要关注</h2>
+        <p>稳定管理系统首页，智能层只负责排序和解释。</p>
       </div>
-      <span>${escapeHtml(item.count)}</span>
-      <div class="sample-row">${samples || "<small>暂无样例</small>"}</div>
-    `;
-    related.appendChild(node);
-  });
-  related.querySelectorAll("[data-object-type]").forEach((button) => {
-    button.addEventListener("click", () => selectObject(button.dataset.objectType, button.dataset.objectId));
-  });
-
-  const capabilities = document.querySelector("#capabilityEntries");
-  capabilities.innerHTML = "";
-  context.capabilities.slice(0, 12).forEach((item) => {
-    const button = document.createElement("button");
-    button.className = `capability ${item.runnable ? "runnable" : ""}`;
-    button.innerHTML = `
-      <span>${escapeHtml(item.group)}</span>
-      <strong>${escapeHtml(item.summary)}</strong>
-      <p>${escapeHtml(item.description)}</p>
-    `;
-    button.addEventListener("click", () => runCapability(item));
-    capabilities.appendChild(button);
-  });
-}
-
-function renderObjectDetail(detail, context) {
-  const target = document.querySelector("#objectDetail");
-  target.innerHTML = "";
-  if (detail.type === "payroll_run") {
-    renderPayrollRun(target, detail.data);
-    return;
-  }
-  if (detail.type === "employee") {
-    renderEmployee(target, detail.data);
-    return;
-  }
-  if (detail.type === "employee_collection") {
-    renderEmployeeCollection(target, detail);
-    return;
-  }
-  renderTableDetail(target, detail, context.current);
-}
-
-function renderPayrollRun(target, data) {
-  target.innerHTML = `
-    <div class="metrics">
-      <div><span>计算人数</span><strong>${escapeHtml(data.counts.calculated)}</strong></div>
-      <div><span>扣前应发</span><strong>${money(data.totals.gross)}</strong></div>
-      <div><span>个税</span><strong>${money(data.totals.tax)}</strong></div>
-      <div class="accent"><span>实发</span><strong>${money(data.totals.net)}</strong></div>
-    </div>
-    <div class="insight-band">
-      <div class="insight-icon">i</div>
-      <div>
-        <h3>批次智能摘要</h3>
-        <p>${escapeHtml(data.agent_brief)}</p>
+      <div class="attention-list">
+        ${dashboard.attention.map((item) => `
+          <button class="attention ${escapeHtml(item.severity)}" data-module="${escapeHtml(item.module)}">
+            <strong>${escapeHtml(item.title)}</strong>
+            <span>${escapeHtml(item.detail)}</span>
+          </button>
+        `).join("")}
       </div>
-    </div>
-    <div class="inline-actions">
-      <button data-action="review_diffs">复核剩余差异</button>
-      <button data-action="confirm_deductions">确认扣款台账</button>
-      <button data-action="approval_summary">生成审批摘要</button>
-    </div>
-  `;
-  target.querySelectorAll("[data-action]").forEach((button) => {
-    button.addEventListener("click", () => runAction(button.dataset.action));
-  });
-}
-
-function renderEmployee(target, data) {
-  const line = data.line || {};
-  target.innerHTML = `
-    <div class="employee-layout">
-      <section>
-        <div class="section-head compact">
-          <div>
-            <h3>${escapeHtml(line.employee_id || state.selectedEmployee)} · ${escapeHtml(line.employee_name_snapshot || "")}</h3>
-            <p>${escapeHtml(line.payroll_company_name_snapshot || "")} · ${escapeHtml(line.position || "")}</p>
+    </section>
+    <section class="block">
+      <div class="section-head">
+        <h2>企业资源地图</h2>
+        <p>资源对象来自 ontology，本体提供关系和能力。</p>
+      </div>
+      <div class="resource-map">
+        ${dashboard.resource_map.map((group) => `
+          <div class="resource-group">
+            <h3>${escapeHtml(group.label)}</h3>
+            ${group.objects.map((object) => `
+              <button class="resource-chip" data-object-type="${escapeHtml(object.type)}">
+                <strong>${escapeHtml(object.summary)}</strong>
+                <span>${escapeHtml(object.type)} · ${escapeHtml(object.count)}</span>
+              </button>
+            `).join("")}
           </div>
-          <button id="agentExplainEmployee" class="primary-button">生成薪资说明</button>
-        </div>
-        <div class="metrics compact-metrics">
-          <div><span>应发</span><strong>${money(line.gross_pay_before_deduction)}</strong></div>
-          <div><span>社保</span><strong>${money(line.personal_social_security)}</strong></div>
-          <div><span>公积金</span><strong>${money(line.personal_housing_fund)}</strong></div>
-          <div><span>个税</span><strong>${money(line.personal_income_tax)}</strong></div>
-          <div class="accent"><span>实发</span><strong>${money(line.net_pay)}</strong></div>
-        </div>
-        <div class="inline-actions">
-          <button data-action="review_diffs">复核该员工差异</button>
-          <button data-action="confirm_deductions">确认该员工扣款</button>
-          <button data-action="approval_summary">生成该员工审批说明</button>
-        </div>
-      </section>
-      <section class="warning-list">
-        ${data.warnings.map((warning) => `
-          <div class="warning"><strong>${escapeHtml(warning.rule_code)}</strong><p>${escapeHtml(warning.message)}</p></div>
         `).join("")}
-      </section>
-    </div>
+      </div>
+    </section>
   `;
-  target.querySelector("#agentExplainEmployee").addEventListener("click", explainEmployeePayroll);
-  target.querySelectorAll("[data-action]").forEach((button) => {
-    button.addEventListener("click", () => runAction(button.dataset.action, state.selectedEmployee));
+  document.querySelectorAll("[data-module]").forEach((button) => {
+    button.addEventListener("click", () => openModule(button.dataset.module));
+  });
+  document.querySelectorAll("[data-object-type]").forEach((button) => {
+    button.addEventListener("click", () => renderObject(button.dataset.objectType));
   });
 }
 
-function renderEmployeeCollection(target, detail) {
-  const rows = detail.rows || [];
-  target.innerHTML = `
-    <div class="collection-head">
-      <div>
-        <h3>员工主数据</h3>
-        <p>共 ${escapeHtml(detail.total)} 名员工。这里是集合入口，选择员工后才进入单人薪资上下文。</p>
+async function renderPeople(query = "") {
+  state.module = "people";
+  markActiveNav();
+  const data = await getJson(`/api/employees?q=${encodeURIComponent(query)}`);
+  setTitle("人员资源", `共 ${data.total} 个当前薪资快照员工`);
+  setAgent(data.agent);
+  document.querySelector("#content").innerHTML = `
+    <section class="block">
+      <div class="section-head">
+        <h2>员工</h2>
+        <p>选择员工查看自然人、任职、薪资档案和本批次薪资上下文。</p>
       </div>
-    </div>
-    <div class="employee-grid">
-      ${rows.map((employee) => `
-        <button class="employee-card" data-employee-id="${escapeHtml(employee.employee_id)}">
-          <strong>${escapeHtml(employee.employee_id)} · ${escapeHtml(employee.name)}</strong>
-          <span>${escapeHtml(employee.company)}</span>
-          <em>${escapeHtml(employee.position || "员工")} · 月薪 ${money(employee.monthly_salary_total)}</em>
-        </button>
-      `).join("")}
-    </div>
+      <div class="employee-grid">
+        ${data.rows.map((row) => `
+          <button class="employee-card" data-employee-id="${escapeHtml(row.employee_id)}">
+            <strong>${escapeHtml(row.employee_id)} · ${escapeHtml(row.name)}</strong>
+            <span>${escapeHtml(row.company)}</span>
+            <em>${escapeHtml(row.position)} · 月薪 ${money(row.monthly_salary_total)}</em>
+          </button>
+        `).join("")}
+      </div>
+    </section>
   `;
-  target.querySelectorAll("[data-employee-id]").forEach((button) => {
-    button.addEventListener("click", () => selectObject("Employee", button.dataset.employeeId));
+  document.querySelectorAll("[data-employee-id]").forEach((button) => {
+    button.addEventListener("click", () => renderEmployee(button.dataset.employeeId));
   });
 }
 
-function renderTableDetail(target, detail, current) {
-  const rows = detail.rows || [];
-  const fields = detail.fields || [];
-  if (!rows.length) {
-    target.innerHTML = `
-      <div class="empty-state">
-        <strong>${escapeHtml(current.summary)}</strong>
-        <p>当前没有可展示记录，但本体仍会提供相关对象和能力入口。</p>
+async function renderEmployee(employeeId) {
+  state.selectedEmployee = employeeId;
+  const data = await getJson(`/api/employee?employee_id=${encodeURIComponent(employeeId)}`);
+  const payroll = data.payroll || {};
+  const line = payroll.line || {};
+  setTitle(`${employeeId} · ${(data.person && data.person.name) || ""}`, `${line.payroll_company_name_snapshot || ""} · ${line.position || ""}`);
+  setAgent(data.agent);
+  document.querySelector("#content").innerHTML = `
+    <div class="metric-grid compact">
+      ${metricCard({ label: "扣前应发", value: money(line.gross_pay_before_deduction), detail: "gross" })}
+      ${metricCard({ label: "个人社保", value: money(line.personal_social_security), detail: "deduction" })}
+      ${metricCard({ label: "个人公积金", value: money(line.personal_housing_fund), detail: "deduction" })}
+      ${metricCard({ label: "个税", value: money(line.personal_income_tax), detail: "tax" })}
+      ${metricCard({ label: "实发", value: money(line.net_pay), detail: "net", tone: "strong" })}
+    </div>
+    <section class="block">
+      <div class="section-head">
+        <h2>工资项</h2>
+        <button id="explainPayrollBtn">生成工资说明</button>
       </div>
-    `;
-    return;
-  }
-  target.innerHTML = `
-    <table class="data-table">
-      <thead><tr>${fields.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}</tr></thead>
-      <tbody>
-        ${rows.map((row) => `
-          <tr>${fields.map((field) => `<td>${escapeHtml(row[field])}</td>`).join("")}</tr>
-        `).join("")}
-      </tbody>
-    </table>
+      ${table(data.payroll.items || [], [
+        ["item_name", "工资项"],
+        ["item_category", "类型"],
+        ["amount", "金额", "money"],
+        ["source_object_type", "来源"],
+      ])}
+    </section>
+    <section class="block">
+      <div class="section-head">
+        <h2>资源关系</h2>
+        <p>人员主数据和薪资上下文并列呈现。</p>
+      </div>
+      <div class="two-col">
+        ${recordBox("自然人", data.person)}
+        ${recordBox("员工身份", data.employee)}
+      </div>
+    </section>
+  `;
+  document.querySelector("#explainPayrollBtn").addEventListener("click", (event) => explainPayroll(employeeId, event.currentTarget));
+}
+
+async function renderPayroll() {
+  state.module = "payroll";
+  markActiveNav();
+  const data = await getJson("/api/payroll");
+  const run = data.run || {};
+  setTitle(`${run.payroll_run_id} · 薪资批次`, `${run.payroll_period} 工资归属月 · 状态 ${run.status}`);
+  setAgent(data.agent);
+  document.querySelector("#content").innerHTML = `
+    <div class="metric-grid">
+      ${metricCard({ label: "计算人数", value: data.counts.employees, detail: "PayrollLine" })}
+      ${metricCard({ label: "差异", value: data.counts.diffs, detail: "benchmark", tone: data.counts.diffs ? "danger" : "" })}
+      ${metricCard({ label: "扣款待确认", value: data.counts.deduction_warning_employees, detail: "ContributionDeduction", tone: "warn" })}
+      ${metricCard({ label: "实发合计", value: money(data.totals.net), detail: "net", tone: "strong" })}
+    </div>
+    <section class="block">
+      <div class="section-head">
+        <h2>工资行预览</h2>
+        <p>结果由本体函数实时试算，空 CSV 不是阻断。</p>
+      </div>
+      ${table(data.sample_lines || [], [
+        ["employee_id", "员工"],
+        ["employee_name_snapshot", "姓名"],
+        ["gross_pay_before_deduction", "扣前应发", "money"],
+        ["personal_income_tax", "个税", "money"],
+        ["net_pay", "实发", "money"],
+      ])}
+    </section>
+    <section class="block">
+      <div class="section-head">
+        <h2>差异样例</h2>
+        <p>差异优先进入复核，而不是直接审批。</p>
+      </div>
+      ${diffList(data.sample_diffs || [])}
+    </section>
   `;
 }
 
-async function runCapability(item) {
-  const target = document.querySelector("#actionResult");
-  if (!item.runnable) {
-    target.innerHTML = renderMarkdown(`### ${item.summary}\n\n该能力来自本体函数 \`${item.name}\`。当前原型只展示入口，真实系统可在这里进入业务表单、审批流或工具执行。\n\n涉及对象：${(item.writes_to || []).join(", ") || "只读查询"}`);
-    return;
-  }
-  if (item.action) {
-    await runAction(item.action, state.objectType === "Employee" ? state.objectId : "");
-    return;
-  }
-  target.innerHTML = renderMarkdown(`### ${item.summary}\n\n运行时已识别当前上下文参数：\`${JSON.stringify(item.params)}\``);
+async function renderOntology() {
+  state.module = "ontology";
+  markActiveNav();
+  await renderObject("Employee");
 }
 
-async function runAction(action, employeeId = "") {
-  const target = document.querySelector("#actionResult");
-  target.textContent = "正在执行业务动作...";
-  const data = await getJson(
-    `/api/action?action=${encodeURIComponent(action)}&employee_id=${encodeURIComponent(employeeId || "")}`,
-  );
-  target.innerHTML = `<h4>${escapeHtml(data.title)}</h4>${renderMarkdown(data.markdown)}`;
-  document.querySelector("#explanation").innerHTML = renderMarkdown(data.markdown);
-  if (data.focus_employee_id) {
-    await selectObject("Employee", data.focus_employee_id);
+async function renderObject(objectType, filters = {}) {
+  state.module = "ontology";
+  markActiveNav();
+  const params = new URLSearchParams({ object_type: objectType });
+  Object.entries(filters || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== "") params.set(`filter_${key}`, value);
+  });
+  const data = await getJson(`/api/object?${params.toString()}`);
+  setTitle(`${objectType} · ${data.object.summary}`, data.object.description);
+  setAgent(data.agent);
+  const filterText = Object.entries(data.object.filters || {})
+    .map(([key, value]) => `${key}=${value}`)
+    .join("，");
+  document.querySelector("#content").innerHTML = `
+    <section class="block">
+      <div class="section-head">
+        <h2>记录</h2>
+        <p>共 ${data.object.count} 条${filterText ? `，已按 ${escapeHtml(filterText)} 过滤` : ""}，展示前 20 条。</p>
+      </div>
+      ${objectRows(data.rows || [])}
+    </section>
+    <section class="block">
+      <div class="section-head">
+        <h2>本体关系与能力</h2>
+      </div>
+      <div class="two-col">
+        ${listBox("关系", data.related.map((item) => `${item.source} → ${item.target}`))}
+        ${listBox("能力", data.functions.map((item) => `${item.group} / ${item.summary}`))}
+      </div>
+    </section>
+  `;
+}
+
+async function explainPayroll(employeeId, button) {
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.classList.add("loading");
+  button.textContent = "正在生成...";
+  setAgent({
+    title: "工资说明生成中",
+    summary: "正在读取薪资计算结果、工资项、扣款提示和个税上下文，请稍候。",
+    next_actions: [{ label: "等待说明生成完成", kind: "", enabled: false }],
+    evidence: ["calculate_payroll", "PayrollItem", "TaxLedger"],
+  });
+  try {
+    const data = await getJson(`/api/explain/payroll?employee_id=${encodeURIComponent(employeeId)}`);
+    setAgent({
+      title: `工资说明 · ${data.mode}`,
+      summary: data.text,
+      next_actions: [
+        { label: "复核扣款台账", kind: "navigate", target: { module: "payroll", focus: "deductions" }, enabled: true },
+        { label: "查看工资项", kind: "navigate", target: { module: "employee", employee_id: state.selectedEmployee }, enabled: true },
+        { label: "生成审批说明", kind: "navigate", target: { module: "payroll", focus: "approval" }, enabled: true },
+      ],
+      evidence: ["calculate_payroll", "PayrollItem", "TaxLedger"],
+    });
+  } catch (error) {
+    setAgent({
+      title: "工资说明生成失败",
+      summary: `生成过程中遇到错误：${error.message}`,
+      next_actions: [
+        { label: "稍后重试", kind: "api_call", target: { endpoint: "/api/explain/payroll" }, enabled: true },
+        { label: "检查本体与接口", kind: "navigate", target: { module: "ontology", object_type: "Employee" }, enabled: true },
+        { label: "查看确定性薪资结果", kind: "navigate", target: { module: "employee", employee_id: state.selectedEmployee }, enabled: true },
+      ],
+      evidence: ["api/explain/payroll"],
+    });
+  } finally {
+    button.disabled = false;
+    button.classList.remove("loading");
+    button.textContent = originalText;
   }
 }
 
-function explainContext() {
-  const box = document.querySelector("#explanation");
-  box.innerHTML = renderMarkdown(buildContextExplanation(state.context));
+function metricCard(metric) {
+  return `
+    <div class="metric ${escapeHtml(metric.tone || "")}">
+      <span>${escapeHtml(metric.label)}</span>
+      <strong>${escapeHtml(metric.value)}</strong>
+      <em>${escapeHtml(metric.detail || "")}</em>
+    </div>
+  `;
 }
 
-async function explainEmployeePayroll() {
-  const box = document.querySelector("#explanation");
-  if (state.objectType !== "Employee" || !state.objectId) {
-    explainContext();
-    return;
-  }
-  box.textContent = "Agent 正在读取本体和工具结果生成说明...";
-  const data = await getJson(`/api/agent/explain?employee_id=${encodeURIComponent(state.objectId)}`);
-  box.innerHTML = renderMarkdown(data.text);
+function table(rows, columns) {
+  if (!rows.length) return `<div class="empty">暂无记录</div>`;
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr>${columns.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>${columns.map(([key, , format]) => `<td>${format === "money" ? money(row[key]) : escapeHtml(row[key])}</td>`).join("")}</tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
-function buildContextExplanation(context) {
-  if (!context) return "当前业务对象正在加载。";
-  const current = context.current || {};
-  const related = (context.related || []).filter((item) => item.count > 0).slice(0, 4);
-  const capabilities = (context.capabilities || []).slice(0, 4);
-  const relatedLines = related.length
-    ? related.map((item) => `- ${item.target_summary}：${item.count} 条，${item.description}`).join("\n")
-    : "- 当前对象暂时没有已落表的直接关联记录，但本体关系仍可作为进入业务流程的导航。";
-  const capabilityLines = capabilities.length
-    ? capabilities.map((item) => `- ${item.summary}：${item.group}`).join("\n")
-    : "- 当前对象暂无可展示能力入口。";
-  return [
-    `### ${current.display || current.summary || "当前对象"} 业务说明`,
-    "",
-    current.description || context.narrative || "",
-    "",
-    "**相关业务入口**",
-    relatedLines,
-    "",
-    "**当前可用能力**",
-    capabilityLines,
-  ].join("\n");
+function diffList(diffs) {
+  if (!diffs.length) return `<div class="empty">暂无差异</div>`;
+  return `<div class="diff-list">${diffs.map((diff) => `
+    <button class="diff-card" data-employee-id="${escapeHtml(diff.employee_id)}">
+      <strong>${escapeHtml(diff.employee_id)}</strong>
+      <span>${escapeHtml(Object.keys(diff.fields || {}).join(", "))}</span>
+    </button>
+  `).join("")}</div>`;
+}
+
+function recordBox(title, record) {
+  const entries = Object.entries(record || {}).slice(0, 8);
+  return `
+    <div class="record-box">
+      <h3>${escapeHtml(title)}</h3>
+      ${entries.map(([key, value]) => `<p><span>${escapeHtml(key)}</span><strong>${escapeHtml(value)}</strong></p>`).join("")}
+    </div>
+  `;
+}
+
+function listBox(title, rows) {
+  return `
+    <div class="record-box">
+      <h3>${escapeHtml(title)}</h3>
+      ${(rows || []).map((row) => `<p>${escapeHtml(row)}</p>`).join("") || "<p>暂无</p>"}
+    </div>
+  `;
+}
+
+function objectRows(rows) {
+  if (!rows.length) return `<div class="empty">暂无记录</div>`;
+  const keys = Object.keys(rows[0]).slice(0, 8);
+  return table(rows, keys.map((key) => [key, key]));
+}
+
+function money(value) {
+  const num = Number(value || 0);
+  return num.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function renderMarkdown(text) {
-  const source = String(text || "");
-  const lines = source.split(/\r?\n/);
+  const lines = String(text || "").split(/\r?\n/);
   let html = "";
-  let inTable = false;
-  let inUnorderedList = false;
-  let inOrderedList = false;
-  let tableRowIndex = 0;
-
-  const closeBlocks = () => {
-    if (inTable) {
-      html += "</tbody></table>";
-      inTable = false;
-      tableRowIndex = 0;
-    }
-    if (inUnorderedList) {
+  let inList = false;
+  const closeList = () => {
+    if (inList) {
       html += "</ul>";
-      inUnorderedList = false;
-    }
-    if (inOrderedList) {
-      html += "</ol>";
-      inOrderedList = false;
+      inList = false;
     }
   };
-
   for (const rawLine of lines) {
     const line = rawLine.trim();
     if (!line) {
-      closeBlocks();
-      continue;
-    }
-    if (line.startsWith("|") && line.endsWith("|")) {
-      const cells = line.split("|").slice(1, -1).map((cell) => cell.trim());
-      if (cells.every((cell) => /^:?-{3,}:?$/.test(cell))) continue;
-      if (!inTable) {
-        closeBlocks();
-        html += "<table><tbody>";
-        inTable = true;
-      }
-      const tag = tableRowIndex === 0 ? "th" : "td";
-      html += `<tr>${cells.map((cell) => `<${tag}>${inlineMarkdown(cell)}</${tag}>`).join("")}</tr>`;
-      tableRowIndex += 1;
+      closeList();
       continue;
     }
     if (line.startsWith("- ")) {
-      if (!inUnorderedList) {
-        closeBlocks();
+      if (!inList) {
         html += "<ul>";
-        inUnorderedList = true;
+        inList = true;
       }
       html += `<li>${inlineMarkdown(line.slice(2))}</li>`;
       continue;
     }
-    const orderedMatch = line.match(/^\d+\.\s+(.*)$/);
-    if (orderedMatch) {
-      if (!inOrderedList) {
-        closeBlocks();
-        html += "<ol>";
-        inOrderedList = true;
-      }
-      html += `<li>${inlineMarkdown(orderedMatch[1])}</li>`;
-      continue;
-    }
-    closeBlocks();
+    closeList();
     if (line.startsWith("### ")) {
-      html += `<h4>${inlineMarkdown(line.slice(4))}</h4>`;
+      html += `<h3>${inlineMarkdown(line.slice(4))}</h3>`;
+    } else if (line.startsWith("## ")) {
+      html += `<h3>${inlineMarkdown(line.slice(3))}</h3>`;
     } else {
       html += `<p>${inlineMarkdown(line)}</p>`;
     }
   }
-  closeBlocks();
+  closeList();
   return html;
 }
 
 function inlineMarkdown(text) {
-  return escapeHtml(text).replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>");
+  return escapeHtml(text)
+    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
 function escapeHtml(text) {
@@ -404,7 +587,11 @@ function escapeHtml(text) {
     .replace(/"/g, "&quot;");
 }
 
-document.querySelector("#refreshBtn").addEventListener("click", loadDomain);
-document.querySelector("#explainBtn").addEventListener("click", explainContext);
+document.querySelector("#searchBtn").addEventListener("click", () => {
+  renderPeople(document.querySelector("#searchInput").value.trim());
+});
+document.querySelector("#searchInput").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") renderPeople(event.currentTarget.value.trim());
+});
 
-loadDomain();
+init();

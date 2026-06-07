@@ -621,6 +621,38 @@ links:
     cardinality: "1..n"
     description: "员工拥有按生效期管理的雇佣、任职或劳务关系。"
 
+  employee_has_attendance_summaries:
+    source: Employee
+    target: AttendanceSummary
+    join: {source_key: employee_id, target_key: employee_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "员工拥有按考勤月份归集的考勤汇总。"
+
+  employee_has_performance_records:
+    source: Employee
+    target: PerformanceRecord
+    join: {source_key: employee_id, target_key: employee_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "员工拥有按绩效月份归集的绩效等级记录。"
+
+  employee_has_payroll_adjustments:
+    source: Employee
+    target: PayrollAdjustment
+    join: {source_key: employee_id, target_key: employee_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "员工拥有归属到薪资批次的考勤或其他补扣调整。"
+
+  employee_has_tax_ledgers:
+    source: Employee
+    target: TaxLedger
+    join: {source_key: employee_id, target_key: employee_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "员工拥有按个税所属期累计的工资薪金个税台账。"
+
   company_has_internal_affiliations:
     source: Company
     target: InternalAffiliation
@@ -644,6 +676,22 @@ links:
     link_type: contains
     cardinality: "0..n"
     description: "薪资批次生成工资项明细。"
+
+  payroll_run_has_tax_ledgers:
+    source: PayrollRun
+    target: TaxLedger
+    join: {source_key: payroll_run_id, target_key: payroll_run_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "薪资批次生成或引用本次发放对应的个税累计台账。"
+
+  payroll_run_has_payslips:
+    source: PayrollRun
+    target: Payslip
+    join: {source_key: payroll_run_id, target_key: payroll_run_id}
+    link_type: contains
+    cardinality: "0..n"
+    description: "薪资批次生成员工工资条。"
 
   payroll_run_has_input_snapshots:
     source: PayrollRun
