@@ -872,12 +872,17 @@ functions:
   calculate_payroll:
     summary: "计算薪资实发"
     group: "薪资核算"
-    description: "基于薪资输入快照和规则表计算基本薪资、绩效薪资、扣除前应发工资、个人社保、个人公积金、累计预扣个税和实发工资。"
+    description: "基于薪资输入快照、已确认扣款台账和个税历史累计输入计算基本薪资、绩效薪资、扣除前应发工资、个人社保、个人公积金、累计预扣个税和实发工资。用户询问某个员工时，必须传 employee_id 做单人试算，不要先查询 PayrollLine 空表，也不要省略 employee_id 计算整批。"
     function_type: business
     depends_on: [generate_payroll_lines]
     writes_to: [PayrollLine, PayrollItem, TaxLedger]
     involves_objects: [PayrollRun, PayrollInputSnapshot, PayrollEmployeeSnapshot, PayrollLine, PayrollItem, SalarySplitRule, PerformanceGradeRule, SocialInsuranceRule, HousingFundRule, TaxLedger, TaxRateRule]
-    hint: "扣除前应发工资不是最终实发；社保和公积金应按规则表、基数、上下限和取整规则现场计算；个税按累计预扣法和税率表计算；计算不得直接读取当前主数据，应读取本次 PayrollInputSnapshot。"
+    usage_prompt: |
+      当用户给出员工编号（例如 EMP074）或询问单个员工工资时，必须调用 calculate_payroll 并同时传入 payroll_run_id 和 employee_id。
+      PayrollLine 根目录结果表当前可能为空；不要因为 query PayrollLine 为空就停止，应该调用 calculate_payroll 获取预览结果。
+      如果工具返回 sample_calculated_lines，直接用第一条里的 gross_pay_before_deduction、personal_social_security、personal_housing_fund、personal_income_tax、net_pay 回答。
+      只有用户明确要求整批汇总时，才允许省略 employee_id。
+    hint: "扣除前应发工资不是最终实发；社保和公积金只有存在已确认 ContributionDeduction 时才进入本次工资实扣，规则试算仅作为缴费建议；个税按累计预扣法和税率表计算；计算不得直接读取当前主数据，应读取本次 PayrollInputSnapshot。"
     params:
       payroll_run_id: {type: str, description: "薪资批次编号"}
       employee_id: {type: str, default: "", description: "员工编号，可为空表示计算整批预览"}

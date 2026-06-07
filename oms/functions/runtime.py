@@ -461,7 +461,7 @@ def _calculate_contributions(
         "sample_diffs": diffs[:10],
         "diffs": diffs if employee_id else [],
         "sample_warnings": warnings[:10],
-        "warnings": warnings if employee_id else [],
+        "warnings": warnings if employee_id or kwargs.get("include_warnings") else [],
         "note": "当前 OMS CSV adapter 为只读；本函数按文档公式返回社保、公积金和扣款台账预览，并与 data/benchmarks 中的 Excel 校对基准对比。",
     }
 
@@ -728,12 +728,15 @@ def _calculate_payroll(
             if diff:
                 diffs.append(diff)
 
+    answer_summary = _payroll_answer_summary(calculated)
+
     return {
         "status": "calculated_preview",
         "payroll_run_id": payroll_run_id,
         "employee_id": employee_id,
         "payroll_period": generated_preview.get("payroll_period", ""),
         "tax_period": tax_period,
+        "answer_summary": answer_summary,
         "calculated_count": len(calculated),
         "payroll_item_count": len(payroll_items),
         "social_contribution_count": len(social_records),
@@ -766,9 +769,24 @@ def _calculate_payroll(
         "sample_diffs": diffs[:10],
         "diffs": diffs if employee_id else [],
         "sample_warnings": warnings[:10],
-        "warnings": warnings if employee_id else [],
+        "warnings": warnings if employee_id or kwargs.get("include_warnings") else [],
         "note": "当前 OMS CSV adapter 为只读；本函数返回薪资实发、工资项和当前期个税台账预览，并与 data/benchmarks 中的 Excel 校对基准对比。",
     }
+
+
+def _payroll_answer_summary(lines: list[dict]) -> list[dict]:
+    return [
+        {
+            "employee_id": line.get("employee_id", ""),
+            "employee_name": line.get("employee_name_snapshot", ""),
+            "gross_pay_before_deduction": line.get("gross_pay_before_deduction", 0.0),
+            "personal_social_security": line.get("personal_social_security", 0.0),
+            "personal_housing_fund": line.get("personal_housing_fund", 0.0),
+            "personal_income_tax": line.get("personal_income_tax", 0.0),
+            "net_pay": line.get("net_pay", 0.0),
+        }
+        for line in lines[:10]
+    ]
 
 
 def _confirmed_deductions_by_employee(

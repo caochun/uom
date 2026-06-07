@@ -15,6 +15,7 @@ venv/
 env/
 .env
 .env.*
+.direnv/
 
 # OAG runtime/session artifacts
 .oag_data/
@@ -22,6 +23,8 @@ trace_*.jsonl
 chat_*.db
 *.sqlite
 *.sqlite3
+*.db
+*.db-*
 
 # OS/editor noise
 .DS_Store
@@ -39,3 +42,9 @@ Thumbs.db
 *.log
 tmp/
 temp/
+
+# Deployment/local service state
+.cloudflared/
+cloudflared/
+*.pid
+*.sock
