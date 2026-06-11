@@ -4,48 +4,74 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Fox OMS</title>
-    <link rel="stylesheet" href="/static/styles.css?v=oms-shell-1">
+    <link rel="stylesheet" href="/static/styles.css?v=resource-view-2">
   </head>
   <body>
-    <aside class="sidebar">
+    <aside class="resource-nav">
       <div class="brand">
         <strong>Fox OMS</strong>
         <span>企业资源管理</span>
       </div>
-      <nav id="moduleNav" class="module-nav"></nav>
+      <div id="atlas" class="atlas"></div>
     </aside>
 
-    <main class="app-shell">
+    <main class="resource-main">
       <header class="topbar">
         <div>
-          <h1 id="pageTitle">总览</h1>
-          <p id="pageSubtitle">正在读取企业资源状态...</p>
+          <p id="contextKind" class="eyebrow">资源视图</p>
+          <h1 id="contextTitle">正在读取资源</h1>
+          <p id="contextSubtitle">请选择左侧资源。</p>
         </div>
-        <div class="global-search">
-          <input id="searchInput" placeholder="搜索员工编号、姓名或公司">
-          <button id="searchBtn">搜索</button>
-        </div>
+        <div id="contextMetrics" class="summary-strip"></div>
       </header>
 
-      <section id="content" class="content"></section>
+      <section class="resource-workspace">
+        <section class="list-pane">
+          <div class="pane-head">
+            <div>
+              <h2 id="listTitle">资源列表</h2>
+              <span id="listMeta">-</span>
+            </div>
+          </div>
+          <div id="resourceTable" class="resource-table"></div>
+        </section>
+
+        <section class="detail-pane">
+          <div class="pane-head">
+            <div>
+              <h2 id="detailTitle">资源详情</h2>
+              <span id="detailMeta">字段和相关资源</span>
+            </div>
+          </div>
+          <div id="detailView" class="detail-view"></div>
+        </section>
+      </section>
     </main>
 
-    <aside class="agent-panel">
-      <div class="panel-head">
-        <span>智能层</span>
-        <strong id="agentTitle">系统态势</strong>
+    <aside class="guidance-pane">
+      <div class="guidance-head">
+        <span>业务引导</span>
+        <strong id="railTitle">当前可以这样推进</strong>
       </div>
-      <p id="agentSummary">智能层会根据当前资源和本体上下文提供摘要、建议和依据。</p>
-      <div class="panel-section">
-        <div class="panel-label">下一步</div>
-        <ul id="agentActions"></ul>
+      <p id="railJudgment" class="guidance-judgment">系统会根据当前资源状态给出建议。</p>
+      <div class="guidance-section">
+        <div class="guidance-label">建议查看</div>
+        <div id="railPrompts" class="guidance-list"></div>
       </div>
-      <div class="panel-section">
-        <div class="panel-label">依据</div>
-        <div id="agentEvidence" class="evidence-list"></div>
+      <div class="guidance-section">
+        <div class="guidance-label">快捷操作</div>
+        <div id="railActions" class="guidance-list"></div>
+      </div>
+      <div id="railResultSection" class="guidance-section result-section hidden">
+        <div class="guidance-label">预览结果</div>
+        <div id="railResult" class="rail-result"></div>
+      </div>
+      <div class="guidance-section">
+        <div class="guidance-label">依据</div>
+        <div id="railEvidence" class="evidence-list"></div>
       </div>
     </aside>
 
-    <script src="/static/app.js?v=oms-shell-1"></script>
+    <script src="/static/app.js?v=resource-view-2"></script>
   </body>
 </html>
