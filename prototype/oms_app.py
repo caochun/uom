@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -9,6 +10,8 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 OAG_PATH = ROOT / "oag-agent"
@@ -30,49 +33,6 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 DEFAULT_CONTEXT = {"type": "PayrollRun", "id": "PAYROLL_202604"}
 DEFAULT_EMPLOYEE = "EMP074"
 DEFAULT_COMPANY = "COMP_SCNY"
-
-RESOURCE_GROUPS = [
-    ("人员资源", ["Person", "Employee", "EmploymentRelationship", "SalaryProfile"]),
-    ("组织主体", ["Company", "InternalAffiliation"]),
-    ("薪资结算", ["PayrollRun", "PayrollInputSnapshot", "PayrollEmployeeSnapshot", "PayrollLine", "PayrollItem"]),
-    ("社保公积金", ["SocialInsuranceContribution", "HousingFundContribution", "ContributionDeduction"]),
-    ("税务与成本", ["TaxLedger", "CostEntry", "ConsultantEngagement", "ConsultantFeeSettlement"]),
-    ("治理输出", ["PayrollValidationResult", "ApprovalRecord", "PayrollExport", "Payslip"]),
-    ("规则配置", ["SalarySplitRule", "PerformanceGradeRule", "SocialInsuranceRule", "HousingFundRule", "TaxRateRule"]),
-]
-
-DISPLAY_OVERRIDES = {
-    "Person": "自然人",
-    "Employee": "员工身份",
-    "EmploymentRelationship": "任职关系",
-    "Company": "公司主体",
-    "InternalAffiliation": "内部归属",
-    "SalaryProfile": "薪资档案版本",
-    "PayrollRun": "薪资批次",
-    "PayrollInputSnapshot": "薪资输入快照",
-    "PayrollEmployeeSnapshot": "员工薪资快照",
-    "PayrollLine": "工资明细",
-    "PayrollItem": "工资项明细",
-    "AttendanceSummary": "考勤汇总",
-    "PerformanceRecord": "绩效记录",
-    "PayrollAdjustment": "薪资补扣调整",
-    "SocialInsuranceContribution": "社保缴费记录",
-    "HousingFundContribution": "公积金缴费记录",
-    "ContributionDeduction": "社保公积金扣款台账",
-    "TaxLedger": "个税台账",
-    "ConsultantEngagement": "顾问服务关系",
-    "ConsultantFeeSettlement": "顾问劳务费结算",
-    "Payslip": "工资条",
-    "CostEntry": "成本归集明细",
-    "PayrollValidationResult": "薪资校验结果",
-    "ApprovalRecord": "审批记录",
-    "PayrollExport": "薪资导出归档",
-    "SalarySplitRule": "薪资拆分规则",
-    "PerformanceGradeRule": "绩效等级规则",
-    "SocialInsuranceRule": "社保规则",
-    "HousingFundRule": "公积金规则",
-    "TaxRateRule": "个税税率规则",
-}
 
 STATUS_LABELS = {
     "draft": "草稿",
@@ -99,6 +59,7 @@ CAPABILITY_ORDER = [
     "resolve_rules_at",
     "build_payroll_snapshot",
     "generate_payroll_lines",
+    "confirm_generated_payroll_lines",
     "calculate_contributions",
     "calculate_payroll",
     "validate_payroll",
@@ -112,6 +73,7 @@ EXECUTABLE_FUNCTIONS = {
     "resolve_rules_at",
     "build_payroll_snapshot",
     "generate_payroll_lines",
+    "confirm_generated_payroll_lines",
     "calculate_contributions",
     "calculate_payroll",
 }
@@ -125,31 +87,23 @@ PREVIEW_ONLY = {
     "resolve_rules_at",
 }
 
-PAYROLL_SIGNAL_TYPES = {
-    "PayrollRun",
-    "PayrollLine",
-    "PayrollItem",
-    "PayrollEmployeeSnapshot",
-    "ContributionDeduction",
-    "SocialInsuranceContribution",
-    "HousingFundContribution",
-    "TaxLedger",
-    "Payslip",
-    "CostEntry",
-    "PayrollValidationResult",
-    "ApprovalRecord",
-    "PayrollExport",
-}
-
 
 class OmsRuntime:
     def __init__(self):
         self.ontology, self.repository, self.registry = load_domain(DOMAIN_DIR)
+        self.presentation = self.load_presentation()
         self._llm_client = None
         self._llm_checked = False
         self._llm_cache: dict[str, dict] = {}
         self._llm_executor = ThreadPoolExecutor(max_workers=2)
         self._llm_tasks: dict[str, dict] = {}
+
+    def load_presentation(self) -> dict:
+        path = DOMAIN_DIR / "presentation.yaml"
+        if not path.exists():
+            return {"groups": [], "objects": {}}
+        with path.open("r", encoding="utf-8") as handle:
+            return yaml.safe_load(handle) or {"groups": [], "objects": {}}
 
     def shell(self, object_type: str = "", object_id: str = "") -> dict:
         object_type = object_type or DEFAULT_CONTEXT["type"]
@@ -166,10 +120,17 @@ class OmsRuntime:
 
     def resource_atlas(self) -> list[dict]:
         groups = []
-        for group_name, object_types in RESOURCE_GROUPS:
+        configured_groups = self.presentation.get("groups") or []
+        if configured_groups:
+            source_groups = [(group.get("name", "资源"), group.get("objects") or []) for group in configured_groups]
+        else:
+            source_groups = self.inferred_primary_groups()
+        for group_name, object_types in source_groups:
             resources = []
             for object_type in object_types:
                 if object_type not in self.ontology.objects:
+                    continue
+                if self.visibility(object_type) != "primary":
                     continue
                 resources.append({
                     "type": object_type,
@@ -183,17 +144,25 @@ class OmsRuntime:
                 groups.append({"name": group_name, "resources": resources})
         return groups
 
+    def inferred_primary_groups(self) -> list[tuple[str, list[str]]]:
+        objects = [
+            object_type
+            for object_type in self.ontology.objects
+            if self.visibility(object_type) == "primary"
+        ]
+        return [("企业资源", objects)]
+
     def resource_context(self, object_type: str, object_id: str = "") -> dict:
         if object_type not in self.ontology.objects:
             object_type = DEFAULT_CONTEXT["type"]
         object_id = object_id or self.sample_id(object_type)
         vocab = self.vocabulary(object_type)
         record = self.find_record(object_type, object_id)
-        signals = self.runtime_signals(object_type, object_id, record)
         neighborhood = self.semantic_neighborhood(object_type, object_id, record)
-        capabilities = self.capabilities_for(object_type, object_id, record, signals)
-        work_surface = self.work_surface(object_type, object_id, record, signals)
-        conversation = self.conversation_rail(object_type, object_id, record, signals, capabilities, neighborhood)
+        context_model = self.build_resource_context(object_type, object_id, record, neighborhood)
+        capabilities = context_model["action_candidates"]
+        work_surface = self.work_surface(object_type, object_id, record, context_model)
+        conversation = self.conversation_rail(context_model)
         return {
             "resource": vocab,
             "id": object_id,
@@ -202,8 +171,8 @@ class OmsRuntime:
             "record": self.present_record(object_type, record),
             "browser": self.resource_browser(object_type, object_id),
             "detail": self.resource_detail(object_type, object_id, record, neighborhood, capabilities),
-            "metrics": self.context_metrics(object_type, object_id, record, signals, neighborhood, capabilities),
-            "signals": signals,
+            "metrics": self.context_metrics(object_type, object_id, record, context_model, neighborhood, capabilities),
+            "resource_context": context_model,
             "neighborhood": neighborhood,
             "capabilities": capabilities,
             "work_surface": work_surface,
@@ -211,12 +180,27 @@ class OmsRuntime:
             "sample_records": self.sample_records(object_type),
         }
 
-    def execute(self, function_name: str, object_type: str, object_id: str = "", employee_id: str = "") -> dict:
+    def execute(
+        self,
+        function_name: str,
+        object_type: str,
+        object_id: str = "",
+        employee_id: str = "",
+        preview_id: str = "",
+        extra_params: dict | None = None,
+    ) -> dict:
         if function_name not in self.ontology.functions:
             return {"status": "error", "message": "未找到该本体能力。"}
         if function_name not in EXECUTABLE_FUNCTIONS:
             return {"status": "not_implemented", "message": "该能力在当前原型中只展示语义，不执行写入。"}
-        params = self.params_for(function_name, object_type, object_id, employee_id)
+        params = self.params_for(
+            function_name,
+            object_type,
+            object_id,
+            employee_id,
+            preview_id,
+            extra_params or {},
+        )
         try:
             result = self.registry.call(function_name, **params)
         except Exception as exc:
@@ -236,9 +220,26 @@ class OmsRuntime:
             "conversation": self.result_conversation(function_name, result),
         }
 
+    def object_ui(self, object_type: str) -> dict:
+        return (self.presentation.get("objects") or {}).get(object_type) or {}
+
+    def visibility(self, object_type: str) -> str:
+        ui = self.object_ui(object_type)
+        if ui.get("visibility"):
+            return ui["visibility"]
+        obj = self.ontology.objects.get(object_type)
+        if not obj:
+            return "internal"
+        if obj.kind == "rule_table":
+            return "admin_config"
+        if obj.data_source == "agent_generated":
+            return "evidence"
+        return "primary"
+
     def display_name(self, object_type: str) -> str:
         obj = self.ontology.objects.get(object_type)
-        return DISPLAY_OVERRIDES.get(object_type) or (obj.summary if obj and obj.summary else object_type)
+        ui = self.object_ui(object_type)
+        return ui.get("display_name") or (obj.summary if obj and obj.summary else object_type)
 
     def object_summary(self, object_type: str) -> str:
         obj = self.ontology.objects.get(object_type)
@@ -252,6 +253,7 @@ class OmsRuntime:
         return {
             "type": object_type,
             "name": self.display_name(object_type),
+            "visibility": self.visibility(object_type),
             "summary": self.object_summary(object_type),
             "description": obj.description if obj else "",
             "id_field": id_field,
@@ -368,32 +370,42 @@ class OmsRuntime:
         if not obj:
             return []
         id_field = self.ontology.get_id_column(object_type) or ""
-        preferred_by_type = {
-            "Person": ["person_id", "name", "phone", "status"],
-            "Employee": ["employee_id", "department", "position", "employment_type", "status"],
-            "EmploymentRelationship": ["employment_relationship_id", "employee_id", "company_id", "relationship_type", "effective_date"],
-            "Company": ["company_id", "company_name", "payroll_enabled", "tax_entity_name"],
-            "SalaryProfile": ["salary_profile_id", "employee_id", "monthly_salary_base", "effective_date"],
-            "PayrollRun": ["payroll_run_id", "payroll_period", "pay_date", "status"],
-            "PayrollInputSnapshot": ["snapshot_id", "payroll_run_id", "payroll_period", "status"],
-            "PayrollEmployeeSnapshot": ["employee_snapshot_id", "employee_id", "employee_name_snapshot", "payroll_company_name_snapshot"],
-            "PayrollLine": ["payroll_line_id", "employee_id", "employee_name_snapshot", "gross_pay_before_deduction", "net_pay"],
-            "PayrollItem": ["payroll_item_id", "employee_id", "item_name", "amount"],
-            "ContributionDeduction": ["deduction_id", "employee_id", "deduction_type", "personal_amount", "status"],
-            "TaxLedger": ["tax_ledger_id", "employee_id", "tax_period", "current_tax", "reconciliation_status"],
-            "CostEntry": ["cost_entry_id", "payroll_run_id", "employee_id", "cost_type", "amount"],
-            "PayrollValidationResult": ["validation_id", "payroll_run_id", "severity", "message", "status"],
-        }
-        fields = preferred_by_type.get(object_type, [])
+        fields = list(self.object_ui(object_type).get("list_fields") or [])
         if id_field and id_field not in fields:
             fields.insert(0, id_field)
         if not fields:
-            fields = [name for name in obj.properties.keys()][:5]
+            fields = self.infer_list_fields(object_type)
         columns = []
         for field in fields[:5]:
             if field in obj.properties:
                 columns.append({"field": field, "label": self.property_label(object_type, field)})
         return columns
+
+    def infer_list_fields(self, object_type: str) -> list[str]:
+        obj = self.ontology.objects.get(object_type)
+        if not obj:
+            return []
+        id_field = self.ontology.get_id_column(object_type) or ""
+        fields = [id_field] if id_field else []
+        priority_tokens = [
+            "name", "employee", "company", "status", "type", "period", "date",
+            "amount", "salary", "pay", "tax", "cost",
+        ]
+        for token in priority_tokens:
+            for field in obj.properties:
+                if field in fields:
+                    continue
+                label = self.property_label(object_type, field)
+                if token in field.lower() or token in label.lower():
+                    fields.append(field)
+                if len(fields) >= 5:
+                    return fields
+        for field in obj.properties:
+            if field not in fields:
+                fields.append(field)
+            if len(fields) >= 5:
+                break
+        return fields
 
     def resource_detail(self, object_type: str, object_id: str, record: dict, neighborhood: dict, capabilities: list[dict]) -> dict:
         return {
@@ -554,7 +566,8 @@ class OmsRuntime:
         nodes = [{
             "type": object_type,
             "name": self.display_name(object_type),
-            "role": "当前资源",
+            "role": "primary" if self.visibility(object_type) == "primary" else self.visibility(object_type),
+            "role_label": self.visibility_label(self.visibility(object_type)),
             "count": 1 if record else self.safe_count(object_type),
             "sample_id": object_id,
         }]
@@ -568,13 +581,16 @@ class OmsRuntime:
                 continue
             filters = self.relation_filters(object_type, other, link, record)
             count = self.safe_count(other, filters) if filters is not None else self.safe_count(other)
+            sample_id = self.first_related_id(other, filters)
+            actual_state = self.related_actual_state(other, filters, count)
             if other not in seen:
                 nodes.append({
                     "type": other,
                     "name": self.display_name(other),
-                    "role": "相关资源",
+                    "role": self.visibility(other),
+                    "role_label": self.visibility_label(self.visibility(other)),
                     "count": count,
-                    "sample_id": self.first_related_id(other, filters),
+                    "sample_id": sample_id,
                 })
                 seen.add(other)
             edges.append({
@@ -582,11 +598,243 @@ class OmsRuntime:
                 "from": self.display_name(link.source),
                 "to": self.display_name(link.target),
                 "target_type": other,
+                "target_name": self.display_name(other),
+                "target_id": sample_id,
+                "target_role": self.visibility(other),
+                "target_role_label": self.visibility_label(self.visibility(other)),
                 "count": count,
+                "actual_state": actual_state,
                 "cardinality": link.cardinality,
                 "link_type": link.link_type,
             })
         return {"nodes": nodes[:12], "edges": edges[:16]}
+
+    def visibility_label(self, visibility: str) -> str:
+        return {
+            "primary": "主资源",
+            "embedded": "详情区块",
+            "history": "历史记录",
+            "evidence": "解释依据",
+            "admin_config": "配置项",
+            "internal": "内部对象",
+        }.get(visibility, visibility or "资源")
+
+    def build_resource_context(self, object_type: str, object_id: str, record: dict, neighborhood: dict) -> dict:
+        actions = self.action_candidates(object_type, object_id, record)
+        context_model = {
+            "resource_type": object_type,
+            "resource_label": self.display_name(object_type),
+            "resource_id": object_id,
+            "visibility": self.visibility(object_type),
+            "status": str(record.get("status") or record.get("reconciliation_status") or ""),
+            "key_facts": self.key_facts(object_type, object_id, record, neighborhood),
+            "related_context": self.related_context(neighborhood),
+            "available_actions": [item for item in actions if item.get("enabled")],
+            "blocked_actions": [item for item in actions if not item.get("enabled")],
+            "action_candidates": actions,
+        }
+        context_model["related_explanation"] = self.related_explanation(context_model)
+        return context_model
+
+    def key_facts(self, object_type: str, object_id: str, record: dict, neighborhood: dict) -> list[str]:
+        facts = []
+        if record:
+            facts.append(f"当前查看的是{self.display_name(object_type)}“{self.record_title(object_type, record) or object_id}”。")
+        else:
+            facts.append(f"当前选择了{self.display_name(object_type)}，但尚未定位到具体记录。")
+        status = record.get("status") or record.get("reconciliation_status") if record else ""
+        if status:
+            facts.append(f"当前状态是“{STATUS_LABELS.get(str(status), status)}”。")
+        for edge in neighborhood.get("edges", [])[:5]:
+            count = edge.get("count", 0)
+            if count:
+                role_label = edge.get("target_role_label") or "相关资源"
+                facts.append(f"关联到 {count} 条{role_label}：{edge.get('target_name') or edge.get('to')}。")
+            if len(facts) >= 5:
+                break
+        if len(facts) == 1:
+            facts.append("可以先查看字段详情和相关资源，再选择右侧建议操作。")
+        return facts[:5]
+
+    def related_context(self, neighborhood: dict) -> list[dict]:
+        items = []
+        for edge in neighborhood.get("edges", []):
+            role = edge.get("target_role") or "embedded"
+            if role == "primary":
+                role = "embedded"
+            items.append({
+                "ref": edge.get("target_type", ""),
+                "label": edge.get("target_name") or edge.get("to", ""),
+                "source": edge.get("target_type", ""),
+                "target_type": edge.get("target_type", ""),
+                "target_id": edge.get("target_id", ""),
+                "role": role,
+                "role_label": self.visibility_label(role),
+                "count": edge.get("count", 0),
+                "description": edge.get("name", ""),
+                "actual_state": edge.get("actual_state", {}),
+            })
+        role_order = {"embedded": 0, "history": 1, "evidence": 2, "admin_config": 3, "internal": 4}
+        return sorted(items, key=lambda item: (role_order.get(item["role"], 9), item["label"]))[:10]
+
+    def related_actual_state(self, object_type: str, filters: dict | None, count: int) -> dict:
+        state_rows = self.query_related_rows(object_type, filters, limit=min(max(count, 1), 200))
+        sample_rows = state_rows[:3]
+        return {
+            "count": count,
+            "empty": count == 0,
+            "state_summary": self.related_state_summary(object_type, state_rows),
+            "notable_fields": self.related_notable_fields(object_type, state_rows),
+            "sample_records": [
+                {
+                    "id": row.get(self.ontology.get_id_column(object_type) or "", ""),
+                    "title": self.record_title(object_type, row),
+                    "description": self.record_description(object_type, row),
+                    "fields": self.compact_record_fields(object_type, row),
+                }
+                for row in sample_rows
+            ],
+        }
+
+    def query_related_rows(self, object_type: str, filters: dict | None, limit: int = 8) -> list[dict]:
+        try:
+            return self.repository.query(object_type, filters or None, limit=limit)
+        except Exception:
+            return []
+
+    def related_state_summary(self, object_type: str, rows: list[dict]) -> dict:
+        if not rows:
+            return {}
+        fields = self.state_summary_fields(object_type, rows)
+        summary = {}
+        for field in fields:
+            counts: dict[str, int] = {}
+            for row in rows:
+                value = row.get(field)
+                if value in (None, ""):
+                    continue
+                label = self.format_value(value)
+                counts[label] = counts.get(label, 0) + 1
+            if counts:
+                summary[self.property_label(object_type, field)] = counts
+        return summary
+
+    def state_summary_fields(self, object_type: str, rows: list[dict]) -> list[str]:
+        obj = self.ontology.objects.get(object_type)
+        if not obj:
+            return []
+        candidates = []
+        for field in obj.properties:
+            lower = field.lower()
+            if any(token in lower for token in ["status", "severity", "decision", "type", "period"]):
+                candidates.append(field)
+        result = []
+        for field in candidates:
+            values = {row.get(field) for row in rows if row.get(field) not in (None, "")}
+            if 0 < len(values) <= 8:
+                result.append(field)
+            if len(result) >= 3:
+                break
+        return result
+
+    def related_notable_fields(self, object_type: str, rows: list[dict]) -> list[dict]:
+        if not rows:
+            return []
+        obj = self.ontology.objects.get(object_type)
+        if not obj:
+            return []
+        fields = []
+        for field in obj.properties:
+            lower = field.lower()
+            if lower.endswith("_id") or lower == "id" or "period" in lower:
+                continue
+            if any(token in lower for token in ["amount", "salary", "pay", "tax", "cost", "base", "total"]):
+                values = [
+                    parsed
+                    for row in rows
+                    for parsed in [self.parse_numeric(row.get(field))]
+                    if parsed is not None
+                ]
+                if values:
+                    fields.append({
+                        "label": self.property_label(object_type, field),
+                        "sample_total": round(sum(values), 2),
+                        "sample_count": len(values),
+                    })
+            if len(fields) >= 4:
+                break
+        return fields
+
+    def parse_numeric(self, value) -> float | None:
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            text = value.replace(",", "").strip()
+            if not text:
+                return None
+            try:
+                return float(text)
+            except ValueError:
+                return None
+        return None
+
+    def compact_record_fields(self, object_type: str, row: dict) -> list[dict]:
+        fields = []
+        for column in self.browser_columns(object_type):
+            value = row.get(column["field"])
+            if value in (None, ""):
+                continue
+            fields.append({"label": column["label"], "value": self.format_value(value)})
+        return fields[:5]
+
+    def related_explanation(self, context_model: dict) -> dict:
+        refs = [
+            {
+                "ref": item.get("ref") or item.get("source"),
+                "label": item.get("label"),
+                "role_label": item.get("role_label"),
+                "count": item.get("count", 0),
+                "type": item.get("target_type") or item.get("source"),
+                "id": item.get("target_id", ""),
+                "actual_state": item.get("actual_state", {}),
+            }
+            for item in context_model.get("related_context", [])
+            if item.get("source")
+        ]
+        text = self.fallback_related_explanation(context_model, refs)
+        result = {"text": text, "refs": refs, "mode": "rules"}
+        task_id = self.schedule_related_llm(context_model, result)
+        if task_id:
+            result["llm_task"] = task_id
+            result["llm_status"] = "pending"
+        return result
+
+    def fallback_related_explanation(self, context_model: dict, refs: list[dict]) -> str:
+        if not refs:
+            return "当前资源还没有可解释的相关资源。"
+        active = [item for item in refs if item.get("count", 0)]
+        focus = active[:3] or refs[:3]
+        names = "、".join(f"[[{item['ref']}]]" for item in focus if item.get("ref"))
+        if active:
+            state_text = self.fallback_state_sentence(focus)
+            return f"当前{context_model.get('resource_label', '资源')}已经关联到 {names}。{state_text}这些实际记录状态会影响下一步应该先查看哪里。"
+        return f"当前{context_model.get('resource_label', '资源')}的相关资源包括 {names}，但这些关联下暂时还没有记录。可以先检查输入或执行右侧预览操作。"
+
+    def fallback_state_sentence(self, refs: list[dict]) -> str:
+        fragments = []
+        for item in refs:
+            state = item.get("actual_state") or {}
+            summary = state.get("state_summary") or {}
+            if summary:
+                first_label, counts = next(iter(summary.items()))
+                rendered = "、".join(f"{key} {value} 条" for key, value in list(counts.items())[:3])
+                fragments.append(f"{item.get('label')}按{first_label}分布为：{rendered}")
+            elif state.get("notable_fields"):
+                field = state["notable_fields"][0]
+                fragments.append(f"{item.get('label')}样本中{field.get('label')}合计 {self.format_value(field.get('sample_total'))}")
+            elif item.get("count", 0):
+                fragments.append(f"{item.get('label')}有 {item.get('count')} 条记录")
+        return "；".join(fragments[:2]) + ("。" if fragments else "")
 
     def relation_filters(self, current_type: str, other_type: str, link, record: dict) -> dict | None:
         if not record:
@@ -609,9 +857,11 @@ class OmsRuntime:
             rows = []
         return str(rows[0].get(id_field, "")) if rows and id_field else ""
 
-    def capabilities_for(self, object_type: str, object_id: str, record: dict, signals: dict) -> list[dict]:
+    def action_candidates(self, object_type: str, object_id: str, record: dict) -> list[dict]:
         candidates = []
         for name, fn in self.ontology.functions.items():
+            if name == "confirm_generated_payroll_lines":
+                continue
             if object_type in (fn.involves_objects or []) or object_type in (fn.writes_to or []):
                 candidates.append(name)
             elif object_type == "Employee" and "employee_id" in (fn.params or {}):
@@ -620,14 +870,23 @@ class OmsRuntime:
                 candidates.append(name)
             elif object_type == "PayrollRun" and "payroll_run_id" in (fn.params or {}):
                 candidates.append(name)
-        candidates = sorted(set(candidates), key=lambda name: CAPABILITY_ORDER.index(name) if name in CAPABILITY_ORDER else 99)
-        return [self.capability_state(name, object_type, object_id, record, signals) for name in candidates[:10]]
+        candidates = sorted(set(candidates), key=self.action_sort_key)
+        return [self.action_state(name, object_type, object_id, record) for name in candidates[:10]]
 
-    def capability_state(self, function_name: str, object_type: str, object_id: str, record: dict, signals: dict) -> dict:
+    def action_sort_key(self, function_name: str) -> tuple[int, int, str]:
+        if function_name in CAPABILITY_ORDER:
+            return (0, CAPABILITY_ORDER.index(function_name), function_name)
+        for workflow in self.ontology.workflows.values():
+            for index, step in enumerate(workflow.steps or []):
+                if step.function == function_name:
+                    return (1, index, function_name)
+        return (2, 99, function_name)
+
+    def action_state(self, function_name: str, object_type: str, object_id: str, record: dict) -> dict:
         fn = self.ontology.functions.get(function_name)
         enabled = function_name in EXECUTABLE_FUNCTIONS
         reason = "当前原型可执行预览。" if enabled else "当前原型展示该能力的语义，执行通道尚未接入。"
-        if function_name not in PREVIEW_ONLY and fn and fn.writes_to:
+        if function_name not in PREVIEW_ONLY and function_name != "confirm_generated_payroll_lines" and fn and fn.writes_to:
             enabled = False
             reason = "该能力会形成正式写入或流程状态变化，原型中只展示不执行。"
         status_guard = self.status_guard(function_name, object_type, record)
@@ -648,8 +907,9 @@ class OmsRuntime:
             "depends_on": [self.ontology.functions[item].summary for item in (fn.depends_on or []) if item in self.ontology.functions] if fn else [],
             "enabled": enabled,
             "reason": reason,
-            "mode": "预览" if function_name in PREVIEW_ONLY else "流程",
-            "evidence": self.capability_evidence(function_name, object_type, signals),
+            "mode": "预览" if function_name in PREVIEW_ONLY else ("确认" if function_name == "confirm_generated_payroll_lines" else "流程"),
+            "side_effect": "preview" if function_name in PREVIEW_ONLY else ("mutation" if function_name == "confirm_generated_payroll_lines" else "workflow"),
+            "evidence": self.action_evidence(function_name, object_type),
         }
 
     def status_guard(self, function_name: str, object_type: str, record: dict) -> str:
@@ -674,80 +934,13 @@ class OmsRuntime:
                 return f"需要状态为“{STATUS_LABELS.get(str(precondition.value), precondition.value)}”，当前为“{STATUS_LABELS.get(str(current), current or '未知')}”。"
         return ""
 
-    def capability_evidence(self, function_name: str, object_type: str, signals: dict) -> list[str]:
+    def action_evidence(self, function_name: str, object_type: str) -> list[str]:
         labels = [self.display_name(object_type)]
-        if function_name == "calculate_payroll":
-            labels.extend(["薪资输入快照", "薪资拆分规则", "绩效等级规则", "个税台账"])
-        elif function_name == "calculate_contributions":
-            labels.extend(["社保规则", "公积金规则", "扣款台账"])
-        elif function_name == "resolve_employee_state_at":
-            labels.extend(["自然人", "任职关系", "薪资档案版本"])
-        elif function_name == "resolve_rules_at":
-            labels.extend(["公司主体", "规则配置"])
-        if signals.get("diff_count"):
-            labels.append("差异校对")
-        if signals.get("warning_count"):
-            labels.append("风险提示")
+        fn = self.ontology.functions.get(function_name)
+        if fn:
+            labels.extend(self.display_name(item) for item in (fn.involves_objects or [])[:5])
+            labels.extend(self.display_name(item) for item in (fn.writes_to or [])[:3])
         return labels[:6]
-
-    def runtime_signals(self, object_type: str, object_id: str, record: dict) -> dict:
-        signals = {"items": [], "severity": "normal", "scope": "resource"}
-        payroll_run_id = self.resolve_payroll_run_id(object_type, object_id, record)
-        if object_type in PAYROLL_SIGNAL_TYPES and payroll_run_id:
-            calc = self.registry.call("calculate_payroll", payroll_run_id=payroll_run_id, include_result_set=True, include_warnings=True)
-            lines = (calc.get("result_set") or {}).get("PayrollLine", [])
-            totals = {
-                "扣前应发": round(sum(_num(row.get("gross_pay_before_deduction")) for row in lines), 2),
-                "个税": round(sum(_num(row.get("personal_income_tax")) for row in lines), 2),
-                "实发": round(sum(_num(row.get("net_pay")) for row in lines), 2),
-                "公司成本": round(sum(_num(row.get("company_total_cost")) for row in lines), 2),
-            }
-            signals.update({
-                "scope": "payroll",
-                "payroll_run_id": payroll_run_id,
-                "calculated_count": calc.get("calculated_count", 0),
-                "diff_count": calc.get("diff_count", 0),
-                "warning_count": calc.get("warning_count", 0),
-                "totals": totals,
-                "sample_diffs": calc.get("sample_diffs", [])[:5],
-                "sample_warnings": (calc.get("warnings") or calc.get("sample_warnings") or [])[:6],
-            })
-            if calc.get("diff_count") or calc.get("warning_count"):
-                signals["severity"] = "attention"
-                signals["items"].append(f"薪资试算发现 {calc.get('diff_count', 0)} 个差异、{calc.get('warning_count', 0)} 条提示。")
-            else:
-                signals["items"].append("薪资试算与当前校对基准未发现差异。")
-        if object_type == "Employee" and object_id:
-            employee_result = self.registry.call("calculate_payroll", payroll_run_id=payroll_run_id or DEFAULT_CONTEXT["id"], employee_id=object_id)
-            summary = (employee_result.get("answer_summary") or [{}])[0]
-            signals["employee_payroll"] = summary
-            if summary:
-                signals["items"].append(
-                    f"该员工本月实发预览为 {_money(summary.get('net_pay'))}，扣前应发 {_money(summary.get('gross_pay_before_deduction'))}。"
-                )
-            if employee_result.get("warnings"):
-                signals["severity"] = "attention"
-                signals["employee_warning_count"] = len(employee_result.get("warnings") or [])
-                signals["items"].append(f"该员工存在 {signals['employee_warning_count']} 条薪资相关提示，建议在薪资操作中查看。")
-        if object_type == "Company" and object_id:
-            employee_count = self.safe_count("EmploymentRelationship", {"company_id": object_id})
-            social_rule_count = self.safe_count("SocialInsuranceRule", {"company_id": object_id})
-            housing_rule_count = self.safe_count("HousingFundRule", {"company_id": object_id})
-            signals["company"] = {
-                "employee_relationships": employee_count,
-                "social_rules": social_rule_count,
-                "housing_rules": housing_rule_count,
-            }
-            if social_rule_count == 0 or housing_rule_count == 0:
-                signals["severity"] = "attention"
-                signals["items"].append("该公司主体存在社保或公积金规则缺失，涉及缴费计算时需要确认。")
-        if not signals["items"]:
-            status = record.get("status") or record.get("reconciliation_status") or ""
-            if status:
-                signals["items"].append(f"当前资源状态为“{STATUS_LABELS.get(str(status), status)}”。")
-            else:
-                signals["items"].append("当前资源可查看字段详情、相关资源和可用操作。")
-        return signals
 
     def resolve_payroll_run_id(self, object_type: str, object_id: str, record: dict) -> str:
         if object_type == "PayrollRun":
@@ -755,54 +948,39 @@ class OmsRuntime:
         for field in ("payroll_run_id", "deducted_payroll_run_id"):
             if record.get(field):
                 return record.get(field)
-        return DEFAULT_CONTEXT["id"] if object_type in PAYROLL_SIGNAL_TYPES or object_type == "Employee" else ""
+        return DEFAULT_CONTEXT["id"] if object_type == "Employee" else ""
 
-    def context_metrics(self, object_type: str, object_id: str, record: dict, signals: dict, neighborhood: dict, capabilities: list[dict]) -> list[dict]:
+    def context_metrics(self, object_type: str, object_id: str, record: dict, context_model: dict, neighborhood: dict, capabilities: list[dict]) -> list[dict]:
         status = record.get("status") or record.get("reconciliation_status") or ""
         metrics = [
             {"label": "资源记录", "value": self.safe_count(object_type), "tone": "normal"},
             {"label": "相关资源", "value": max(len(neighborhood.get("nodes", [])) - 1, 0), "tone": "normal"},
-            {"label": "可执行能力", "value": len([cap for cap in capabilities if cap.get("enabled")]), "tone": "good"},
+            {"label": "可用操作", "value": len(context_model.get("available_actions", [])), "tone": "good"},
+            {"label": "受限操作", "value": len(context_model.get("blocked_actions", [])), "tone": "warn" if context_model.get("blocked_actions") else "normal"},
         ]
-        if signals.get("scope") == "payroll" and signals.get("diff_count") is not None:
-            metrics.append({"label": "校对差异", "value": signals.get("diff_count", 0), "tone": "warn" if signals.get("diff_count") else "good"})
-        if signals.get("scope") == "payroll" and signals.get("warning_count") is not None:
-            metrics.append({"label": "运行提示", "value": signals.get("warning_count", 0), "tone": "warn" if signals.get("warning_count") else "good"})
         metrics.append({"label": "数据来源", "value": self.source_label(object_type), "tone": "normal"})
         if status:
             metrics.append({"label": "当前状态", "value": STATUS_LABELS.get(str(status), status), "tone": "normal"})
         return metrics[:5]
 
-    def work_surface(self, object_type: str, object_id: str, record: dict, signals: dict) -> dict:
+    def work_surface(self, object_type: str, object_id: str, record: dict, context_model: dict) -> dict:
         sections = []
-        if signals.get("totals"):
+        if context_model.get("key_facts"):
             sections.append({
-                "title": "业务汇总",
-                "kind": "metrics",
-                "rows": [{"label": key, "value": _money(value)} for key, value in signals["totals"].items()],
+                "title": "当前上下文",
+                "kind": "list",
+                "rows": [{"title": item, "meta": ""} for item in context_model.get("key_facts", [])],
             })
-        if signals.get("sample_warnings"):
+        if context_model.get("related_context"):
             sections.append({
-                "title": "需要业务判断的提示",
+                "title": "资源上下文",
                 "kind": "list",
                 "rows": [
                     {
-                        "title": item.get("message", ""),
-                        "meta": item.get("employee_id", ""),
+                        "title": f"{item.get('role_label')}：{item.get('label')}",
+                        "meta": f"{item.get('count', 0)} 条",
                     }
-                    for item in signals.get("sample_warnings", [])
-                ],
-            })
-        if signals.get("sample_diffs"):
-            sections.append({
-                "title": "校对差异样本",
-                "kind": "list",
-                "rows": [
-                    {
-                        "title": self.diff_title(item),
-                        "meta": item.get("record_id", item.get("employee_id", "")),
-                    }
-                    for item in signals.get("sample_diffs", [])
+                    for item in context_model.get("related_context", [])
                 ],
             })
         if record:
@@ -819,117 +997,196 @@ class OmsRuntime:
         expected = diff.get("expected", "")
         return f"{field}：当前 {calculated} / 基准 {expected}"
 
-    def conversation_rail(self, object_type: str, object_id: str, record: dict, signals: dict, capabilities: list[dict], neighborhood: dict) -> dict:
-        prompts = []
-        actions = []
-        if signals.get("scope") == "payroll" and signals.get("warning_count"):
-            prompts.append({
-                "label": "先解释这些运行提示",
-                "intent": "explain_warnings",
-                "text": "把当前提示按扣款、规则、个税输入分类，并说明先处理哪一类。",
-            })
-        if signals.get("scope") == "payroll" and signals.get("diff_count"):
-            prompts.append({
-                "label": "复核校对差异",
-                "intent": "review_diffs",
-                "text": "展示差异样本，并解释差异可能来自规则、输入还是基准口径。",
-            })
-        if object_type == "Employee":
-            prompts.append({"label": "解释该员工本月工资", "intent": "explain_employee", "text": "沿员工身份、薪资快照、工资明细、扣款和个税台账解释本月实发。"})
-        elif object_type == "Company":
-            prompts.append({"label": "查看该主体承担的成本", "intent": "explain_company_cost", "text": "按员工、社保公积金和成本归集说明该公司主体的本月责任。"})
-        else:
-            prompts.append({"label": "说明这个资源的上下游", "intent": "explain_neighborhood", "text": "用中文说明当前资源连接了哪些企业资源，以及为什么这些关系重要。"})
-        for capability in capabilities:
-            if capability.get("enabled"):
-                actions.append({
-                    "label": capability.get("label"),
-                    "function": capability.get("name"),
-                    "description": capability.get("reason"),
-                    "mode": capability.get("mode"),
-                })
-            if len(actions) >= 4:
-                break
-        judgment = self.current_judgment(object_type, object_id, record, signals, capabilities)
+    def conversation_rail(self, context_model: dict) -> dict:
+        actions = self.next_actions(context_model)
+        judgment = self.current_judgment(context_model)
         fallback = {
-            "title": "当前可以这样推进",
+            "title": "业务导航",
             "judgment": judgment,
-            "prompts": prompts[:4],
+            "next_actions": actions,
+            "blocked_notes": self.blocked_notes(context_model),
+            "prompts": [],
             "actions": actions,
-            "evidence": self.rail_evidence(object_type, signals, neighborhood),
             "mode": "rules",
         }
-        task_id = self.schedule_conversation_llm(
-            fallback, object_type, object_id, record, signals, capabilities, neighborhood,
-        )
+        task_id = self.schedule_conversation_llm(fallback, context_model)
         if task_id:
             fallback["llm_task"] = task_id
             fallback["llm_status"] = "pending"
         return fallback
 
-    def schedule_conversation_llm(
-        self,
-        fallback: dict,
-        object_type: str,
-        object_id: str,
-        record: dict,
-        signals: dict,
-        capabilities: list[dict],
-        neighborhood: dict,
-    ) -> str:
+    def next_actions(self, context_model: dict) -> list[dict]:
+        actions = []
+        for capability in context_model.get("available_actions", []):
+            actions.append({
+                "label": capability.get("label"),
+                "function": capability.get("name"),
+                "description": self.action_short_reason(capability),
+                "mode": capability.get("mode"),
+                "params": self.action_params(capability.get("name"), context_model),
+            })
+            if len(actions) >= 2:
+                break
+        return actions
+
+    def action_params(self, function_name: str, context_model: dict) -> dict:
+        if not function_name:
+            return {}
+        params = self.params_for(
+            function_name,
+            context_model.get("resource_type", ""),
+            context_model.get("resource_id", ""),
+        )
+        return {
+            key: value for key, value in params.items()
+            if value not in (None, "")
+        }
+
+    def action_short_reason(self, capability: dict) -> str:
+        depends = capability.get("depends_on") or []
+        if depends:
+            return f"依赖：{'、'.join(depends[:2])}"
+        mode = capability.get("mode") or ""
+        return f"{mode}操作" if mode else capability.get("reason", "")
+
+    def blocked_notes(self, context_model: dict) -> list[dict]:
+        notes = []
+        for capability in context_model.get("blocked_actions", [])[:3]:
+            notes.append({
+                "label": capability.get("label"),
+                "reason": capability.get("reason"),
+            })
+        return notes
+
+    def schedule_conversation_llm(self, fallback: dict, context_model: dict) -> str:
         client = self.llm_client()
         model = os.environ.get("LLM_MODEL", "")
         if not client or not model:
             return ""
-        cache_key = f"conversation:{object_type}:{object_id}:{signals.get('scope')}:{signals.get('severity')}:{signals.get('diff_count')}:{signals.get('warning_count')}"
+        cache_key = self.guidance_cache_key(context_model)
         if cache_key in self._llm_cache:
             task_id = self.new_llm_task("conversation", cache_key)
             self._llm_tasks[task_id].update({"status": "done", "result": self._llm_cache[cache_key]})
             return task_id
         task_id = self.new_llm_task("conversation", cache_key)
-        self._llm_executor.submit(
-            self.run_conversation_llm_task,
-            task_id,
-            fallback,
-            object_type,
-            object_id,
-            record,
-            signals,
-            capabilities,
-            neighborhood,
-        )
+        self._llm_executor.submit(self.run_conversation_llm_task, task_id, fallback, context_model)
         return task_id
 
-    def current_judgment(self, object_type: str, object_id: str, record: dict, signals: dict, capabilities: list[dict]) -> str:
-        name = self.display_name(object_type)
-        if signals.get("scope") == "payroll" and (signals.get("warning_count") or signals.get("diff_count")):
-            return f"当前{name}已经形成可运行的业务语境，但存在需要人工判断的提示或校对差异。建议先沿证据链解释问题，再执行后续流程能力。"
-        if signals.get("severity") == "attention":
-            return f"当前{name}有需要复核的资源状态。建议先查看字段详情和相关资源，再执行会影响计算或流程的操作。"
-        enabled = [cap.get("label") for cap in capabilities if cap.get("enabled")]
-        if enabled:
-            return f"当前{name}可直接进入“{enabled[0]}”等预览能力。系统会先说明读取哪些资源、应用哪些规则，再展示结果。"
-        return f"当前{name}适合先查看字段详情和相关资源，再决定是否进入后续业务操作。"
+    def guidance_cache_key(self, context_model: dict) -> str:
+        return ":".join([
+            "conversation",
+            str(context_model.get("resource_type", "")),
+            str(context_model.get("resource_id", "")),
+            str(context_model.get("status", "")),
+            str(len(context_model.get("available_actions", []))),
+            str(len(context_model.get("blocked_actions", []))),
+            str(len(context_model.get("related_context", []))),
+        ])
 
-    def rail_evidence(self, object_type: str, signals: dict, neighborhood: dict) -> list[str]:
-        evidence = [self.display_name(object_type)]
-        evidence.extend(edge.get("to", "") for edge in neighborhood.get("edges", [])[:3])
-        if signals.get("payroll_run_id"):
-            evidence.append("薪资试算预览")
+    def current_judgment(self, context_model: dict) -> str:
+        name = context_model.get("resource_label") or "当前资源"
+        enabled = context_model.get("available_actions", [])
+        blocked = context_model.get("blocked_actions", [])
+        status = STATUS_LABELS.get(str(context_model.get("status", "")), context_model.get("status", ""))
+        if enabled:
+            status_text = f"处于“{status}”状态，" if status else ""
+            return f"当前{name}{status_text}下一步可以执行“{enabled[0].get('label')}”。"
+        if blocked:
+            return f"当前{name}暂时没有可执行步骤，先处理下方阻塞条件。"
+        return f"当前{name}暂无明确下一步，先选择具体记录或查看资源详情。"
+
+    def rail_evidence(self, context_model: dict) -> list[str]:
+        evidence = [context_model.get("resource_label", "")]
+        evidence.extend(item.get("label", "") for item in context_model.get("related_context", [])[:4])
         return [item for item in evidence if item][:6]
 
-    def run_conversation_llm_task(
-        self,
-        task_id: str,
-        fallback: dict,
-        object_type: str,
-        object_id: str,
-        record: dict,
-        signals: dict,
-        capabilities: list[dict],
-        neighborhood: dict,
-    ):
-        cache_key = f"conversation:{object_type}:{object_id}:{signals.get('scope')}:{signals.get('severity')}:{signals.get('diff_count')}:{signals.get('warning_count')}"
+    def schedule_related_llm(self, context_model: dict, fallback: dict) -> str:
+        client = self.llm_client()
+        model = os.environ.get("LLM_MODEL", "")
+        if not client or not model:
+            return ""
+        cache_key = self.related_cache_key(context_model)
+        if cache_key in self._llm_cache:
+            task_id = self.new_llm_task("related", cache_key)
+            self._llm_tasks[task_id].update({"status": "done", "result": self._llm_cache[cache_key], "partial": self._llm_cache[cache_key].get("text", "")})
+            return task_id
+        task_id = self.new_llm_task("related", cache_key)
+        self._llm_executor.submit(self.run_related_llm_task, task_id, cache_key, context_model, fallback)
+        return task_id
+
+    def related_cache_key(self, context_model: dict) -> str:
+        related = context_model.get("related_context", [])
+        shape = ",".join(
+            f"{item.get('source')}:{item.get('count')}:{self.state_cache_shape(item.get('actual_state') or {})}"
+            for item in related[:8]
+        )
+        return ":".join([
+            "related",
+            str(context_model.get("resource_type", "")),
+            str(context_model.get("resource_id", "")),
+            shape,
+        ])
+
+    def state_cache_shape(self, actual_state: dict) -> str:
+        summary = actual_state.get("state_summary") or {}
+        notable = actual_state.get("notable_fields") or []
+        sample_ids = [
+            str(item.get("id", ""))
+            for item in (actual_state.get("sample_records") or [])[:3]
+        ]
+        return json.dumps({"s": summary, "n": notable[:2], "ids": sample_ids}, ensure_ascii=False, sort_keys=True)
+
+    def run_related_llm_task(self, task_id: str, cache_key: str, context_model: dict, fallback: dict):
+        if cache_key in self._llm_cache:
+            self.finish_llm_task(task_id, self._llm_cache[cache_key])
+            return
+        refs = fallback.get("refs", [])
+        allowed_refs = [item.get("ref") for item in refs if item.get("ref")]
+        payload = {
+            "resource": {
+                "type": context_model.get("resource_type"),
+                "label": context_model.get("resource_label"),
+                "id": context_model.get("resource_id"),
+                "status": context_model.get("status"),
+            },
+            "key_facts": context_model.get("key_facts", []),
+            "related_context": context_model.get("related_context", []),
+            "related_actual_states": [
+                {
+                    "ref": item.get("ref") or item.get("source"),
+                    "label": item.get("label"),
+                    "role_label": item.get("role_label"),
+                    "count": item.get("count"),
+                    "actual_state": item.get("actual_state", {}),
+                }
+                for item in context_model.get("related_context", [])
+            ],
+            "allowed_refs": allowed_refs,
+        }
+        prompt = (
+            "你是 OMS 资源详情页中的相关资源解读层。只基于给定 JSON 写一段 2-4 句中文。"
+            "必须优先根据 related_actual_states 中的 count、state_summary、notable_fields、sample_records 解读当前真实状态，"
+            "再解释这些相关资源为什么重要，以及用户接下来应该先看哪几个。"
+            "如果提到某个相关资源，必须使用 [[ref]] 格式引用，ref 必须来自 allowed_refs。"
+            "不要只泛泛解释资源定义；不要编造记录；不要计算 payload 之外的业务结果；不要输出 Markdown 列表。"
+        )
+        text = self.call_llm_text_stream(task_id, prompt, payload).strip()
+        if not text:
+            self.fail_llm_task(task_id, "LLM 未返回相关资源解读")
+            return
+        result = {"text": self.keep_allowed_refs(text, allowed_refs), "refs": refs, "mode": "llm"}
+        self._llm_cache[cache_key] = result
+        self.finish_llm_task(task_id, result)
+
+    def keep_allowed_refs(self, text: str, allowed_refs: list[str]) -> str:
+        allowed = set(allowed_refs)
+        def replace(match):
+            ref = match.group(1)
+            return f"[[{ref}]]" if ref in allowed else ref
+        return re.sub(r"\[\[([A-Za-z0-9_]+)\]\]", replace, text)
+
+    def run_conversation_llm_task(self, task_id: str, fallback: dict, context_model: dict):
+        cache_key = self.guidance_cache_key(context_model)
         if cache_key in self._llm_cache:
             self.finish_llm_task(task_id, self._llm_cache[cache_key])
             return
@@ -939,74 +1196,34 @@ class OmsRuntime:
             self.fail_llm_task(task_id, "LLM 未配置")
             return
 
-        context = {
-            "resource": {
-                "name": self.display_name(object_type),
-                "id": object_id,
-                "title": self.resource_title(object_type, object_id, record),
-                "subtitle": self.resource_subtitle(object_type, record),
-                "record": self.present_record(object_type, record)[:10],
-            },
-            "signals": {
-                "items": signals.get("items", [])[:4],
-                "scope": signals.get("scope", "resource"),
-                "diff_count": signals.get("diff_count") if signals.get("scope") == "payroll" else None,
-                "warning_count": signals.get("warning_count") if signals.get("scope") == "payroll" else None,
-                "employee_payroll": signals.get("employee_payroll", {}),
-                "company": signals.get("company", {}),
-                "totals": signals.get("totals", {}),
-                "sample_warnings": signals.get("sample_warnings", [])[:3],
-            },
-            "related_resources": [
-                {"name": edge.get("to"), "relation": edge.get("name"), "count": edge.get("count")}
-                for edge in neighborhood.get("edges", [])[:6]
-            ],
-            "available_actions": [
-                {
-                    "label": cap.get("label"),
-                    "enabled": cap.get("enabled"),
-                    "reason": cap.get("reason"),
-                    "reads": cap.get("reads", [])[:4],
-                    "writes": cap.get("writes", [])[:4],
-                }
-                for cap in capabilities[:6]
-            ],
-            "fallback": fallback,
-        }
         prompt = (
-            "你是企业 OMS 页面中的业务引导层。只基于给定 JSON 生成右侧栏文案，"
-            "不要编造事实、不要计算工资、不要声称已写入数据。"
-            "输出 JSON，字段为 title, judgment, prompts, evidence。"
-            "prompts 是 2-4 个对象，每个对象有 label 和 text。"
-            "judgment 用 1-2 句中文，像业务系统提示，不像聊天机器人。"
+            "你是企业 OMS 页面中的主动引导层。只基于给定 resource_context 生成右侧栏文案，"
+            "不要编造事实、不要计算业务结果、不要声称已写入数据。"
+            "输出 JSON，字段为 title, judgment。"
+            "judgment 用 1 句中文，简明判断当前行动阶段，并指向 next_actions 或 blocked_actions；不要重复解释相关资源。"
         )
-        data = self.call_llm_json(prompt, context)
+        data = self.call_llm_json(prompt, {"resource_context": context_model, "fallback": fallback})
         if not data:
             self.fail_llm_task(task_id, "LLM 未返回可用内容")
             return
         enhanced = dict(fallback)
         enhanced["title"] = str(data.get("title") or fallback.get("title") or "当前可以这样推进")
         enhanced["judgment"] = str(data.get("judgment") or fallback.get("judgment") or "")
-        prompts = data.get("prompts")
-        if isinstance(prompts, list) and prompts:
-            enhanced["prompts"] = [
-                {
-                    "label": str(item.get("label", ""))[:40],
-                    "text": str(item.get("text", ""))[:180],
-                }
-                for item in prompts
-                if isinstance(item, dict) and item.get("label")
-            ][:4] or fallback.get("prompts", [])
-        evidence = data.get("evidence")
-        if isinstance(evidence, list) and evidence:
-            enhanced["evidence"] = [str(item)[:40] for item in evidence[:6]]
         enhanced["mode"] = "llm"
         enhanced.pop("llm_task", None)
         enhanced.pop("llm_status", None)
         self._llm_cache[cache_key] = enhanced
         self.finish_llm_task(task_id, enhanced)
 
-    def params_for(self, function_name: str, object_type: str, object_id: str, employee_id: str = "") -> dict:
+    def params_for(
+        self,
+        function_name: str,
+        object_type: str,
+        object_id: str,
+        employee_id: str = "",
+        preview_id: str = "",
+        extra_params: dict | None = None,
+    ) -> dict:
         params = {}
         fn = self.ontology.functions.get(function_name)
         if not fn:
@@ -1015,6 +1232,8 @@ class OmsRuntime:
         payroll_run_id = self.resolve_payroll_run_id(object_type, object_id, record) or DEFAULT_CONTEXT["id"]
         if "payroll_run_id" in fn.params:
             params["payroll_run_id"] = payroll_run_id
+        if "preview_id" in fn.params:
+            params["preview_id"] = preview_id
         if "employee_id" in fn.params:
             params["employee_id"] = employee_id or (object_id if object_type == "Employee" else DEFAULT_EMPLOYEE)
         if "company_id" in fn.params:
@@ -1026,7 +1245,21 @@ class OmsRuntime:
             run = self.find_record("PayrollRun", payroll_run_id)
             period = run.get("payroll_period", "2026-04")
             params["as_of_date"] = f"{period}-30"
+        for key, value in (extra_params or {}).items():
+            if key in fn.params and value not in (None, ""):
+                params[key] = value
         return params
+
+    def extract_function_params(self, function_name: str, query_params: dict) -> dict:
+        fn = self.ontology.functions.get(function_name)
+        if not fn:
+            return {}
+        route_keys = {"function", "type", "id"}
+        return {
+            key: values[0]
+            for key, values in query_params.items()
+            if key in fn.params and key not in route_keys and values and values[0] not in (None, "")
+        }
 
     def present_params(self, function_name: str, params: dict) -> list[dict]:
         fn = self.ontology.functions.get(function_name)
@@ -1047,6 +1280,8 @@ class OmsRuntime:
             return self.present_snapshot_result(result)
         if function_name == "generate_payroll_lines":
             return self.present_generate_lines_result(result)
+        if function_name == "confirm_generated_payroll_lines":
+            return self.present_confirm_generated_lines_result(result)
         if function_name == "calculate_contributions":
             return self.present_contributions_result(result)
         if function_name == "calculate_payroll":
@@ -1111,6 +1346,14 @@ class OmsRuntime:
                 f"{result.get('payroll_run_id', '')} 工资明细预览完成："
                 f"生成 {result.get('generated_count', 0)} 条工资明细和 {result.get('payroll_item_count', 0)} 条工资项，"
                 f"发现 {result.get('diff_count', 0)} 个差异、{result.get('warning_count', 0)} 条提示。"
+            )
+        if function_name == "confirm_generated_payroll_lines":
+            if result.get("status") == "already_confirmed":
+                return f"{result.get('payroll_run_id', '')} 的工资明细预览此前已确认写入。"
+            return (
+                f"{result.get('payroll_run_id', '')} 已确认写入："
+                f"{result.get('payroll_line_count', 0)} 条工资明细、"
+                f"{result.get('payroll_item_count', 0)} 条工资项。"
             )
         if function_name == "calculate_payroll":
             employee = result.get("employee_id")
@@ -1294,6 +1537,7 @@ class OmsRuntime:
                     {"label": "基准行", "value": result.get("expected_line_count", 0)},
                     {"label": "差异", "value": result.get("diff_count", 0)},
                     {"label": "提示", "value": result.get("warning_count", 0)},
+                    {"label": "预览编号", "value": result.get("preview_id", "")},
                 ],
             },
             {
@@ -1308,6 +1552,33 @@ class OmsRuntime:
         sections.extend(self.warning_and_diff_sections(result))
         return {
             "summary": self.result_summary("generate_payroll_lines", result),
+            "highlights": sections[0]["rows"][:5],
+            "sections": sections,
+        }
+
+    def present_confirm_generated_lines_result(self, result: dict) -> dict:
+        sections = [
+            {
+                "title": "写入结果",
+                "kind": "metrics",
+                "rows": [
+                    {"label": "状态", "value": STATUS_LABELS.get(str(result.get("status", "")), result.get("status", ""))},
+                    {"label": "薪资批次", "value": result.get("payroll_run_id", "")},
+                    {"label": "写入工资明细", "value": result.get("payroll_line_count", 0)},
+                    {"label": "写入工资项", "value": result.get("payroll_item_count", 0)},
+                    {"label": "当前明细总数", "value": result.get("current_payroll_line_count", result.get("payroll_line_count", 0))},
+                    {"label": "当前工资项总数", "value": result.get("current_payroll_item_count", result.get("payroll_item_count", 0))},
+                ],
+            }
+        ]
+        if result.get("message"):
+            sections.append({
+                "title": "说明",
+                "kind": "list",
+                "rows": [{"title": result.get("message", ""), "meta": result.get("preview_id", "")}],
+            })
+        return {
+            "summary": self.result_summary("confirm_generated_payroll_lines", result),
             "highlights": sections[0]["rows"][:5],
             "sections": sections,
         }
@@ -1624,32 +1895,43 @@ class OmsRuntime:
                 self._llm_tasks.pop(task_id, None)
 
     def result_conversation(self, function_name: str, result: dict) -> dict:
-        prompts = []
-        if result.get("warning_count"):
-            prompts.append({"label": "解释这些提示", "text": "把提示按原因分类，并说明哪些需要人工确认。"})
-        if result.get("diff_count"):
-            prompts.append({"label": "查看差异来源", "text": "沿规则、输入和 benchmark 三个方向解释差异。"})
-        if function_name == "resolve_employee_state_at":
-            prompts.append({"label": "继续试算该员工薪资", "text": "基于已解析的任职关系和薪资档案，继续查看该员工本月工资实发。"})
-            prompts.append({"label": "检查社保公积金输入", "text": "查看社保基数、公积金基数和公司规则是否足够支撑扣款计算。"})
-        elif function_name == "resolve_rules_at":
-            prompts.append({"label": "解释缺失规则影响", "text": "说明缺失社保或公积金规则会如何影响后续计算。"})
-            prompts.append({"label": "用这些规则试算薪资", "text": "基于当前月份规则继续进行薪资或社保公积金预览。"})
+        next_actions = []
+        if function_name == "generate_payroll_lines" and result.get("preview_id"):
+            next_actions.append({
+                "label": "确认写入工资明细",
+                "description": "写入本次预览中的工资明细和工资项",
+                "function": "confirm_generated_payroll_lines",
+                "params": {"preview_id": result.get("preview_id", "")},
+            })
         elif function_name == "build_payroll_snapshot":
-            prompts.append({"label": "继续生成工资明细", "text": "基于快照生成工资明细和工资项草稿。"})
-        elif function_name == "generate_payroll_lines":
-            prompts.append({"label": "继续计算薪资实发", "text": "把工资明细草稿与扣款台账、个税台账合并为实发预览。"})
+            next_actions.append({
+                "label": "生成员工工资明细",
+                "description": "基于快照生成待确认预览",
+                "function": "generate_payroll_lines",
+                "params": {"payroll_run_id": result.get("payroll_run_id", "")},
+            })
+        elif function_name == "confirm_generated_payroll_lines":
+            next_actions.append({
+                "label": "计算薪资实发",
+                "description": "基于已写入明细继续试算实发",
+                "function": "calculate_payroll",
+                "params": {"payroll_run_id": result.get("payroll_run_id", "")},
+            })
         elif function_name == "calculate_contributions":
-            prompts.append({"label": "解释扣款台账如何入薪资", "text": "说明待扣、已扣和本次工资实扣之间的关系。"})
-        elif function_name == "calculate_payroll":
-            prompts.append({"label": "解释实发工资构成", "text": "沿扣前应发、社保、公积金、个税和实发公式解释结果。"})
-        prompts.append({"label": "下一步该做什么", "text": "根据本次执行结果给出下一步能力和阻塞条件。"})
+            next_actions.append({
+                "label": "计算薪资实发",
+                "description": "合并扣款台账和个税台账",
+                "function": "calculate_payroll",
+                "params": {"payroll_run_id": result.get("payroll_run_id", "")},
+            })
         return {
-            "title": "执行后建议继续这样看",
+            "title": "业务导航",
             "judgment": self.result_summary(function_name, result),
-            "prompts": prompts[:3],
-            "actions": [],
-            "evidence": ["本体能力", "确定性运行结果", "计算轨迹", "业务提示"],
+            "next_actions": next_actions[:1],
+            "blocked_notes": [],
+            "prompts": [],
+            "actions": next_actions[:1],
+            "evidence": [],
         }
 
     def llm_client(self):
@@ -1782,11 +2064,14 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/context":
             return self._json(RUNTIME.resource_context(params.get("type", ["PayrollRun"])[0], params.get("id", [""])[0]))
         if parsed.path == "/api/execute":
+            function_name = params.get("function", [""])[0]
             return self._json(RUNTIME.execute(
-                params.get("function", [""])[0],
+                function_name,
                 params.get("type", ["PayrollRun"])[0],
                 params.get("id", [""])[0],
                 employee_id=params.get("employee_id", [""])[0],
+                preview_id=params.get("preview_id", [""])[0],
+                extra_params=RUNTIME.extract_function_params(function_name, params),
             ))
         if parsed.path == "/api/llm/task":
             return self._json(RUNTIME.get_llm_task(params.get("id", [""])[0]))

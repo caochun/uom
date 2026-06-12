@@ -895,13 +895,23 @@ functions:
   generate_payroll_lines:
     summary: "生成员工工资明细"
     group: "薪资核算"
-    description: "基于 PayrollEmployeeSnapshot 生成 PayrollLine 草稿和 PayrollItem 应发项。"
+    description: "基于 PayrollEmployeeSnapshot 生成 PayrollLine 草稿和 PayrollItem 应发项预览，返回可确认的 preview_id，不直接写入业务对象。"
     function_type: business
     depends_on: [build_payroll_snapshot]
-    writes_to: [PayrollLine, PayrollItem]
+    writes_to: []
     involves_objects: [PayrollRun, PayrollInputSnapshot, PayrollEmployeeSnapshot, PerformanceRecord, PayrollAdjustment, SalarySplitRule, PerformanceGradeRule, PayrollLine, PayrollItem]
     params:
       payroll_run_id: {type: str, description: "薪资批次编号"}
+
+  confirm_generated_payroll_lines:
+    summary: "确认写入工资明细"
+    group: "薪资核算"
+    description: "读取已生成的工资明细预览，将 PayrollLine 和 PayrollItem 写入业务对象。"
+    function_type: mutation
+    writes_to: [PayrollLine, PayrollItem]
+    involves_objects: [PayrollRun, PayrollLine, PayrollItem]
+    params:
+      preview_id: {type: str, description: "工资明细预览编号"}
     effects:
       - {object: PayrollRun, field: status, set_to: calculating}
 

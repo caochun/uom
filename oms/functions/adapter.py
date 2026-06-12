@@ -8,7 +8,12 @@ from oag.ontology.schema import ObjectSourceDef, Ontology
 
 
 class OmsCsvFileAdapter:
-    """Read-only CSV adapter for OMS ontology objects."""
+    """CSV adapter for ontology objects.
+
+    Most seed CSV files are still treated as source data, but agent-generated
+    objects need a small writable path so explicit confirmation functions can
+    materialize previewed records.
+    """
 
     def __init__(
         self,
@@ -82,13 +87,50 @@ class OmsCsvFileAdapter:
         return results
 
     def insert_record(self, object_type: str, data: dict) -> dict:
-        raise ValueError(f"{object_type} 是只读 OMS CSV 文件对象")
+        self._ensure_writable(object_type)
+        rows = self._load_rows()
+        row = self._normalize_for_write(data)
+        if self.id_field:
+            id_value = row.get(self.id_field)
+            if id_value in (None, ""):
+                raise ValueError(f"{object_type} 缺少主键字段 {self.id_field}")
+            if any(str(existing.get(self.id_field, "")) == str(id_value) for existing in rows):
+                raise ValueError(f"{object_type} 已存在记录 {id_value}")
+        rows.append(row)
+        self._write_rows(rows)
+        return self._coerce(row)
 
     def update_record(self, object_type: str, id_value: Any, data: dict) -> dict:
-        raise ValueError(f"{object_type} 是只读 OMS CSV 文件对象")
+        self._ensure_writable(object_type)
+        if not self.id_field:
+            raise ValueError(f"{object_type} 未声明主键字段")
+        rows = self._load_rows()
+        target = str(id_value)
+        updated = None
+        for index, row in enumerate(rows):
+            if str(row.get(self.id_field, "")) == target:
+                updated = self._normalize_for_write({**row, **data, self.id_field: id_value})
+                rows[index] = updated
+                break
+        if updated is None:
+            raise ValueError(f"{object_type} 未找到记录 {id_value}")
+        self._write_rows(rows)
+        return self._coerce(updated)
 
     def delete_record(self, object_type: str, id_value: Any) -> dict:
-        raise ValueError(f"{object_type} 是只读 OMS CSV 文件对象")
+        self._ensure_writable(object_type)
+        if not self.id_field:
+            raise ValueError(f"{object_type} 未声明主键字段")
+        rows = self._load_rows()
+        target = str(id_value)
+        remaining = [
+            row for row in rows
+            if str(row.get(self.id_field, "")) != target
+        ]
+        if len(remaining) == len(rows):
+            raise ValueError(f"{object_type} 未找到记录 {id_value}")
+        self._write_rows(remaining)
+        return {"deleted": id_value}
 
     def table_count(self, object_type: str) -> int:
         return self.count(object_type)
@@ -109,6 +151,38 @@ class OmsCsvFileAdapter:
         if path.is_absolute():
             return path
         return self.domain_dir / path
+
+    def _fieldnames(self) -> list[str]:
+        obj_def = self.ontology.objects.get(self.object_type)
+        if obj_def:
+            return list(obj_def.properties.keys())
+        path = self._path()
+        if path.exists():
+            with path.open(newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                return list(reader.fieldnames or [])
+        return []
+
+    def _write_rows(self, rows: list[dict]) -> None:
+        path = self._path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fieldnames = self._fieldnames()
+        with path.open("w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(self._normalize_for_write(row))
+
+    def _normalize_for_write(self, row: dict) -> dict:
+        return {
+            field: _stringify_csv_value(row.get(field, ""))
+            for field in self._fieldnames()
+        }
+
+    def _ensure_writable(self, object_type: str) -> None:
+        obj_def = self.ontology.objects.get(object_type)
+        if not obj_def or obj_def.data_source != "agent_generated":
+            raise ValueError(f"{object_type} 是只读 OMS CSV 文件对象")
 
     def coerce_row(self, row: dict[str, str]) -> dict:
         return self._coerce(row)
@@ -170,3 +244,9 @@ def _apply_window(
     if limit:
         rows = rows[:limit]
     return rows
+
+
+def _stringify_csv_value(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value)

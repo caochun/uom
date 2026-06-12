@@ -65,12 +65,8 @@ h1, h2, h3, h4, p, dl, dt, dd { margin: 0; }
 .pane-head span,
 .section-title span,
 .fact-group dt,
-.related-card p,
-.related-head span,
-.related-rows span,
 .summary-item span,
 .guidance-head span,
-.prompt-button span,
 .action-button span,
 .issue-row span,
 .empty-note,
@@ -173,8 +169,7 @@ h1, h2, h3, h4, p, dl, dt, dd { margin: 0; }
   gap: 10px;
 }
 .pane-head,
-.section-title,
-.related-head {
+.section-title {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -276,36 +271,48 @@ h1, h2, h3, h4, p, dl, dt, dd { margin: 0; }
   font-weight: 800;
 }
 
-.related-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-.related-card {
+.related-explanation {
   min-width: 0;
+}
+.related-explanation-text {
+  min-height: 96px;
   padding: 10px;
   display: grid;
-  gap: 8px;
-  border: 1px solid var(--line);
+  gap: 5px;
+  align-content: start;
+  border: 1px solid var(--accent);
   border-radius: 7px;
-  background: var(--panel-soft);
+  background: var(--accent-soft);
 }
-.related-rows {
-  display: grid;
-  gap: 6px;
+.related-explanation-text span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
 }
-.related-rows button {
-  min-height: 52px;
-  padding: 8px;
-  display: grid;
-  gap: 2px;
-  text-align: left;
+.related-explanation-text p {
+  font-weight: 760;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
-.related-rows strong,
-.related-rows span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.related-explanation-text.typing p::after,
+.result-explanation.typing p::after {
+  content: "▍";
+  display: inline-block;
+  width: 0;
+  color: var(--accent);
+  animation: caretPulse 1s steps(2, start) infinite;
+}
+.inline-resource-link {
+  min-height: 0;
+  margin: 0 2px;
+  padding: 1px 5px;
+  display: inline;
+  border-color: var(--accent);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--accent);
+  font-weight: 900;
+  line-height: 1.35;
 }
 
 .mini-metrics {
@@ -361,29 +368,40 @@ h1, h2, h3, h4, p, dl, dt, dd { margin: 0; }
   font-weight: 900;
 }
 .guidance-list { display: grid; gap: 7px; }
-.prompt-button,
 .action-button {
-  min-height: 64px;
-  padding: 9px;
+  min-height: 48px;
+  padding: 8px 9px;
   display: grid;
   gap: 3px;
   text-align: left;
   align-content: center;
 }
-.prompt-button { background: var(--blue-soft); }
 .action-button { background: var(--panel); }
-.evidence-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.action-button.compact {
+  min-height: 46px;
 }
-.evidence-list span {
-  padding: 4px 7px;
+.blocked-list {
+  display: grid;
+  gap: 7px;
+}
+.blocked-item {
+  min-width: 0;
+  padding: 9px;
+  display: grid;
+  gap: 3px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 7px;
   background: var(--panel-soft);
-  font-size: 12px;
-  font-weight: 800;
+}
+.blocked-item strong {
+  font-size: 13px;
+}
+.blocked-item span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.blocked-item {
+  background: #fbfcfd;
 }
 .hidden { display: none !important; }
 .rail-result {
@@ -391,9 +409,9 @@ h1, h2, h3, h4, p, dl, dt, dd { margin: 0; }
   gap: 8px;
 }
 .result-card {
-  padding: 10px;
+  padding: 9px;
   display: grid;
-  gap: 10px;
+  gap: 8px;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: var(--panel-soft);
@@ -408,9 +426,11 @@ h1, h2, h3, h4, p, dl, dt, dd { margin: 0; }
   color: var(--muted);
 }
 .result-explanation {
+  min-height: 72px;
   padding: 9px;
   display: grid;
   gap: 4px;
+  align-content: start;
   border: 1px solid var(--accent);
   border-radius: 6px;
   background: var(--accent-soft);
@@ -424,16 +444,21 @@ h1, h2, h3, h4, p, dl, dt, dd { margin: 0; }
   font-weight: 700;
   white-space: pre-wrap;
 }
+
+@keyframes caretPulse {
+  0%, 45% { opacity: 1; }
+  46%, 100% { opacity: 0; }
+}
 .result-highlights,
 .result-facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: 5px;
 }
 .result-highlights div,
 .result-facts div {
   min-width: 0;
-  padding: 7px;
+  padding: 6px;
   display: grid;
   gap: 2px;
   border: 1px solid var(--line);
@@ -447,6 +472,10 @@ h1, h2, h3, h4, p, dl, dt, dd { margin: 0; }
 .result-subsection {
   display: grid;
   gap: 6px;
+}
+.result-followups {
+  display: grid;
+  gap: 7px;
 }
 .result-subsection h4 {
   font-size: 13px;
@@ -497,7 +526,6 @@ h1, h2, h3, h4, p, dl, dt, dd { margin: 0; }
   .guidance-pane { min-height: auto; border: 0; }
   .summary-strip,
   .fact-groups,
-  .related-grid,
   .mini-metrics,
   .result-highlights,
   .result-facts { grid-template-columns: 1fr; }

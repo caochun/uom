@@ -51,6 +51,7 @@ function resourceButton(resource) {
 }
 
 async function openResource(type, id) {
+  clearTypewriters();
   state.selectedType = type;
   state.selectedId = id || "";
   renderAtlas();
@@ -64,6 +65,7 @@ async function openResource(type, id) {
 }
 
 function renderContext(context) {
+  clearTypewriters();
   document.querySelector("#contextKind").textContent = `${context.resource.name} / ${context.resource.source} / ${context.resource.mutability}`;
   document.querySelector("#contextTitle").textContent = context.resource.name;
   document.querySelector("#contextSubtitle").textContent = context.resource.description || context.subtitle || "";
@@ -72,6 +74,8 @@ function renderContext(context) {
   renderDetail(context);
   renderConversation(context.conversation || {});
   watchConversationTask(context.conversation || {});
+  renderRelatedExplanation(context.resource_context?.related_explanation || {});
+  watchRelatedTask(context.resource_context?.related_explanation || {});
 }
 
 function renderMetrics(metrics) {
@@ -126,12 +130,100 @@ function renderDetail(context) {
         <h3>相关资源</h3>
         <span>由当前记录自动带出</span>
       </div>
-      <div class="related-grid">
-        ${(detail.related || []).map(renderRelatedGroup).join("") || emptyBlock("当前资源暂无相关记录")}
-      </div>
+      <div id="relatedExplanation" class="related-explanation"></div>
     </section>
   `;
   document.querySelectorAll("#detailView [data-resource-type]").forEach((button) => {
+    button.addEventListener("click", () => openResource(button.dataset.resourceType, button.dataset.resourceId || ""));
+  });
+}
+
+function renderRelatedExplanation(explanation) {
+  const root = document.querySelector("#relatedExplanation");
+  if (!root) return;
+  const refs = explanation.refs || [];
+  const pending = explanation.llm_status === "pending";
+  const text = pending ? "" : (explanation.text || "当前资源暂无相关资源解读。");
+  root.innerHTML = `
+    <div class="related-explanation-text ${pending ? "pending typing" : ""}">
+      <span>${explanation.mode === "llm" ? "智能解读" : (pending ? "智能解读生成中" : "相关资源解读")}</span>
+      <p>${pending ? "" : renderLinkedText(text, refs)}</p>
+    </div>
+  `;
+  bindRelatedLinks(root);
+}
+
+async function watchRelatedTask(explanation) {
+  const taskId = explanation.llm_task || "";
+  if (!taskId || state.watchedTasks.has(taskId)) return;
+  state.watchedTasks.add(taskId);
+  state.typedTextByTask.set(taskId, "");
+  state.typewriterTargets.delete(taskId);
+  for (let i = 0; i < 60; i += 1) {
+    await delay(i < 4 ? 250 : 500);
+    const data = await getJson(`/api/llm/task?id=${encodeURIComponent(taskId)}`);
+    if (data.kind !== "related") continue;
+    const refs = (data.result && data.result.refs) || explanation.refs || [];
+    if (data.partial) typeRelatedText(taskId, data.partial, refs, data.status === "done");
+    if (data.status === "done" || data.status === "error" || data.status === "missing") {
+      if (data.result && data.result.text) typeRelatedText(taskId, data.result.text, refs, true);
+      return;
+    }
+  }
+}
+
+function typeRelatedText(taskId, text, refs, done) {
+  const root = document.querySelector("#relatedExplanation");
+  if (!root) return;
+  let box = root.querySelector(".related-explanation-text");
+  if (!box) {
+    root.innerHTML = `<div class="related-explanation-text typing"><span>智能解读</span><p></p></div>`;
+    box = root.querySelector(".related-explanation-text");
+  }
+  box.classList.remove("pending");
+  box.classList.toggle("typing", !done);
+  box.querySelector("span").textContent = done ? "智能解读" : "智能解读生成中";
+  state.typewriterTargets.set(taskId, { text, refs, done });
+  if (!state.typewriterTimers.has(taskId)) {
+    state.typewriterTimers.set(taskId, setInterval(() => tickRelatedTypewriter(taskId), 45));
+  }
+}
+
+function tickRelatedTypewriter(taskId) {
+  const target = state.typewriterTargets.get(taskId);
+  if (!target) return stopTypewriter(taskId);
+  const box = document.querySelector("#relatedExplanation .related-explanation-text");
+  if (!box) return stopTypewriter(taskId);
+  const paragraph = box.querySelector("p");
+  const current = state.typedTextByTask.get(taskId) || "";
+  if (current.length < target.text.length) {
+    const next = target.text.slice(0, current.length + 1);
+    state.typedTextByTask.set(taskId, next);
+    paragraph.textContent = next;
+    return;
+  }
+  if (target.done) {
+    paragraph.innerHTML = renderLinkedText(current, target.refs || []);
+    bindRelatedLinks(box);
+    box.classList.remove("typing");
+    stopTypewriter(taskId);
+  }
+}
+
+function renderLinkedText(text, refs) {
+  const refMap = new Map((refs || []).map((item) => [item.ref, item]));
+  const parts = String(text || "").split(/(\[\[[A-Za-z0-9_]+\]\])/g);
+  return parts.map((part) => {
+    const match = part.match(/^\[\[([A-Za-z0-9_]+)\]\]$/);
+    if (!match) return escapeHtml(part);
+    const item = refMap.get(match[1]);
+    if (!item) return escapeHtml(match[1]);
+    return `<button class="inline-resource-link" data-resource-type="${escapeHtml(item.type || item.ref)}" data-resource-id="${escapeHtml(item.id || "")}">${escapeHtml(item.label || item.ref)}</button>`;
+  }).join("");
+}
+
+function bindRelatedLinks(root) {
+  root.querySelectorAll(".inline-resource-link").forEach((button) => {
     button.addEventListener("click", () => openResource(button.dataset.resourceType, button.dataset.resourceId || ""));
   });
 }
@@ -144,26 +236,6 @@ function renderFactGroup(group) {
         ${(group.rows || []).map((row) => `<div><dt>${escapeHtml(row.label)}</dt><dd>${escapeHtml(row.value)}</dd></div>`).join("")}
       </dl>
     </div>
-  `;
-}
-
-function renderRelatedGroup(group) {
-  return `
-    <article class="related-card">
-      <div class="related-head">
-        <strong>${escapeHtml(group.title)}</strong>
-        <span>${formatCount(group.count)} 条</span>
-      </div>
-      <p>${escapeHtml(group.description || "")}</p>
-      <div class="related-rows">
-        ${(group.rows || []).map((row) => `
-          <button data-resource-type="${escapeHtml(group.type)}" data-resource-id="${escapeHtml(row.id || "")}" ${row.id ? "" : "disabled"}>
-            <strong>${escapeHtml(row.title || row.id || "-")}</strong>
-            <span>${escapeHtml(row.description || "")}</span>
-          </button>
-        `).join("") || `<span class="empty-inline">暂无样本记录</span>`}
-      </div>
-    </article>
   `;
 }
 
@@ -208,38 +280,24 @@ function renderConversation(conversation) {
   document.querySelector("#railJudgment").textContent = conversation.judgment || "";
   const pending = conversation.llm_status === "pending";
   document.querySelector(".guidance-head span").textContent = conversation.mode === "llm" ? "智能引导" : (pending ? "业务引导 · 智能生成中" : "业务引导");
-  document.querySelector("#railPrompts").innerHTML = (conversation.prompts || []).map((prompt) => `
-    <button class="prompt-button" data-prompt="${escapeHtml(prompt.text || prompt.label)}">
-      <strong>${escapeHtml(prompt.label)}</strong>
-      <span>${escapeHtml(prompt.text || "")}</span>
-    </button>
-  `).join("");
-  document.querySelector("#railActions").innerHTML = (conversation.actions || []).map((action) => `
-    <button class="action-button" data-function="${escapeHtml(action.function || "")}">
+  document.querySelector("#railActions").innerHTML = (conversation.next_actions || conversation.actions || []).map((action) => `
+    <button class="action-button" data-function="${escapeHtml(action.function || "")}" data-params="${escapeHtml(JSON.stringify(action.params || {}))}">
       <strong>${escapeHtml(action.label)}</strong>
       <span>${escapeHtml(action.description || action.mode || "")}</span>
     </button>
   `).join("") || `<div class="empty-note">当前更适合先查看资源详情。</div>`;
-  document.querySelector("#railEvidence").innerHTML = (conversation.evidence || []).map((item) => `<span>${escapeHtml(item)}</span>`).join("");
+  document.querySelector("#railBlocked").innerHTML = (conversation.blocked_notes || []).map((item) => `
+    <div class="blocked-item">
+      <strong>${escapeHtml(item.label || "")}</strong>
+      <span>${escapeHtml(item.reason || "")}</span>
+    </div>
+  `).join("") || `<div class="empty-inline">无主要阻塞。</div>`;
   document.querySelectorAll("#railActions [data-function]").forEach((button) => {
-    button.addEventListener("click", () => executeCapability(button.dataset.function));
-  });
-  document.querySelectorAll("#railPrompts [data-prompt]").forEach((button) => {
-    button.addEventListener("click", () => showPromptResponse(button.dataset.prompt));
+    button.addEventListener("click", () => executeCapability(button.dataset.function, readActionParams(button)));
   });
 }
 
-function showPromptResponse(text) {
-  const context = state.context;
-  const evidence = (context.conversation.evidence || []).join("、");
-  showRailResult({
-    title: "建议查看",
-    summary: text,
-    sections: evidence ? [{ title: "依据", kind: "list", rows: [{ title: evidence, meta: "" }] }] : [],
-  });
-}
-
-async function executeCapability(functionName) {
+async function executeCapability(functionName, options = {}) {
   if (!functionName) return;
   setRailBusy(functionName);
   const params = new URLSearchParams({
@@ -247,8 +305,19 @@ async function executeCapability(functionName) {
     type: state.selectedType,
     id: state.selectedId || "",
   });
+  Object.entries(options || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") params.set(key, value);
+  });
   const data = await getJson(`/api/execute?${params.toString()}`);
   renderExecutionResult(data);
+}
+
+function readActionParams(button) {
+  try {
+    return JSON.parse(button.dataset.params || "{}");
+  } catch {
+    return {};
+  }
 }
 
 function renderExecutionResult(data) {
@@ -262,6 +331,7 @@ function renderExecutionResult(data) {
     llmTask: result.llm_task || "",
     highlights: result.highlights || [],
     sections: result.sections || [],
+    followUpActions: result.follow_up_actions || [],
   });
   watchResultTask(result.llm_task || "");
   renderConversation(data.conversation || state.context.conversation || {});
@@ -280,11 +350,28 @@ function showRailResult(result) {
       ${result.explanation ? `<div class="result-explanation"><span>${result.mode === "llm" ? "智能解释" : "结果说明"}</span><p>${escapeHtml(result.explanation)}</p></div>` : ""}
       ${result.highlights && result.highlights.length ? `
         <div class="result-highlights">
-          ${result.highlights.slice(0, 6).map((item) => `<div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`).join("")}
+          ${result.highlights.slice(0, 4).map((item) => `<div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`).join("")}
         </div>
       ` : ""}
-      ${(result.sections || []).slice(0, 4).map(renderRailResultSection).join("")}
+      ${renderFollowUpActions(result.followUpActions || [])}
     </article>
+  `;
+  root.querySelectorAll("[data-follow-function]").forEach((button) => {
+    button.addEventListener("click", () => executeCapability(button.dataset.followFunction, readActionParams(button)));
+  });
+}
+
+function renderFollowUpActions(actions) {
+  if (!actions.length) return "";
+  return `
+    <div class="result-followups">
+      ${actions.map((action) => `
+        <button class="action-button compact" data-follow-function="${escapeHtml(action.function || "")}" data-params="${escapeHtml(JSON.stringify(action.params || {}))}">
+          <strong>${escapeHtml(action.label || "")}</strong>
+          <span>${escapeHtml(action.description || "")}</span>
+        </button>
+      `).join("")}
+    </div>
   `;
 }
 
@@ -325,12 +412,13 @@ function typeResultText(taskId, text, done) {
   let box = card.querySelector(".result-explanation");
   if (!box) {
     box = document.createElement("div");
-    box.className = "result-explanation";
+    box.className = "result-explanation typing";
     box.innerHTML = `<span>智能解释</span><p></p>`;
     const firstParagraph = card.querySelector("p");
     firstParagraph.insertAdjacentElement("afterend", box);
   }
   box.classList.remove("pending");
+  box.classList.toggle("typing", !done);
   const label = box.querySelector("span");
   label.textContent = done ? "智能解释" : "智能解释生成中";
   state.typewriterTargets.set(taskId, { text, done });
@@ -349,17 +437,27 @@ function tickTypewriter(taskId) {
   if (current.length < target.text.length) {
     const next = target.text.slice(0, current.length + 1);
     state.typedTextByTask.set(taskId, next);
-    paragraph.textContent = next + "▍";
+    paragraph.textContent = next;
     return;
   }
-  paragraph.textContent = current + (target.done ? "" : "▍");
-  if (target.done) stopTypewriter(taskId);
+  paragraph.textContent = current;
+  if (target.done) {
+    box.classList.remove("typing");
+    stopTypewriter(taskId);
+  }
 }
 
 function stopTypewriter(taskId) {
   const timer = state.typewriterTimers.get(taskId);
   if (timer) clearInterval(timer);
   state.typewriterTimers.delete(taskId);
+}
+
+function clearTypewriters() {
+  state.typewriterTimers.forEach((timer) => clearInterval(timer));
+  state.typewriterTimers.clear();
+  state.typewriterTargets.clear();
+  state.typedTextByTask.clear();
 }
 
 async function pollTask(taskId) {

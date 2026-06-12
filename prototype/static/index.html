@@ -51,24 +51,20 @@
     <aside class="guidance-pane">
       <div class="guidance-head">
         <span>业务引导</span>
-        <strong id="railTitle">当前可以这样推进</strong>
+        <strong id="railTitle">业务导航</strong>
       </div>
       <p id="railJudgment" class="guidance-judgment">系统会根据当前资源状态给出建议。</p>
       <div class="guidance-section">
-        <div class="guidance-label">建议查看</div>
-        <div id="railPrompts" class="guidance-list"></div>
+        <div class="guidance-label">下一步</div>
+        <div id="railActions" class="guidance-list"></div>
       </div>
       <div class="guidance-section">
-        <div class="guidance-label">快捷操作</div>
-        <div id="railActions" class="guidance-list"></div>
+        <div class="guidance-label">暂不可用</div>
+        <div id="railBlocked" class="blocked-list"></div>
       </div>
       <div id="railResultSection" class="guidance-section result-section hidden">
         <div class="guidance-label">预览结果</div>
         <div id="railResult" class="rail-result"></div>
-      </div>
-      <div class="guidance-section">
-        <div class="guidance-label">依据</div>
-        <div id="railEvidence" class="evidence-list"></div>
       </div>
     </aside>
 

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +50,7 @@ def register(registry: FunctionRegistry, store: ObjectRepository, ontology: Onto
         "resolve_rules_at": lambda **kw: _resolve_rules_at(store, **kw),
         "build_payroll_snapshot": lambda **kw: _build_payroll_snapshot(store, **kw),
         "generate_payroll_lines": lambda **kw: _generate_payroll_lines(store, **kw),
+        "confirm_generated_payroll_lines": lambda **kw: _confirm_generated_payroll_lines(store, **kw),
         "calculate_contributions": lambda **kw: _calculate_contributions(store, **kw),
         "calculate_payroll": lambda **kw: _calculate_payroll(store, **kw),
     }
@@ -271,8 +275,25 @@ def _generate_payroll_lines(
                 "message": "Excel benchmark 中没有对应 PayrollLine 校对行。",
             })
 
+    preview = {}
+    if kwargs.get("persist_preview", True):
+        preview = _save_preview_artifact("payroll_lines", {
+            "payroll_run_id": payroll_run_id,
+            "snapshot_id": snapshot.get("snapshot_id", ""),
+            "payroll_period": period,
+            "result_set": {
+                "PayrollLine": generated,
+                "PayrollItem": generated_items,
+            },
+            "diff_count": len(diffs),
+            "warning_count": len(warnings),
+            "sample_diffs": diffs[:10],
+            "sample_warnings": warnings[:10],
+        })
+
     return {
         "status": "generated_preview",
+        "preview_id": preview.get("preview_id", ""),
         "payroll_run_id": payroll_run_id,
         "snapshot_id": snapshot.get("snapshot_id", ""),
         "payroll_period": period,
@@ -289,7 +310,84 @@ def _generate_payroll_lines(
         } if kwargs.get("include_result_set") else {},
         "sample_diffs": diffs[:10],
         "sample_warnings": warnings[:10],
-        "note": "当前 OMS CSV adapter 为只读；本函数返回基于快照和规则生成的工资明细、工资项预览，并与 data/benchmarks 中的 Excel 校对基准对比。",
+        "note": "已生成工资明细与工资项预览，尚未写入业务对象；确认后会写入 PayrollLine 和 PayrollItem。",
+    }
+
+
+def _confirm_generated_payroll_lines(
+    store: ObjectRepository,
+    preview_id: str = "",
+    **kwargs,
+) -> dict:
+    if not preview_id:
+        return {"error": "缺少 preview_id，无法确认写入。"}
+
+    artifact = _load_preview_artifact(preview_id)
+    if not artifact:
+        return {"error": f"未找到预览 {preview_id}"}
+    if artifact.get("kind") != "payroll_lines":
+        return {"error": f"预览 {preview_id} 不是工资明细生成结果。"}
+    if artifact.get("status") == "confirmed":
+        return {
+            "status": "already_confirmed",
+            "preview_id": preview_id,
+            "payroll_run_id": artifact.get("payroll_run_id", ""),
+            "payroll_line_count": artifact.get("confirmed_counts", {}).get("PayrollLine", 0),
+            "payroll_item_count": artifact.get("confirmed_counts", {}).get("PayrollItem", 0),
+            "message": "该预览已经确认写入，无需重复执行。",
+        }
+
+    result_set = artifact.get("result_set") or {}
+    payroll_lines = list(result_set.get("PayrollLine") or [])
+    payroll_items = list(result_set.get("PayrollItem") or [])
+    if not payroll_lines:
+        return {"error": f"预览 {preview_id} 不包含可写入的工资明细。"}
+
+    existing_lines = [
+        line.get("payroll_line_id", "")
+        for line in payroll_lines
+        if store.query_by_id("PayrollLine", line.get("payroll_line_id", ""))
+    ]
+    existing_items = [
+        item.get("payroll_item_id", "")
+        for item in payroll_items
+        if store.query_by_id("PayrollItem", item.get("payroll_item_id", ""))
+    ]
+    if existing_lines or existing_items:
+        return {
+            "status": "conflict",
+            "preview_id": preview_id,
+            "payroll_run_id": artifact.get("payroll_run_id", ""),
+            "error": "目标工资明细或工资项已存在，未执行写入，避免重复确认。",
+            "existing_payroll_lines": existing_lines[:10],
+            "existing_payroll_items": existing_items[:10],
+        }
+
+    for line in payroll_lines:
+        store.insert_record("PayrollLine", line)
+    for item in payroll_items:
+        store.insert_record("PayrollItem", item)
+
+    artifact["status"] = "confirmed"
+    artifact["confirmed_at"] = _utc_now()
+    artifact["confirmed_counts"] = {
+        "PayrollLine": len(payroll_lines),
+        "PayrollItem": len(payroll_items),
+    }
+    _write_preview_artifact(preview_id, artifact)
+
+    payroll_run_id = artifact.get("payroll_run_id", "")
+    return {
+        "status": "confirmed",
+        "preview_id": preview_id,
+        "payroll_run_id": payroll_run_id,
+        "snapshot_id": artifact.get("snapshot_id", ""),
+        "payroll_period": artifact.get("payroll_period", ""),
+        "payroll_line_count": len(payroll_lines),
+        "payroll_item_count": len(payroll_items),
+        "current_payroll_line_count": store.count("PayrollLine", {"payroll_run_id": payroll_run_id}),
+        "current_payroll_item_count": store.count("PayrollItem", {"payroll_run_id": payroll_run_id}),
+        "message": "工资明细和工资项已确认写入。",
     }
 
 
@@ -472,7 +570,11 @@ def _calculate_payroll(
     employee_id: str = "",
     **kwargs,
 ) -> dict:
-    generated_preview = _generate_payroll_lines(store, payroll_run_id=payroll_run_id)
+    generated_preview = _generate_payroll_lines(
+        store,
+        payroll_run_id=payroll_run_id,
+        persist_preview=False,
+    )
     if generated_preview.get("error") or generated_preview.get("status") == "missing_snapshot":
         return generated_preview
 
@@ -859,3 +961,38 @@ def _make_not_implemented(name: str):
         }
 
     return _fn
+
+
+def _preview_dir() -> Path:
+    return Path(__file__).resolve().parent.parent / "data" / "previews"
+
+
+def _save_preview_artifact(kind: str, payload: dict) -> dict:
+    preview_id = f"PREVIEW_{kind.upper()}_{uuid.uuid4().hex[:12]}"
+    artifact = {
+        "preview_id": preview_id,
+        "kind": kind,
+        "status": "generated",
+        "created_at": _utc_now(),
+        **payload,
+    }
+    _write_preview_artifact(preview_id, artifact)
+    return artifact
+
+
+def _load_preview_artifact(preview_id: str) -> dict | None:
+    path = _preview_dir() / f"{preview_id}.json"
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_preview_artifact(preview_id: str, artifact: dict) -> None:
+    directory = _preview_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{preview_id}.json"
+    path.write_text(json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
