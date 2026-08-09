@@ -1,0 +1,176 @@
+schema: oms.data.objects.v1
+ontology: ../ontology.yaml
+
+objects:
+  - id: enterprise:twincore
+    type: enterprise
+    name: TwinCore 示例企业
+    facts: {status: active}
+
+  - id: party:customer-a
+    type: counterparty
+    name: 示例客户 A
+    facts: {party_type: organization, status: active}
+
+  - id: party:supplier-a
+    type: counterparty
+    name: 示例供应商 A
+    facts: {party_type: organization, status: active}
+
+  - id: party:supplier-b
+    type: counterparty
+    name: 示例售前服务商 B
+    facts: {party_type: organization, status: active}
+
+  - id: revenue:customer-a-2026-07
+    type: revenue
+    name: 客户 A 2026 年 7 月服务收入
+    facts:
+      amount: {amount: 1000000, currency: CNY}
+      period: "2026-07"
+      revenue_type: service
+      status: recognized
+    source_refs: [contract:customer-a, settlement:customer-a-2026-07]
+
+  - id: receivable:customer-a-2026-07
+    type: receivable
+    name: 客户 A 2026 年 7 月应收
+    facts:
+      amount: {amount: 1000000, currency: CNY}
+      due_date: "2026-08-31"
+      status: settled
+    source_refs: [invoice:outgoing-a]
+
+  - id: receipt:customer-a-2026-08
+    type: cash_receipt
+    name: 客户 A 2026 年 8 月回款
+    facts:
+      amount: {amount: 1000000, currency: CNY}
+      occurred_on: "2026-08-15"
+      status: confirmed
+    source_refs: [bank_transaction:receipt-a]
+
+  - id: expenditure:people-2026-07
+    type: expenditure
+    name: 2026 年 7 月人员投入
+    facts:
+      amount: {amount: 300000, currency: CNY}
+      occurred_on: "2026-07-31"
+      expenditure_type: people
+      status: completed
+    source_refs: [payroll:2026-07, resource_assignment:customer-a]
+
+  - id: cost:people-2026-07
+    type: cost_expense
+    name: 2026 年 7 月人员成本
+    facts:
+      amount: {amount: 300000, currency: CNY}
+      period: "2026-07"
+      cost_type: people_cost
+      status: recognized
+    source_refs: [employee_cost:2026-07]
+
+  - id: expenditure:purchase-a
+    type: expenditure
+    name: 供应商 A 设备与服务采购
+    facts:
+      amount: {amount: 200000, currency: CNY}
+      occurred_on: "2026-07-20"
+      expenditure_type: purchase
+      status: completed
+    source_refs: [purchase_order:purchase-a]
+
+  - id: cost:purchase-service-a
+    type: cost_expense
+    name: 供应商 A 项目服务成本
+    facts:
+      amount: {amount: 150000, currency: CNY}
+      period: "2026-07"
+      cost_type: external_service
+      status: recognized
+    source_refs: [purchase_delivery:purchase-a]
+
+  - id: asset:equipment-a
+    type: asset
+    name: 供应商 A 交付设备
+    facts:
+      amount: {amount: 50000, currency: CNY}
+      asset_type: equipment
+      status: active
+    source_refs: [fixed_asset:equipment-a]
+
+  - id: payable:supplier-a
+    type: payable
+    name: 供应商 A 应付
+    facts:
+      amount: {amount: 200000, currency: CNY}
+      due_date: "2026-07-31"
+      status: settled
+    source_refs: [invoice:incoming-a]
+
+  - id: payment:supplier-a
+    type: cash_payment
+    name: 供应商 A 付款
+    facts:
+      amount: {amount: 200000, currency: CNY}
+      occurred_on: "2026-07-25"
+      status: confirmed
+    source_refs: [bank_transaction:payment-a]
+
+  - id: expenditure:presales-pending
+    type: expenditure
+    name: 待转化商机的前置投入
+    facts:
+      amount: {amount: 50000, currency: CNY}
+      occurred_on: "2026-07-18"
+      expenditure_type: presales_service
+      status: completed
+    source_refs: [opportunity:pending-b, purchase_order:presales-b]
+
+  - id: cost:presales-pending
+    type: cost_expense
+    name: 等待收入归因的前置成本
+    facts:
+      amount: {amount: 50000, currency: CNY}
+      period: "2026-07"
+      cost_type: presales_cost
+      status: recognized
+    source_refs: [opportunity:pending-b]
+
+  - id: expenditure:lost-opportunity
+    type: expenditure
+    name: 已失败商机的投入
+    facts:
+      amount: {amount: 20000, currency: CNY}
+      occurred_on: "2026-07-18"
+      expenditure_type: bid_service
+      status: completed
+    source_refs: [opportunity:lost-c, purchase_order:presales-b]
+
+  - id: cost:lost-opportunity
+    type: cost_expense
+    name: 已失败商机费用
+    facts:
+      amount: {amount: 20000, currency: CNY}
+      period: "2026-07"
+      cost_type: lost_opportunity
+      status: recognized
+    source_refs: [opportunity:lost-c]
+
+  - id: payable:supplier-b
+    type: payable
+    name: 售前服务商 B 应付
+    facts:
+      amount: {amount: 70000, currency: CNY}
+      due_date: "2026-07-31"
+      status: settled
+    source_refs: [invoice:incoming-b]
+
+  - id: payment:supplier-b
+    type: cash_payment
+    name: 售前服务商 B 付款
+    facts:
+      amount: {amount: 70000, currency: CNY}
+      occurred_on: "2026-07-26"
+      status: confirmed
+    source_refs: [bank_transaction:payment-b]

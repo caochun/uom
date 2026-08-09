@@ -1,2 +1,0 @@
-﻿payroll_run_id,payroll_period,attendance_period,performance_period,pay_date,payment_period,contribution_period,tax_period,status,source_workbook,created_by,created_at
-PAYROLL_202604,2026-04,2026-04,2026-04,2026-05-26,2026-05,2026-05,2026-05,draft,docs/202604工资明细.xlsx,excel_extract,2026-06-07T15:40:17

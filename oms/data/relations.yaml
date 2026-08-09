@@ -1,0 +1,138 @@
+schema: oms.data.relations.v1
+ontology: ../ontology.yaml
+
+relations:
+  - {id: rel:enterprise-revenue-a, type: enterprise_owns_fact, from: enterprise:twincore, to: revenue:customer-a-2026-07}
+  - {id: rel:enterprise-receivable-a, type: enterprise_owns_fact, from: enterprise:twincore, to: receivable:customer-a-2026-07}
+  - {id: rel:enterprise-receipt-a, type: enterprise_owns_fact, from: enterprise:twincore, to: receipt:customer-a-2026-08}
+  - {id: rel:enterprise-expenditure-people, type: enterprise_owns_fact, from: enterprise:twincore, to: expenditure:people-2026-07}
+  - {id: rel:enterprise-cost-people, type: enterprise_owns_fact, from: enterprise:twincore, to: cost:people-2026-07}
+  - {id: rel:enterprise-expenditure-purchase, type: enterprise_owns_fact, from: enterprise:twincore, to: expenditure:purchase-a}
+  - {id: rel:enterprise-cost-purchase, type: enterprise_owns_fact, from: enterprise:twincore, to: cost:purchase-service-a}
+  - {id: rel:enterprise-asset-a, type: enterprise_owns_fact, from: enterprise:twincore, to: asset:equipment-a}
+  - {id: rel:enterprise-payable-a, type: enterprise_owns_fact, from: enterprise:twincore, to: payable:supplier-a}
+  - {id: rel:enterprise-payment-a, type: enterprise_owns_fact, from: enterprise:twincore, to: payment:supplier-a}
+  - {id: rel:enterprise-expenditure-pending, type: enterprise_owns_fact, from: enterprise:twincore, to: expenditure:presales-pending}
+  - {id: rel:enterprise-cost-pending, type: enterprise_owns_fact, from: enterprise:twincore, to: cost:presales-pending}
+  - {id: rel:enterprise-expenditure-lost, type: enterprise_owns_fact, from: enterprise:twincore, to: expenditure:lost-opportunity}
+  - {id: rel:enterprise-cost-lost, type: enterprise_owns_fact, from: enterprise:twincore, to: cost:lost-opportunity}
+  - {id: rel:enterprise-payable-b, type: enterprise_owns_fact, from: enterprise:twincore, to: payable:supplier-b}
+  - {id: rel:enterprise-payment-b, type: enterprise_owns_fact, from: enterprise:twincore, to: payment:supplier-b}
+
+  - {id: rel:revenue-customer, type: fact_involves_counterparty, from: revenue:customer-a-2026-07, to: party:customer-a, facts: {role: customer}}
+  - {id: rel:receivable-customer, type: fact_involves_counterparty, from: receivable:customer-a-2026-07, to: party:customer-a, facts: {role: debtor}}
+  - {id: rel:receipt-customer, type: fact_involves_counterparty, from: receipt:customer-a-2026-08, to: party:customer-a, facts: {role: payer}}
+  - {id: rel:purchase-supplier-a, type: fact_involves_counterparty, from: expenditure:purchase-a, to: party:supplier-a, facts: {role: supplier}}
+  - {id: rel:payable-supplier-a, type: fact_involves_counterparty, from: payable:supplier-a, to: party:supplier-a, facts: {role: creditor}}
+  - {id: rel:payment-supplier-a, type: fact_involves_counterparty, from: payment:supplier-a, to: party:supplier-a, facts: {role: payee}}
+  - {id: rel:pending-supplier-b, type: fact_involves_counterparty, from: expenditure:presales-pending, to: party:supplier-b, facts: {role: supplier}}
+  - {id: rel:lost-supplier-b, type: fact_involves_counterparty, from: expenditure:lost-opportunity, to: party:supplier-b, facts: {role: supplier}}
+  - {id: rel:payable-supplier-b, type: fact_involves_counterparty, from: payable:supplier-b, to: party:supplier-b, facts: {role: creditor}}
+  - {id: rel:payment-supplier-b, type: fact_involves_counterparty, from: payment:supplier-b, to: party:supplier-b, facts: {role: payee}}
+
+  - id: rel:revenue-receivable-a
+    type: revenue_creates_receivable
+    from: revenue:customer-a-2026-07
+    to: receivable:customer-a-2026-07
+    facts: {linked_amount: {amount: 1000000, currency: CNY}}
+
+  - id: rel:receipt-settles-receivable-a
+    type: cash_receipt_settles_receivable
+    from: receipt:customer-a-2026-08
+    to: receivable:customer-a-2026-07
+    facts:
+      settled_amount: {amount: 1000000, currency: CNY}
+      settled_on: "2026-08-15"
+
+  - id: rel:people-expenditure-cost
+    type: expenditure_recognized_as_cost
+    from: expenditure:people-2026-07
+    to: cost:people-2026-07
+    facts: {recognized_amount: {amount: 300000, currency: CNY}}
+
+  - id: rel:purchase-expenditure-cost
+    type: expenditure_recognized_as_cost
+    from: expenditure:purchase-a
+    to: cost:purchase-service-a
+    facts: {recognized_amount: {amount: 150000, currency: CNY}}
+
+  - id: rel:purchase-expenditure-asset
+    type: expenditure_capitalized_as_asset
+    from: expenditure:purchase-a
+    to: asset:equipment-a
+    facts: {capitalized_amount: {amount: 50000, currency: CNY}}
+
+  - id: rel:purchase-expenditure-payable
+    type: expenditure_creates_payable
+    from: expenditure:purchase-a
+    to: payable:supplier-a
+    facts: {linked_amount: {amount: 200000, currency: CNY}}
+
+  - id: rel:payment-settles-payable-a
+    type: cash_payment_settles_payable
+    from: payment:supplier-a
+    to: payable:supplier-a
+    facts:
+      settled_amount: {amount: 200000, currency: CNY}
+      settled_on: "2026-07-25"
+
+  - id: rel:pending-expenditure-cost
+    type: expenditure_recognized_as_cost
+    from: expenditure:presales-pending
+    to: cost:presales-pending
+    facts: {recognized_amount: {amount: 50000, currency: CNY}}
+
+  - id: rel:lost-expenditure-cost
+    type: expenditure_recognized_as_cost
+    from: expenditure:lost-opportunity
+    to: cost:lost-opportunity
+    facts: {recognized_amount: {amount: 20000, currency: CNY}}
+
+  - id: rel:pending-expenditure-payable
+    type: expenditure_creates_payable
+    from: expenditure:presales-pending
+    to: payable:supplier-b
+    facts: {linked_amount: {amount: 50000, currency: CNY}}
+
+  - id: rel:lost-expenditure-payable
+    type: expenditure_creates_payable
+    from: expenditure:lost-opportunity
+    to: payable:supplier-b
+    facts: {linked_amount: {amount: 20000, currency: CNY}}
+
+  - id: rel:payment-settles-payable-b
+    type: cash_payment_settles_payable
+    from: payment:supplier-b
+    to: payable:supplier-b
+    facts:
+      settled_amount: {amount: 70000, currency: CNY}
+      settled_on: "2026-07-26"
+
+  - id: rel:people-cost-revenue-a
+    type: cost_attributed_to_revenue
+    from: cost:people-2026-07
+    to: revenue:customer-a-2026-07
+    facts:
+      allocated_amount: {amount: 300000, currency: CNY}
+      basis: resource_assignment
+      status: confirmed
+      period: "2026-07"
+
+  - id: rel:purchase-cost-revenue-a
+    type: cost_attributed_to_revenue
+    from: cost:purchase-service-a
+    to: revenue:customer-a-2026-07
+    facts:
+      allocated_amount: {amount: 150000, currency: CNY}
+      basis: direct_purchase
+      status: confirmed
+      period: "2026-07"
+
+  - id: rel:lost-cost-enterprise
+    type: cost_absorbed_by_enterprise
+    from: cost:lost-opportunity
+    to: enterprise:twincore
+    facts:
+      absorbed_amount: {amount: 20000, currency: CNY}
+      reason: opportunity_lost
+      period: "2026-07"
