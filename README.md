@@ -1,9 +1,9 @@
 # OMS
 
-OMS 是一个面向企业经营分析的对象关系工作台。它以收入、成本、应收、应付、收款和付款等经营事实为中心，
-用可追溯关系解释事实之间的来源、核销和成本归因，而不要求所有数据经过项目或统一核算中心。
+本分支将 OMS 用于高速公路经营分析。它把路网、车辆通行、收费清分、收入、养护成本和实际资金放在同一张
+对象关系网络中，用可追溯关系解释事实来源、收付款核销和成本归因。
 
-项目使用两个稳定的本体概念：
+系统使用两个稳定的本体概念：
 
 ```text
 Object   企业经营中可识别、可追溯的事物
@@ -21,6 +21,7 @@ Relation 两个 Object 之间有方向、可携带事实的业务联系
 - 扩展对象类型、关系类型和带值类型的 Property 定义。
 - 根据用户模型动态生成金额、日期、期间、布尔值和 JSON 等表单控件。
 - 计算收入贡献、查找待归因成本并追溯对象关系。
+- 支持高速公路经营主链路：收费公路、路段、收费站、车辆通行、通行费交易、清分、养护和路况事件。
 - 通过 `oag-agent` 使用自然语言查询数据或发起需要确认的变更。
 - 使用 SQLite 保存对象关系数据，不依赖外部数据库服务。
 
@@ -95,10 +96,10 @@ property_definitions:
 
 object_types:
   revenue:
-    name: 收入
-    description: 企业因履约等经营活动确认的经济利益。
+    name: 通行费收入
+    description: 根据通行费交易或清分结果确认的经济利益。
     properties:
-      amount: {required: false}
+      amount: {required: true}
 
 relation_types:
   allocated_to:
@@ -110,6 +111,24 @@ relation_types:
       amount: {required: true}
       status: {required: true}
 ```
+
+高速公路业务复用同一套 `Object` / `Relation` 设计，不引入 Highway 专用本体。模型中的高速公路对象和关系表达为：
+
+```text
+收费公路 -contains-> 路段 -contains-> 收费站
+车辆通行 -occurred_at(entry_station)-> 入口收费站
+车辆通行 -occurred_at(exit_station)-> 出口收费站
+通行费交易 -derived_from-> 车辆通行
+清分批次 -derived_from-> 通行费交易
+收入 -derived_from-> 清分批次
+养护作业 -affects-> 路段/收费站
+成本 -derived_from-> 养护作业
+成本 -allocated_to-> 通行费收入
+```
+
+对应的业务操作由 `model.yaml` 动态渲染，例如登记收费公路、登记路段、登记收费站、登记车辆通行、记录通行费交易、
+登记收费清分、确认通行费收入、登记养护作业、登记高速公路成本和登记路况事件。收费金额进入 `toll_transaction`、
+`settlement_batch` 或 `revenue`，实际回款仍使用通用的 `receivable` / `cash_receipt` 及 `allocated_to` 表达。
 
 MVP 支持 `string`、`number`、`money`、`date`、`period`、`boolean` 和 `json`。业务数据允许使用尚未登记的
 开放 `type` 和 Property；一旦 Property 已在用户模型中定义，其值就必须满足相应类型。
@@ -147,10 +166,10 @@ Action 不是本体概念，也不进入对象关系图。通用 `preview_change
 - 收入、应收和收款分别表示价值确认、收款权利和现金流入。
 - 成本、应付和付款分别表示价值消耗、付款义务和现金流出。
 - 成本可以晚于发生时间归因到收入，也可以拆分给多项收入。
-- 暂未形成收入的投入可以先关联商机、项目或部门，不必提前对应收入。
+- 养护成本先追溯到养护作业；收入形成后再决定是否以及如何对应。
 - 单项收入贡献只扣除确认归因到该收入的成本；企业经营结果统计企业全部收入和成本。
 
-当前实例库保持为空，待业务模型确认后再重新 seed 数据。
+本分支不自动覆盖已有实例数据；高速公路对象可通过模型化业务操作逐步登记。
 
 ## 验证
 

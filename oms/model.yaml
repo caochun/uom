@@ -1,11 +1,11 @@
 schema: oms.business_model.v2
 
 model:
-  name: OMS 企业经营事实模型
-  version: 3.3.0
+  name: OMS 高速公路经营事实模型
+  version: 1.0.0
   description: >-
-    从客户业务、资源投入和采购支出追溯到收入、成本、债权债务与实际资金。
-    本模型只保留 MVP 所需的业务词汇，不复刻来源系统的表结构和流程明细。
+    用对象和关系追溯收费公路的路网、车辆通行、收费清分、收入、养护成本与实际资金。
+    本模型只保留高速公路经营 MVP 所需词汇，不复刻收费系统、路网系统或财务系统表结构。
 
 property_definitions:
   status:
@@ -19,27 +19,39 @@ property_definitions:
   roles:
     name: 业务角色
     type: json
-    description: 一个主体同时承担的客户、供应商或企业等非排他角色。
+    description: 一个组织承担的运营方、服务商、供应商或付款方等角色。
   role:
     name: 关系角色
     type: string
-    description: 参与者、资源或上下文在一项关系中承担的角色。
+    description: 对象在一项关系中承担的角色。
+  code:
+    name: 编码
+    type: string
+    description: 公路、路段或收费站的业务编码。
+  reference_no:
+    name: 业务编号
+    type: string
+    description: 通行、交易、清分或凭据的来源编号。
   amount:
     name: 金额
     type: money
     description: 由数值和 ISO 币种组成的金额。
-  quantity:
-    name: 数量
+  mileage:
+    name: 里程
     type: number
-    description: 工时、人月或其他业务数量。
-  unit_price:
-    name: 单价
-    type: money
-    description: 单位资源或交付成果的结算价格。
+    description: 路段或通行对应的里程，通常以公里为单位。
+  vehicle_type:
+    name: 车型
+    type: string
+    description: 收费口径使用的车辆分类。
+  direction:
+    name: 行驶方向
+    type: string
+    description: 上行、下行或双向等方向。
   period:
     name: 经营期间
     type: period
-    description: 事实归属的月份，格式为 YYYY-MM。
+    description: 事实归属月份，格式为 YYYY-MM。
   occurred_on:
     name: 发生日期
     type: date
@@ -47,232 +59,221 @@ property_definitions:
   due_on:
     name: 到期日期
     type: date
-    description: 应收、应付或承诺约定的到期日期。
+    description: 应收或应付约定的到期日期。
   start_date:
     name: 开始日期
     type: date
-    description: 对象或关系有效期的开始日期。
-  end_date:
-    name: 结束日期
-    type: date
-    description: 对象或关系有效期的结束日期。
+    description: 公路经营或业务对象有效期的开始日期。
   basis:
     name: 业务依据
     type: string
-    description: 建立对象、关系或金额判断所依据的业务事实。
+    description: 建立来源、核销或金额对应关系所依据的事实。
   details:
     name: 补充信息
     type: json
-    description: 尚未形成稳定字段定义的结构化补充事实。
-  reference_no:
-    name: 业务编号
+    description: 费率路径、位置、车牌脱敏值或其他尚未稳定的结构化事实。
+  event_level:
+    name: 事件等级
     type: string
-    description: 合同、订单、发票或其他来源中的业务编号。
+    description: 路况事件对通行与经营的影响等级。
 
 object_types:
   party:
-    name: 往来组织
-    description: 参与企业经营的组织主体；通过 roles 表达本企业、客户和供应商等角色。
+    name: 业务组织
+    description: 参与高速公路经营的运营方、服务商、供应商或资金往来方。
     properties:
       roles: {required: true}
       status: {required: false}
-  department:
-    name: 部门
-    description: 承担经营责任、资源投入或成本的内部组织单元。
+  highway:
+    name: 收费公路
+    description: 企业负责投资、运营或收费管理的一条高速公路。
     properties:
-      status: {required: false}
-  resource:
-    name: 经营资源
-    description: 可被投入业务的员工、外部人员或仅用于客户结算的虚拟资源。
-    properties:
-      category: {required: true}
-      status: {required: false}
-  opportunity:
-    name: 商机
-    description: 尚在争取或已经形成结果的客户需求机会，也可承接成交前投入。
-    properties:
-      status: {required: false}
-      amount: {required: false}
-  contract:
-    name: 合同
-    description: 与客户形成的商务承诺；框架协议和执行单通过 category 区分并相互追溯。
-    properties:
-      category: {required: false}
-      status: {required: false}
-      amount: {required: false}
-      start_date: {required: false}
-      end_date: {required: false}
-  project:
-    name: 项目
-    description: 组织实际工作和资源投入的经营上下文，可处于售前、专项或交付阶段。
-    properties:
+      code: {required: true}
       category: {required: false}
       status: {required: false}
       start_date: {required: false}
-      end_date: {required: false}
-  purchase_order:
-    name: 采购订单
-    description: 企业向供应商采购商品、服务或资源形成的支出承诺。
+  road_section:
+    name: 公路路段
+    description: 收费公路中可独立管理、核算和追溯的路段。
     properties:
+      code: {required: true}
+      mileage: {required: false}
+      direction: {required: false}
       status: {required: false}
-      amount: {required: false}
-      occurred_on: {required: false}
-  resource_assignment:
-    name: 资源投入
-    description: 一项资源在特定期间进入项目、商机或客户结算范围的可追溯投入事实。
+  toll_station:
+    name: 收费站
+    description: 车辆进入或离开收费公路时记录通行和收费的站点。
     properties:
+      code: {required: true}
       category: {required: false}
       status: {required: false}
-      quantity: {required: false}
-      unit_price: {required: false}
-      start_date: {required: false}
-      end_date: {required: false}
-  settlement_rule:
-    name: 结算规则
-    description: 合同或执行单约定的岗位、级别、单价、周期等结算口径。
+  vehicle_passage:
+    name: 车辆通行
+    description: 一辆车在入口、出口和发生日期上的实际通行事实。
     properties:
+      reference_no: {required: true}
+      vehicle_type: {required: true}
+      occurred_on: {required: true}
+      direction: {required: false}
       status: {required: false}
-      unit_price: {required: false}
-      start_date: {required: false}
-      end_date: {required: false}
       details: {required: false}
-  settlement_result:
-    name: 结算结果
-    description: 依据合同、结算规则和实际履约计算得到的对外结算事实。
+  toll_transaction:
+    name: 通行费交易
+    description: 根据车辆通行与费率口径计算出的单笔应计收费事实。
     properties:
-      status: {required: false}
-      amount: {required: false}
-      quantity: {required: false}
-      unit_price: {required: false}
+      reference_no: {required: true}
+      amount: {required: true}
+      occurred_on: {required: true}
       period: {required: false}
-  delivery:
-    name: 交付验收
-    description: 商品、服务或工作成果已经交付或被验收的事实。
-    properties:
       status: {required: false}
-      occurred_on: {required: false}
+      details: {required: false}
+  settlement_batch:
+    name: 收费清分批次
+    description: 将通行费交易汇总并形成运营方收入或应收依据的清分结果。
+    properties:
+      reference_no: {required: true}
+      amount: {required: true}
+      period: {required: true}
+      occurred_on: {required: true}
+      status: {required: false}
       details: {required: false}
   revenue:
-    name: 收入
-    description: 企业因履约等经营活动确认的经济利益，不代表已经收到现金。
-    properties:
-      status: {required: false}
-      amount: {required: true}
-      period: {required: false}
-      occurred_on: {required: false}
-  cost:
-    name: 成本或费用
-    description: 已经消耗的企业资源；可对应收入，也可作为尚待对应或由企业承担的纯支出。
+    name: 通行费收入
+    description: 企业依据通行费交易或清分结果确认的经济利益，不代表现金已经到账。
     properties:
       category: {required: false}
-      status: {required: false}
       amount: {required: true}
       period: {required: false}
       occurred_on: {required: false}
+      status: {required: false}
   receivable:
-    name: 应收
-    description: 企业已经取得但尚未完全收回的收款权利。
+    name: 收费应收
+    description: 已经形成但尚未完全收回的通行费收款权利。
     properties:
-      status: {required: false}
       amount: {required: true}
-      occurred_on: {required: false}
+      occurred_on: {required: true}
       due_on: {required: false}
-  payable:
-    name: 应付
-    description: 企业已经形成但尚未完全支付的付款义务。
-    properties:
       status: {required: false}
-      amount: {required: true}
-      occurred_on: {required: false}
-      due_on: {required: false}
   cash_receipt:
-    name: 收款
-    description: 已经实际进入企业资金账户的现金流入。
+    name: 实际收款
+    description: 已经实际进入运营企业资金账户的现金流入。
     properties:
-      status: {required: false}
       amount: {required: true}
       occurred_on: {required: true}
-  cash_payment:
-    name: 付款
-    description: 已经实际离开企业资金账户的现金流出。
-    properties:
       status: {required: false}
-      amount: {required: true}
-      occurred_on: {required: true}
-  asset:
-    name: 资产
-    description: 采购或投入后尚未作为成本消耗、仍能带来未来利益的资源。
-    properties:
-      category: {required: false}
-      status: {required: false}
-      amount: {required: false}
-      occurred_on: {required: false}
-  invoice:
-    name: 发票
-    description: 已开具或收到的销售、采购发票业务事实；发票文件本身作为 evidence 保存。
+  maintenance_work:
+    name: 养护作业
+    description: 对路段或收费站实施的日常养护、专项维修或改扩建作业。
     properties:
       category: {required: true}
-      reference_no: {required: true}
-      status: {required: true}
+      amount: {required: false}
+      occurred_on: {required: true}
+      period: {required: false}
+      status: {required: false}
+      details: {required: false}
+  cost:
+    name: 运营成本
+    description: 养护或其他运营活动已经消耗的资源，可对应收入，也可由企业承担。
+    properties:
+      category: {required: false}
+      amount: {required: true}
+      period: {required: false}
+      occurred_on: {required: false}
+      status: {required: false}
+  payable:
+    name: 运营应付
+    description: 养护或其他运营活动已经形成但尚未完全支付的付款义务。
+    properties:
       amount: {required: true}
       occurred_on: {required: true}
+      due_on: {required: false}
+      status: {required: false}
+  cash_payment:
+    name: 实际付款
+    description: 已经实际离开运营企业资金账户的现金流出。
+    properties:
+      amount: {required: true}
+      occurred_on: {required: true}
+      status: {required: false}
+  road_event:
+    name: 路况事件
+    description: 影响道路通行、收费或运营安全的事故、拥堵、施工或自然灾害。
+    properties:
+      category: {required: true}
+      event_level: {required: false}
+      occurred_on: {required: true}
+      status: {required: false}
+      details: {required: false}
   evidence:
     name: 业务凭据
-    description: 用于说明业务事实的合同附件、发票文件、验收文件、银行回单或其他材料。
+    description: 说明通行、清分、养护、收付款或其他经营事实的材料。
     properties:
       category: {required: true}
-      status: {required: false}
-      amount: {required: false}
+      reference_no: {required: false}
       occurred_on: {required: false}
+      status: {required: false}
       details: {required: false}
 
 relation_types:
   involves:
-    name: 涉及
-    description: from 经营对象涉及 to 组织、部门或资源；role 说明其客户、供应商、责任方或投入方身份。
-    to_types: [party, department, resource]
+    name: 涉及组织
+    description: from 经营对象涉及 to 组织；role 说明运营方、付款方、供应商或债权人身份。
+    to_types: [party]
     properties:
       role: {required: true}
-      start_date: {required: false}
-      end_date: {required: false}
+  contains:
+    name: 包含
+    description: 收费公路包含路段，路段包含收费站。
+    from_types: [highway, road_section]
+    to_types: [road_section, toll_station]
+    properties:
+      role: {required: true}
   derived_from:
     name: 来源于
-    description: from 对象由 to 对象产生、转换或计算而来，用于追溯业务前因。
+    description: from 对象由 to 对象产生、汇总、确认或转换而来。
     acyclic: true
     properties:
       basis: {required: false}
-  associated_with:
-    name: 关联到
-    description: from 与 to 存在需要记录但不表示直接因果的经营上下文关系；role 说明关系含义。
+  occurred_at:
+    name: 发生于
+    description: 车辆通行、养护作业或路况事件发生在某个路段或收费站。
+    from_types: [vehicle_passage, maintenance_work, road_event]
+    to_types: [road_section, toll_station]
     properties:
       role: {required: true}
-      basis: {required: false}
+  affects:
+    name: 影响
+    description: 养护作业或路况事件对公路、路段或收费站产生影响。
+    from_types: [maintenance_work, road_event]
+    to_types: [highway, road_section, toll_station]
+    properties:
+      role: {required: true}
+      status: {required: false}
   allocated_to:
     name: 金额对应
-    description: >-
-      将 from 的全部或部分金额对应到 to；用于成本对应收入、收款核销应收和付款核销应付。
+    description: 将成本对应收入、收款核销应收，或付款核销应付。
     from_types: [cost, cash_receipt, cash_payment]
     to_types: [revenue, receivable, payable]
     properties:
       amount: {required: true}
       status: {required: true}
-      period: {required: false}
       occurred_on: {required: true}
+      period: {required: false}
       basis: {required: false}
   evidenced_by:
     name: 由凭据说明
-    description: from 业务事实由 to 凭据提供可追溯说明。
+    description: from 经营事实由 to 凭据提供可追溯说明。
     to_types: [evidence]
     properties:
       basis: {required: false}
 
 actions:
   register_party:
-    name: 登记往来组织
-    description: 登记本企业、客户或供应商等参与经营的组织。
+    name: 登记业务组织
+    description: 登记运营方、服务商、供应商或其他资金往来方。
     icon: building_2
     handler: changeset
-    confirmation: 登记新的往来组织。
+    confirmation: 登记新的业务组织。
     inputs:
       name: {name: 组织名称, type: string, required: true}
       roles: {name: 业务角色, property: roles, required: true}
@@ -284,328 +285,212 @@ actions:
           name: $input.name
           properties: {roles: $input.roles, status: $input.status}
 
-  register_resource:
-    name: 登记经营资源
-    description: 登记员工、外部人员或虚拟结算资源。
-    icon: user_round
+  register_highway:
+    name: 登记收费公路
+    description: 登记一条由企业负责运营或收费管理的高速公路。
+    icon: route
     handler: changeset
-    confirmation: 登记新的经营资源。
+    confirmation: 登记收费公路并建立运营主体关系。
     inputs:
-      name: {name: 资源名称, type: string, required: true}
-      category: {name: 资源类别, property: category, required: true}
-      status: {name: 状态, property: status, required: false}
-    effects:
-      - create_object:
-          ref: resource
-          type: resource
-          name: $input.name
-          properties: {category: $input.category, status: $input.status}
-
-  register_opportunity:
-    name: 登记商机
-    description: 记录客户需求机会、对应客户及预计金额。
-    icon: target
-    handler: changeset
-    confirmation: 登记商机并建立客户关系。
-    inputs:
-      name: {name: 商机名称, type: string, required: true}
-      customer_id: {name: 对应客户, object_types: [party], required: true}
-      status: {name: 状态, property: status, required: false}
-      amount: {name: 预计金额, property: amount, required: false}
-    effects:
-      - create_object:
-          ref: opportunity
-          type: opportunity
-          name: $input.name
-          properties: {status: $input.status, amount: $input.amount}
-      - create_relation:
-          type: involves
-          from: $opportunity
-          to: $input.customer_id
-          properties: {role: customer}
-
-  record_contract:
-    name: 登记合同
-    description: 登记客户合同、框架协议或执行单，并明确签约客户。
-    icon: file_signature
-    handler: changeset
-    confirmation: 登记合同并建立签约客户关系。
-    inputs:
-      name: {name: 合同名称, type: string, required: true}
-      customer_id: {name: 签约客户, object_types: [party], required: true}
-      category: {name: 合同类别, property: category, required: false}
-      status: {name: 状态, property: status, required: false}
-      amount: {name: 合同金额, property: amount, required: false}
+      name: {name: 公路名称, type: string, required: true}
+      code: {name: 公路编码, property: code, required: true}
+      operator_id: {name: 运营主体, object_types: [party], required: true}
+      category: {name: 公路类别, property: category, required: false}
+      status: {name: 状态, property: status, required: false, default: operating}
       start_date: {name: 开始日期, property: start_date, required: false}
-      end_date: {name: 结束日期, property: end_date, required: false}
     effects:
       - create_object:
-          ref: contract
-          type: contract
+          ref: highway
+          type: highway
           name: $input.name
           properties:
+            code: $input.code
             category: $input.category
             status: $input.status
-            amount: $input.amount
             start_date: $input.start_date
-            end_date: $input.end_date
       - create_relation:
           type: involves
-          from: $contract
-          to: $input.customer_id
-          properties: {role: customer}
+          from: $highway
+          to: $input.operator_id
+          properties: {role: operator}
 
-  record_contract_from_opportunity:
-    name: 商机转为合同
-    description: 根据当前商机登记成交合同，同时记录签约客户和商机来源。
-    icon: file_check_2
+  register_road_section:
+    name: 登记公路路段
+    description: 在当前收费公路下登记一个可管理和核算的路段。
+    icon: between_horizontal_start
     handler: changeset
-    available_on: [opportunity]
-    confirmation: 登记合同并建立签约客户与商机来源关系。
+    available_on: [highway]
+    confirmation: 登记路段并纳入当前收费公路。
     inputs:
-      name: {name: 合同名称, type: string, required: true}
-      customer_id: {name: 签约客户, object_types: [party], required: true}
-      category: {name: 合同类别, property: category, required: false}
-      status: {name: 状态, property: status, required: false}
-      amount: {name: 合同金额, property: amount, required: false}
-      start_date: {name: 开始日期, property: start_date, required: false}
-      end_date: {name: 结束日期, property: end_date, required: false}
+      name: {name: 路段名称, type: string, required: true}
+      code: {name: 路段编码, property: code, required: true}
+      mileage: {name: 路段里程, property: mileage, required: false}
+      direction: {name: 行驶方向, property: direction, required: false}
+      status: {name: 状态, property: status, required: false, default: operating}
     effects:
       - create_object:
-          ref: contract
-          type: contract
+          ref: section
+          type: road_section
           name: $input.name
           properties:
+            code: $input.code
+            mileage: $input.mileage
+            direction: $input.direction
+            status: $input.status
+      - create_relation:
+          type: contains
+          from: $context
+          to: $section
+          properties: {role: road_section}
+
+  register_toll_station:
+    name: 登记收费站
+    description: 在当前公路路段下登记车辆进出和收费发生的站点。
+    icon: signpost
+    handler: changeset
+    available_on: [road_section]
+    confirmation: 登记收费站并纳入当前路段。
+    inputs:
+      name: {name: 收费站名称, type: string, required: true}
+      code: {name: 收费站编码, property: code, required: true}
+      category: {name: 站点类别, property: category, required: false}
+      status: {name: 状态, property: status, required: false, default: operating}
+    effects:
+      - create_object:
+          ref: station
+          type: toll_station
+          name: $input.name
+          properties:
+            code: $input.code
             category: $input.category
             status: $input.status
-            amount: $input.amount
-            start_date: $input.start_date
-            end_date: $input.end_date
       - create_relation:
-          type: involves
-          from: $contract
-          to: $input.customer_id
-          properties: {role: customer}
+          type: contains
+          from: $context
+          to: $station
+          properties: {role: toll_station}
+
+  record_vehicle_passage:
+    name: 登记车辆通行
+    description: 以当前收费站为入口登记车辆通行，并记录出口收费站。
+    icon: car_front
+    handler: changeset
+    available_on: [toll_station]
+    confirmation: 登记车辆通行并关联入口、出口收费站。
+    inputs:
+      reference_no: {name: 通行流水号, property: reference_no, required: true}
+      vehicle_type: {name: 车型, property: vehicle_type, required: true}
+      exit_station_id: {name: 出口收费站, object_types: [toll_station], required: true}
+      occurred_on: {name: 通行日期, property: occurred_on, required: true}
+      direction: {name: 行驶方向, property: direction, required: false}
+      details: {name: 通行详情, property: details, required: false}
+    effects:
+      - create_object:
+          ref: passage
+          type: vehicle_passage
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            vehicle_type: $input.vehicle_type
+            occurred_on: $input.occurred_on
+            direction: $input.direction
+            status: recorded
+            details: $input.details
       - create_relation:
-          type: derived_from
-          from: $contract
+          type: occurred_at
+          from: $passage
           to: $context
-          properties: {basis: opportunity_conversion}
-
-  register_project:
-    name: 登记项目
-    description: 建立售前、专项或交付项目作为工作和投入上下文。
-    icon: briefcase_business
-    handler: changeset
-    confirmation: 登记新的项目。
-    inputs:
-      name: {name: 项目名称, type: string, required: true}
-      category: {name: 项目类别, property: category, required: false}
-      status: {name: 状态, property: status, required: false}
-      start_date: {name: 开始日期, property: start_date, required: false}
-      end_date: {name: 结束日期, property: end_date, required: false}
-    effects:
-      - create_object:
-          ref: project
-          type: project
-          name: $input.name
-          properties:
-            category: $input.category
-            status: $input.status
-            start_date: $input.start_date
-            end_date: $input.end_date
-
-  start_project_from_context:
-    name: 启动关联项目
-    description: 根据当前商机或合同启动项目，并记录项目的业务来源。
-    icon: folder_kanban
-    handler: changeset
-    available_on: [opportunity, contract]
-    confirmation: 启动项目并记录当前商机或合同来源。
-    inputs:
-      name: {name: 项目名称, type: string, required: true}
-      category: {name: 项目类别, property: category, required: false}
-      status: {name: 状态, property: status, required: false}
-      start_date: {name: 开始日期, property: start_date, required: false}
-      end_date: {name: 结束日期, property: end_date, required: false}
-    effects:
-      - create_object:
-          ref: project
-          type: project
-          name: $input.name
-          properties:
-            category: $input.category
-            status: $input.status
-            start_date: $input.start_date
-            end_date: $input.end_date
+          properties: {role: entry_station}
       - create_relation:
-          type: derived_from
-          from: $project
-          to: $context
-          properties: {basis: project_initiation}
+          type: occurred_at
+          from: $passage
+          to: $input.exit_station_id
+          properties: {role: exit_station}
 
-  record_purchase_order:
-    name: 登记采购订单
-    description: 记录向明确供应商采购商品、服务或资源的支出承诺。
-    icon: shopping_cart
+  record_toll_transaction:
+    name: 记录通行费交易
+    description: 根据当前车辆通行登记应计通行费，不直接等同于已经到账的收入。
+    icon: receipt
     handler: changeset
-    confirmation: 登记采购订单并建立供应商关系。
+    available_on: [vehicle_passage]
+    confirmation: 记录通行费交易并追溯到车辆通行。
     inputs:
-      name: {name: 采购订单名称, type: string, required: true}
-      supplier_id: {name: 供应商, object_types: [party], required: true}
-      status: {name: 状态, property: status, required: false}
-      amount: {name: 采购金额, property: amount, required: false}
-      occurred_on: {name: 发生日期, property: occurred_on, required: false}
-    effects:
-      - create_object:
-          ref: purchase_order
-          type: purchase_order
-          name: $input.name
-          properties: {status: $input.status, amount: $input.amount, occurred_on: $input.occurred_on}
-      - create_relation:
-          type: involves
-          from: $purchase_order
-          to: $input.supplier_id
-          properties: {role: supplier}
-
-  record_cost:
-    name: 登记成本或费用
-    description: 记录已经发生、可以暂不对应收入的资源消耗。
-    icon: trending_down
-    handler: changeset
-    confirmation: 登记新的成本或费用。
-    inputs:
-      name: {name: 成本名称, type: string, required: true}
-      category: {name: 成本类别, property: category, required: false}
-      amount: {name: 金额, property: amount, required: true}
-      occurred_on: {name: 发生日期, property: occurred_on, required: false}
+      reference_no: {name: 交易流水号, property: reference_no, required: true}
+      amount: {name: 应计费额, property: amount, required: true}
+      occurred_on: {name: 计费日期, property: occurred_on, required: true}
       period: {name: 经营期间, property: period, required: false}
-      status: {name: 状态, property: status, required: false}
+      status: {name: 状态, property: status, required: false, default: calculated}
+      details: {name: 计费详情, property: details, required: false}
     effects:
       - create_object:
-          ref: cost
-          type: cost
-          name: $input.name
+          ref: transaction
+          type: toll_transaction
+          name: $input.reference_no
           properties:
-            category: $input.category
+            reference_no: $input.reference_no
             amount: $input.amount
             occurred_on: $input.occurred_on
             period: $input.period
             status: $input.status
-
-  record_resource_assignment:
-    name: 登记资源投入
-    description: 将经营资源投入当前项目、商机或合同上下文。
-    icon: user_plus
-    handler: changeset
-    available_on: [project, opportunity, contract]
-    confirmation: 登记资源投入并关联当前经营上下文。
-    inputs:
-      name: {name: 投入名称, type: string, required: true}
-      resource_id: {name: 经营资源, object_types: [resource], required: true}
-      category: {name: 投入类别, property: category, required: false}
-      quantity: {name: 投入数量, property: quantity, required: false}
-      start_date: {name: 开始日期, property: start_date, required: false}
-      end_date: {name: 结束日期, property: end_date, required: false}
-      status: {name: 状态, property: status, required: false}
-    effects:
-      - create_object:
-          ref: assignment
-          type: resource_assignment
-          name: $input.name
-          properties:
-            category: $input.category
-            quantity: $input.quantity
-            start_date: $input.start_date
-            end_date: $input.end_date
-            status: $input.status
-      - create_relation:
-          type: involves
-          from: $assignment
-          to: $input.resource_id
-          properties: {role: resource}
-      - create_relation:
-          type: associated_with
-          from: $assignment
-          to: $context
-          properties: {role: operating_context}
-
-  record_delivery:
-    name: 记录交付验收
-    description: 记录当前合同、项目或采购订单的交付验收事实。
-    icon: package_check
-    handler: changeset
-    available_on: [contract, project, purchase_order]
-    confirmation: 记录交付验收并追溯到当前经营对象。
-    inputs:
-      name: {name: 交付名称, type: string, required: true}
-      occurred_on: {name: 发生日期, property: occurred_on, required: true}
-      status: {name: 状态, property: status, required: false}
-      details: {name: 补充信息, property: details, required: false}
-    effects:
-      - create_object:
-          ref: delivery
-          type: delivery
-          name: $input.name
-          properties: {occurred_on: $input.occurred_on, status: $input.status, details: $input.details}
+            details: $input.details
       - create_relation:
           type: derived_from
-          from: $delivery
+          from: $transaction
           to: $context
+          properties: {basis: passage_rating}
 
-  record_settlement:
-    name: 确认结算
-    description: 依据当前合同、项目或资源投入形成结算结果。
-    icon: calculator
+  record_settlement_batch:
+    name: 登记收费清分
+    description: 将当前通行费交易汇总为清分批次，作为收入或应收的依据。
+    icon: layers_3
     handler: changeset
-    available_on: [contract, project, resource_assignment]
-    confirmation: 确认结算并追溯到当前经营对象。
+    available_on: [toll_transaction]
+    confirmation: 登记收费清分并追溯到当前交易。
     inputs:
-      name: {name: 结算名称, type: string, required: true}
-      customer_id: {name: 结算客户, object_types: [party], required: true}
-      amount: {name: 结算金额, property: amount, required: true}
+      reference_no: {name: 清分批次号, property: reference_no, required: true}
+      amount: {name: 清分金额, property: amount, required: true}
       period: {name: 经营期间, property: period, required: true}
-      status: {name: 状态, property: status, required: false, default: confirmed}
-      quantity: {name: 数量, property: quantity, required: false}
+      occurred_on: {name: 清分日期, property: occurred_on, required: true}
+      status: {name: 状态, property: status, required: false, default: settled}
+      details: {name: 清分详情, property: details, required: false}
     effects:
       - create_object:
-          ref: settlement
-          type: settlement_result
-          name: $input.name
+          ref: batch
+          type: settlement_batch
+          name: $input.reference_no
           properties:
+            reference_no: $input.reference_no
             amount: $input.amount
             period: $input.period
+            occurred_on: $input.occurred_on
             status: $input.status
-            quantity: $input.quantity
+            details: $input.details
       - create_relation:
           type: derived_from
-          from: $settlement
+          from: $batch
           to: $context
-      - create_relation:
-          type: involves
-          from: $settlement
-          to: $input.customer_id
-          properties: {role: customer}
+          properties: {basis: toll_clearing}
 
-  recognize_revenue:
-    name: 确认收入
-    description: 根据当前结算或合同确认收入事实。
+  recognize_toll_revenue:
+    name: 确认通行费收入
+    description: 根据当前通行费交易或清分批次确认企业收入。
     icon: badge_check
     handler: changeset
-    available_on: [settlement_result, contract]
-    confirmation: 确认收入并追溯到当前业务依据。
+    available_on: [toll_transaction, settlement_batch]
+    confirmation: 确认通行费收入并追溯到交易或清分结果。
     inputs:
       name: {name: 收入名称, type: string, required: true}
-      amount: {name: 收入金额, property: amount, required: true}
+      amount: {name: 确认金额, property: amount, required: true}
       occurred_on: {name: 确认日期, property: occurred_on, required: true}
-      period: {name: 经营期间, property: period, required: false}
-      status: {name: 状态, property: status, required: false, default: confirmed}
+      period: {name: 经营期间, property: period, required: true}
+      status: {name: 状态, property: status, required: false, default: recognized}
     effects:
       - create_object:
           ref: revenue
           type: revenue
           name: $input.name
           properties:
+            category: toll
             amount: $input.amount
             occurred_on: $input.occurred_on
             period: $input.period
@@ -614,84 +499,15 @@ actions:
           type: derived_from
           from: $revenue
           to: $context
-
-  record_sales_invoice:
-    name: 登记销售发票
-    description: 为当前合同或收入登记销售发票，并明确开票客户。
-    icon: receipt_text
-    handler: changeset
-    available_on: [contract, revenue]
-    confirmation: 登记销售发票并建立客户与业务来源关系。
-    inputs:
-      name: {name: 发票名称, type: string, required: true}
-      customer_id: {name: 开票客户, object_types: [party], required: true}
-      reference_no: {name: 发票号码, property: reference_no, required: true}
-      amount: {name: 发票金额, property: amount, required: true}
-      occurred_on: {name: 开票日期, property: occurred_on, required: true}
-      status: {name: 状态, property: status, required: false, default: confirmed}
-    effects:
-      - create_object:
-          ref: invoice
-          type: invoice
-          name: $input.name
-          properties:
-            category: sales
-            reference_no: $input.reference_no
-            amount: $input.amount
-            occurred_on: $input.occurred_on
-            status: $input.status
-      - create_relation:
-          type: derived_from
-          from: $invoice
-          to: $context
-      - create_relation:
-          type: involves
-          from: $invoice
-          to: $input.customer_id
-          properties: {role: customer}
-
-  record_purchase_invoice:
-    name: 登记采购发票
-    description: 为当前采购订单或成本登记采购发票，并明确开票供应商。
-    icon: receipt_text
-    handler: changeset
-    available_on: [purchase_order, cost]
-    confirmation: 登记采购发票并建立供应商与业务来源关系。
-    inputs:
-      name: {name: 发票名称, type: string, required: true}
-      supplier_id: {name: 开票供应商, object_types: [party], required: true}
-      reference_no: {name: 发票号码, property: reference_no, required: true}
-      amount: {name: 发票金额, property: amount, required: true}
-      occurred_on: {name: 开票日期, property: occurred_on, required: true}
-      status: {name: 状态, property: status, required: false, default: confirmed}
-    effects:
-      - create_object:
-          ref: invoice
-          type: invoice
-          name: $input.name
-          properties:
-            category: purchase
-            reference_no: $input.reference_no
-            amount: $input.amount
-            occurred_on: $input.occurred_on
-            status: $input.status
-      - create_relation:
-          type: derived_from
-          from: $invoice
-          to: $context
-      - create_relation:
-          type: involves
-          from: $invoice
-          to: $input.supplier_id
-          properties: {role: supplier}
+          properties: {basis: toll_settlement}
 
   record_receivable:
-    name: 登记应收
-    description: 根据当前收入或合同形成对明确债务人的收款权利。
+    name: 登记收费应收
+    description: 根据当前收入或清分批次形成对明确付款方的收款权利。
     icon: circle_arrow_down
     handler: changeset
-    available_on: [revenue, contract]
-    confirmation: 登记应收并建立债务人与业务来源关系。
+    available_on: [revenue, settlement_batch]
+    confirmation: 登记收费应收并建立付款方关系。
     inputs:
       name: {name: 应收名称, type: string, required: true}
       debtor_id: {name: 付款方, object_types: [party], required: true}
@@ -713,19 +529,114 @@ actions:
           type: derived_from
           from: $receivable
           to: $context
+          properties: {basis: toll_receivable}
       - create_relation:
           type: involves
           from: $receivable
           to: $input.debtor_id
           properties: {role: debtor}
 
+  record_cash_receipt:
+    name: 登记并核销收款
+    description: 记录实际到账，并将金额核销到当前收费应收。
+    icon: banknote_arrow_down
+    handler: changeset
+    available_on: [receivable]
+    confirmation: 登记收款并核销当前应收。
+    inputs:
+      name: {name: 收款名称, type: string, required: true}
+      amount: {name: 收款金额, property: amount, required: true}
+      occurred_on: {name: 到账日期, property: occurred_on, required: true}
+      basis: {name: 业务依据, property: basis, required: false}
+    effects:
+      - create_object:
+          ref: receipt
+          type: cash_receipt
+          name: $input.name
+          properties:
+            amount: $input.amount
+            occurred_on: $input.occurred_on
+            status: confirmed
+      - create_relation:
+          type: allocated_to
+          from: $receipt
+          to: $context
+          properties:
+            amount: $input.amount
+            occurred_on: $input.occurred_on
+            status: confirmed
+            basis: $input.basis
+
+  record_maintenance_work:
+    name: 登记养护作业
+    description: 登记当前路段或收费站发生的养护、维修或改扩建作业。
+    icon: construction
+    handler: changeset
+    available_on: [road_section, toll_station]
+    confirmation: 登记养护作业并关联影响范围。
+    inputs:
+      name: {name: 作业名称, type: string, required: true}
+      category: {name: 作业类别, property: category, required: true}
+      amount: {name: 预计或实际金额, property: amount, required: false}
+      occurred_on: {name: 作业日期, property: occurred_on, required: true}
+      period: {name: 经营期间, property: period, required: false}
+      status: {name: 状态, property: status, required: false, default: in_progress}
+      details: {name: 作业详情, property: details, required: false}
+    effects:
+      - create_object:
+          ref: work
+          type: maintenance_work
+          name: $input.name
+          properties:
+            category: $input.category
+            amount: $input.amount
+            occurred_on: $input.occurred_on
+            period: $input.period
+            status: $input.status
+            details: $input.details
+      - create_relation:
+          type: affects
+          from: $work
+          to: $context
+          properties: {role: maintenance_scope}
+
+  record_highway_cost:
+    name: 登记运营成本
+    description: 将当前养护作业已经发生的资源消耗登记为成本。
+    icon: trending_down
+    handler: changeset
+    available_on: [maintenance_work]
+    confirmation: 登记运营成本并追溯到当前养护作业。
+    inputs:
+      name: {name: 成本名称, type: string, required: true}
+      amount: {name: 成本金额, property: amount, required: true}
+      occurred_on: {name: 发生日期, property: occurred_on, required: true}
+      period: {name: 经营期间, property: period, required: false}
+      status: {name: 状态, property: status, required: false, default: confirmed}
+    effects:
+      - create_object:
+          ref: cost
+          type: cost
+          name: $input.name
+          properties:
+            category: highway_maintenance
+            amount: $input.amount
+            occurred_on: $input.occurred_on
+            period: $input.period
+            status: $input.status
+      - create_relation:
+          type: derived_from
+          from: $cost
+          to: $context
+          properties: {basis: maintenance_work}
+
   record_payable:
-    name: 登记应付
-    description: 根据当前采购订单或成本形成对明确债权人的付款义务。
+    name: 登记运营应付
+    description: 根据当前养护作业或成本形成对明确债权人的付款义务。
     icon: circle_arrow_up
     handler: changeset
-    available_on: [purchase_order, cost]
-    confirmation: 登记应付并建立债权人与业务来源关系。
+    available_on: [maintenance_work, cost]
+    confirmation: 登记运营应付并建立债权人关系。
     inputs:
       name: {name: 应付名称, type: string, required: true}
       creditor_id: {name: 收款方, object_types: [party], required: true}
@@ -747,43 +658,16 @@ actions:
           type: derived_from
           from: $payable
           to: $context
+          properties: {basis: operating_payable}
       - create_relation:
           type: involves
           from: $payable
           to: $input.creditor_id
           properties: {role: creditor}
 
-  record_cash_receipt:
-    name: 登记并核销回款
-    description: 记录实际到账，并将金额核销到当前应收。
-    icon: banknote_arrow_down
-    handler: changeset
-    available_on: [receivable]
-    confirmation: 登记回款并核销当前应收。
-    inputs:
-      name: {name: 回款名称, type: string, required: true}
-      amount: {name: 回款金额, property: amount, required: true}
-      occurred_on: {name: 到账日期, property: occurred_on, required: true}
-      basis: {name: 业务依据, property: basis, required: false}
-    effects:
-      - create_object:
-          ref: receipt
-          type: cash_receipt
-          name: $input.name
-          properties: {amount: $input.amount, occurred_on: $input.occurred_on, status: confirmed}
-      - create_relation:
-          type: allocated_to
-          from: $receipt
-          to: $context
-          properties:
-            amount: $input.amount
-            occurred_on: $input.occurred_on
-            status: confirmed
-            basis: $input.basis
-
   record_cash_payment:
     name: 登记并核销付款
-    description: 记录实际付款，并将金额核销到当前应付。
+    description: 记录实际付款，并将金额核销到当前运营应付。
     icon: banknote_arrow_up
     handler: changeset
     available_on: [payable]
@@ -798,7 +682,10 @@ actions:
           ref: payment
           type: cash_payment
           name: $input.name
-          properties: {amount: $input.amount, occurred_on: $input.occurred_on, status: confirmed}
+          properties:
+            amount: $input.amount
+            occurred_on: $input.occurred_on
+            status: confirmed
       - create_relation:
           type: allocated_to
           from: $payment
@@ -810,12 +697,12 @@ actions:
             basis: $input.basis
 
   allocate_cost:
-    name: 分配成本
-    description: 将当前成本的全部或部分金额对应到一项收入。
+    name: 分配运营成本
+    description: 将当前成本的全部或部分金额对应到一项通行费收入。
     icon: split
     handler: changeset
     available_on: [cost]
-    confirmation: 将成本金额对应到所选收入。
+    confirmation: 将运营成本对应到所选收入。
     inputs:
       revenue_id: {name: 对应收入, object_types: [revenue], required: true}
       amount: {name: 对应金额, property: amount, required: true}
@@ -832,16 +719,48 @@ actions:
             status: confirmed
             basis: $input.basis
 
+  record_road_event:
+    name: 登记路况事件
+    description: 登记影响当前路段或收费站通行与收费运营的事件。
+    icon: triangle_alert
+    handler: changeset
+    available_on: [road_section, toll_station]
+    confirmation: 登记路况事件并关联影响范围。
+    inputs:
+      name: {name: 事件名称, type: string, required: true}
+      category: {name: 事件类别, property: category, required: true}
+      event_level: {name: 事件等级, property: event_level, required: false}
+      occurred_on: {name: 发生日期, property: occurred_on, required: true}
+      status: {name: 状态, property: status, required: false, default: open}
+      details: {name: 事件详情, property: details, required: false}
+    effects:
+      - create_object:
+          ref: event
+          type: road_event
+          name: $input.name
+          properties:
+            category: $input.category
+            event_level: $input.event_level
+            occurred_on: $input.occurred_on
+            status: $input.status
+            details: $input.details
+      - create_relation:
+          type: affects
+          from: $event
+          to: $context
+          properties: {role: affected_scope}
+
   attach_evidence:
     name: 添加业务凭据
-    description: 为当前经营对象登记合同附件、发票文件、验收文件或银行回单。
+    description: 为当前对象登记通行记录、清分文件、养护验收或银行回单等凭据。
     icon: paperclip
     handler: changeset
     available_on: ["*"]
-    confirmation: 添加凭据并关联当前经营对象。
+    confirmation: 添加凭据并关联当前对象。
     inputs:
       name: {name: 凭据名称, type: string, required: true}
       category: {name: 凭据类别, property: category, required: true}
+      reference_no: {name: 凭据编号, property: reference_no, required: false}
       occurred_on: {name: 凭据日期, property: occurred_on, required: false}
       details: {name: 补充信息, property: details, required: false}
       basis: {name: 业务依据, property: basis, required: false}
@@ -852,6 +771,7 @@ actions:
           name: $input.name
           properties:
             category: $input.category
+            reference_no: $input.reference_no
             occurred_on: $input.occurred_on
             details: $input.details
       - create_relation:

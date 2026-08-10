@@ -1,17 +1,17 @@
 # OMS Domain
 
-本目录是 OMS 的 OAG domain，负责定义企业经营对象关系语义、用户业务词汇、实例数据和确定性经营函数。
+本目录是 OMS 的高速公路经营 OAG domain，负责定义对象关系语义、用户业务词汇、实例数据和确定性经营函数。
 
 ## 设计边界
 
 OMS 只有两个本体概念：
 
-- `Object`：企业经营中具有稳定 ID 的主体、意图、承诺、工作、事件、资源或结果。
+- `Object`：高速公路经营中具有稳定 ID 的主体、设施、通行、收费、工作、事件或经营结果。
 - `Relation`：两个 Object 之间具有方向、类型和可选事实的业务联系。
 
-`revenue`、`cost`、`contract`、`cash_receipt` 等是 Object 的开放 `type`；`derived_from`、
-`allocated_to` 等是 Relation 的开放 `type`。项目、合同、部门和资源都只是普通
-Object，不是所有经营链路必须经过的中心。
+`highway`、`vehicle_passage`、`revenue`、`cost` 等是 Object 的开放 `type`；`contains`、
+`derived_from`、`allocated_to` 等是 Relation 的开放 `type`。公路和路段提供经营上下文，
+但收入与成本仍是独立事实，不要求经过统一核算中心。
 
 Graph、Node 和 Edge 属于存储及查询视图，不是业务本体概念，因此不设置 `metamodel.yaml`。
 
@@ -54,15 +54,15 @@ SQLite 事务内完成。
 ## Object
 
 ```yaml
-id: revenue:a-2026-07
+id: revenue:toll-2026-08
 type: revenue
-name: 客户 A 2026 年 7 月收入
+name: 2026 年 8 月通行费收入
 properties:
   status: recognized
   amount: {amount: 1000000, currency: CNY}
-  period: "2026-07"
+  period: "2026-08"
 tags: [management_view]
-source_refs: [erp:revenue-1]
+source_refs: [clearing:settlement-202608]
 ```
 
 - `id` 是稳定标识，更新操作不能修改。
@@ -77,10 +77,10 @@ source_refs: [erp:revenue-1]
 ## Relation
 
 ```yaml
-id: rel:delivery-cost-revenue
+id: rel:maintenance-cost-revenue
 type: allocated_to
-from: cost:delivery-a
-to: revenue:a
+from: cost:maintenance-east
+to: revenue:toll-2026-08
 properties:
       amount: {amount: 300000, currency: CNY}
       status: confirmed
@@ -154,36 +154,63 @@ Property 定义一次值类型，各业务类型只引用 Property 并声明是�
 Action 不是第三个本体概念，也不写入业务图。它只描述用户可执行的业务行为，并把输入、当前对象和本次创建的
 对象解析为 `create_object` / `create_relation` ChangeSet。MVP 不支持条件、分支或通用工作流 DSL。
 
-会形成对外权利、义务或承诺的操作必须同时记录必要往来方：商机和合同明确客户，采购订单明确供应商，应收和
-应付明确债务人或债权人。销售发票与采购发票使用同一个 `invoice` 对象类型，但由不同 Action 固定业务方向，
-避免依赖用户手工填写类别来决定后续语义。
+会形成对外权利或义务的操作必须记录必要往来方：收费应收明确付款方，运营应付明确债权人。车辆通行、收费交易、
+清分批次和收入保持独立，避免把“应计收费”“经营确认”和“实际到账”混成一个对象。
 
 未知业务 `type` 可以先作为开放词汇进入数据。未知 Property 作为 JSON 兼容值保存；一旦同名 Property 在
 `property_definitions` 中登记，所有数据中的该字段都必须满足定义类型。
 
 ## 经营关系
 
-模型不把收入和支出强制塞进同一条流程，而是分别记录事实，再按业务证据建立关系：
+模型分别记录通行费收入和养护支出，再按业务证据建立关系：
 
 ```text
-收入 -> derived_from -> 结算结果 -> derived_from -> 合同 -> derived_from -> 商机
+收入 -> derived_from -> 清分批次 -> derived_from -> 通行费交易 -> derived_from -> 车辆通行
 成本 -> allocated_to -> 收入
 收款 -> allocated_to -> 应收 -> derived_from -> 收入
-付款 -> allocated_to -> 应付 -> derived_from -> 采购订单
-成本 -> associated_with -> 商机/项目/部门
+付款 -> allocated_to -> 应付 -> derived_from -> 成本 -> derived_from -> 养护作业
 ```
 
 关键规则：
 
 - `derived_from` 的方向是结果指向来源，且不能形成循环。
 - `allocated_to` 统一表达成本与收入、收款与应收、付款与应付之间的金额对应。
-- `associated_with` 记录没有直接因果的业务上下文，`involves` 记录参与者及其角色。
+- `contains` 记录公路、路段和收费站层级，`occurred_at` 记录车辆通行的入口和出口。
+- `affects` 记录养护作业或路况事件的影响范围，`involves` 记录参与组织及其角色。
 - `evidenced_by` 把经营事实连接到发票、验收记录或银行回单等凭据。
 - 已确认的金额对应不能超过来源金额；收付款核销也不能超过应收或应付金额。
 - 原始成本不因后续归因结论而改写，认识变化通过 Relation 表达。
 
-尚未形成收入的前置成本可以先通过 `associated_with` 关联商机、项目或部门。收入形成后再建立
-`allocated_to`；最终没有收入覆盖的成本仍作为企业真实支出保留。
+养护成本先通过 `derived_from` 追溯到具体作业。收入形成后再建立 `allocated_to`；最终没有收入覆盖的成本
+仍作为运营企业的真实支出保留。
+
+## 高速公路 MVP
+
+高速公路业务不另建本体，直接使用 `Object` / `Relation`。`model.yaml` 定义收费公路经营所需的最小对象和关系：
+
+- 对象：`highway`、`road_section`、`toll_station`、`vehicle_passage`、`toll_transaction`、
+  `settlement_batch`、`revenue`、`maintenance_work`、`cost`、`road_event` 及收付款对象。
+- 关系：`contains` 表示路网层级，`occurred_at` 表示通行发生地点，`affects` 表示养护或事件的影响范围；
+  `derived_from` 继续追溯交易、清分和收入的来源，`allocated_to` 继续解释成本与收入的金额对应。
+- 操作：从登记收费公路开始，逐步登记路段、收费站、车辆通行、通行费交易、清分批次、通行费收入、
+  养护作业、养护成本和路况事件。所有操作都通过预览后的 ChangeSet 写入 SQLite。
+
+主链路是：
+
+```text
+收费公路 ->contains-> 路段 ->contains-> 收费站
+车辆通行 ->occurred_at(entry_station)-> 入口收费站
+车辆通行 ->occurred_at(exit_station)-> 出口收费站
+通行费交易 ->derived_from-> 车辆通行
+清分批次 ->derived_from-> 通行费交易
+收入 ->derived_from-> 清分批次
+养护作业 ->affects-> 路段/收费站
+成本 ->derived_from-> 养护作业
+成本 ->allocated_to-> 收入
+```
+
+收费交易是“应计收费事实”，清分批次是形成经营确认的汇总依据，收入才进入经营结果；实际到账仍登记为通用
+`cash_receipt`，并通过 `allocated_to` 核销应收。
 
 ## 存储与变更
 
@@ -197,7 +224,7 @@ Action 不是第三个本体概念，也不写入业务图。它只描述用户�
 完整记录保存在 JSON payload 中，ID、type、name、source 和 target 同时保存为索引列。SQLite 是唯一实例数据源，
 不存在 YAML 数据副本。
 
-当前 `data/oms.db` 不包含业务实例，待模型确认后再重新 seed。
+本分支不自动覆盖 `data/oms.db` 中已有实例；高速公路对象应通过模型化业务操作逐步登记。
 
 业务数据优先通过模型化 Action 写入：
 

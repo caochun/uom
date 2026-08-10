@@ -169,12 +169,12 @@ class OagIntegrationTest(unittest.TestCase):
         self.assertIsNotNone(tool)
         self.assertEqual(["action_id"], tool.parameters["required"])
         result = json.loads(tool.handler({
-            "action_id": "record_contract",
-            "initial_inputs": {"name": "华星科技年度服务合同"},
+            "action_id": "register_highway",
+            "initial_inputs": {"name": "济青高速", "code": "G35"},
         }))
         self.assertEqual("action_form", result["presentation"]["kind"])
         self.assertEqual(
-            {"name": "华星科技年度服务合同"},
+            {"name": "济青高速", "code": "G35"},
             result["presentation"]["initial_inputs"],
         )
         self.assertFalse(self.ontology.functions["preview_action"].user_visible)

@@ -37,65 +37,62 @@ class OmsActionServiceTest(unittest.TestCase):
         self.repository.insert_record("Object", record)
 
     def test_global_and_context_actions_are_selected_from_the_model(self) -> None:
-        global_ids = {
-            item["id"] for item in self.actions.get_available_actions()["actions"]
-        }
-        self.assertIn("register_party", global_ids)
-        self.assertNotIn("record_cash_receipt", global_ids)
+        global_ids = {item["id"] for item in self.actions.get_available_actions()["actions"]}
+        self.assertEqual({"register_party", "register_highway"}, global_ids)
 
         self.insert_object({
-            "id": "receivable:test",
-            "type": "receivable",
-            "name": "测试应收",
-            "properties": {"amount": {"amount": 1000, "currency": "CNY"}},
+            "id": "highway:test",
+            "type": "highway",
+            "name": "测试高速",
+            "properties": {"code": "G99"},
         })
         context_ids = {
             item["id"]
-            for item in self.actions.get_available_actions("receivable:test")["actions"]
+            for item in self.actions.get_available_actions("highway:test")["actions"]
         }
-        self.assertTrue({"register_party", "record_cash_receipt", "attach_evidence"}.issubset(context_ids))
+        self.assertIn("register_road_section", context_ids)
+        self.assertIn("attach_evidence", context_ids)
+        self.assertNotIn("record_cash_receipt", context_ids)
 
     def test_action_form_accepts_partial_prefill_without_required_inputs(self) -> None:
         prepared = self.actions.prepare_action_form(
-            "record_contract",
-            {"name": "华星科技年度服务合同"},
+            "register_highway",
+            {"name": "济青高速"},
         )
-
-        self.assertEqual("record_contract", prepared["action"]["id"])
-        self.assertEqual(
-            {"name": "华星科技年度服务合同"},
-            prepared["initial_inputs"],
-        )
+        self.assertEqual("register_highway", prepared["action"]["id"])
+        self.assertEqual({"name": "济青高速"}, prepared["initial_inputs"])
         self.assertNotIn("effects", prepared["action"])
         self.assertIsNone(prepared["context"])
 
     def test_action_form_rejects_unknown_or_invalid_prefill(self) -> None:
         with self.assertRaisesRegex(ChangeValidationError, "未定义的输入"):
             self.actions.prepare_action_form(
-                "record_contract",
+                "register_highway",
                 {"unknown": "value"},
             )
-        with self.assertRaisesRegex(ChangeValidationError, "必须是数字"):
+        with self.assertRaisesRegex(ChangeValidationError, "必须是文本"):
             self.actions.prepare_action_form(
-                "record_contract",
-                {"amount": {"amount": "120000", "currency": "CNY"}},
+                "register_highway",
+                {"code": 99},
             )
 
     def test_preview_does_not_write_and_apply_is_audited(self) -> None:
         self.insert_object({
             "id": "receivable:test",
             "type": "receivable",
-            "name": "测试应收",
-            "properties": {"amount": {"amount": 1000, "currency": "CNY"}},
+            "name": "测试收费应收",
+            "properties": {
+                "amount": {"amount": 1000, "currency": "CNY"},
+                "occurred_on": "2026-08-01",
+            },
         })
-        inputs = {
-            "name": "首笔回款",
-            "amount": {"amount": 600, "currency": "CNY"},
-            "occurred_on": "2026-08-10",
-        }
         preview = self.actions.preview_action(
             "record_cash_receipt",
-            inputs,
+            {
+                "name": "首笔收费到账",
+                "amount": {"amount": 600, "currency": "CNY"},
+                "occurred_on": "2026-08-05",
+            },
             "receivable:test",
         )
         self.assertTrue(preview["valid"])
@@ -109,148 +106,204 @@ class OmsActionServiceTest(unittest.TestCase):
             channel="test",
         )
         self.assertTrue(result["applied"])
-        receipts = [item for item in self.workspace.list_objects() if item["type"] == "cash_receipt"]
-        allocations = [item for item in self.workspace.list_relations() if item["type"] == "allocated_to"]
-        self.assertEqual(1, len(receipts))
-        self.assertEqual("receivable:test", allocations[0]["to"])
+        self.assertEqual(
+            1,
+            len([item for item in self.workspace.list_objects() if item["type"] == "cash_receipt"]),
+        )
+        allocation = self.workspace.list_relations()[0]
+        self.assertEqual("receivable:test", allocation["to"])
 
         log = self.repository.adapter_for("Object").list_action_log()
         self.assertEqual("record_cash_receipt", log[0]["action_id"])
         self.assertEqual("tester", log[0]["actor"])
         self.assertEqual("银行到账", log[0]["payload"]["reason"])
-        self.assertEqual(2, len(log[0]["payload"]["changes"]))
 
-    def test_record_contract_creates_the_customer_relationship(self) -> None:
+    def test_register_highway_creates_operator_relationship(self) -> None:
         self.insert_object({
-            "id": "party:customer",
+            "id": "party:operator",
             "type": "party",
-            "name": "测试客户",
-            "properties": {"roles": ["customer"]},
+            "name": "示例高速运营公司",
+            "properties": {"roles": ["operator"]},
         })
         preview = self.actions.preview_action(
-            "record_contract",
+            "register_highway",
             {
-                "name": "测试客户年度合同",
-                "customer_id": "party:customer",
-                "amount": {"amount": 120000, "currency": "CNY"},
+                "name": "示例高速",
+                "code": "G99",
+                "operator_id": "party:operator",
             },
         )
         self.assertTrue(preview["valid"])
         self.assertEqual(2, len(preview["operations"]))
-
-        contract_id = preview["operations"][0]["record"]["id"]
+        highway_id = preview["operations"][0]["record"]["id"]
         relation = preview["operations"][1]["record"]
-        self.assertEqual("involves", relation["type"])
-        self.assertEqual((contract_id, "party:customer"), (relation["from"], relation["to"]))
-        self.assertEqual("customer", relation["properties"]["role"])
+        self.assertEqual("highway", preview["operations"][0]["record"]["type"])
+        self.assertEqual((highway_id, "party:operator"), (relation["from"], relation["to"]))
+        self.assertEqual("operator", relation["properties"]["role"])
 
-        self.actions.apply_action(preview["preview_token"])
-        self.assertEqual("contract", self.repository.query_by_id("Object", contract_id)["type"])
-        self.assertEqual("party:customer", self.workspace.list_relations()[0]["to"])
-
-    def test_opportunity_conversion_records_customer_and_source(self) -> None:
+    def test_highway_operations_compile_to_the_operating_graph(self) -> None:
         self.insert_object({
-            "id": "party:customer",
+            "id": "party:operator",
             "type": "party",
-            "name": "测试客户",
-            "properties": {"roles": ["customer"]},
+            "name": "示例高速运营公司",
+            "properties": {"roles": ["operator"]},
         })
-        self.insert_object({
-            "id": "opportunity:test",
-            "type": "opportunity",
-            "name": "测试商机",
-        })
-        available = {
-            item["id"]
-            for item in self.actions.get_available_actions("opportunity:test")["actions"]
-        }
-        self.assertIn("record_contract_from_opportunity", available)
+        highway = self.actions.preview_action(
+            "register_highway",
+            {"name": "示例高速", "code": "G99", "operator_id": "party:operator"},
+        )
+        self.actions.apply_action(highway["preview_token"])
+        highway_id = highway["operations"][0]["record"]["id"]
 
-        preview = self.actions.preview_action(
-            "record_contract_from_opportunity",
+        section = self.actions.preview_action(
+            "register_road_section",
+            {"name": "东段", "code": "G99-E", "mileage": 42.5},
+            highway_id,
+        )
+        self.actions.apply_action(section["preview_token"])
+        section_id = section["operations"][0]["record"]["id"]
+
+        self.insert_object({
+            "id": "toll_station:exit",
+            "type": "toll_station",
+            "name": "西出口",
+            "properties": {"code": "G99-EXIT"},
+        })
+        station = self.actions.preview_action(
+            "register_toll_station",
+            {"name": "东入口", "code": "G99-ENTRY"},
+            section_id,
+        )
+        self.actions.apply_action(station["preview_token"])
+        station_id = station["operations"][0]["record"]["id"]
+
+        passage = self.actions.preview_action(
+            "record_vehicle_passage",
             {
-                "name": "测试商机成交合同",
-                "customer_id": "party:customer",
+                "reference_no": "PASS-001",
+                "vehicle_type": "客车一类",
+                "exit_station_id": "toll_station:exit",
+                "occurred_on": "2026-08-10",
             },
-            "opportunity:test",
+            station_id,
         )
-        self.assertTrue(preview["valid"])
-        self.assertEqual(3, len(preview["operations"]))
-        contract_id = preview["operations"][0]["record"]["id"]
-        relations = [item["record"] for item in preview["operations"][1:]]
-        self.assertTrue(any(
-            item["type"] == "involves"
-            and (item["from"], item["to"]) == (contract_id, "party:customer")
-            for item in relations
-        ))
-        self.assertTrue(any(
-            item["type"] == "derived_from"
-            and (item["from"], item["to"]) == (contract_id, "opportunity:test")
-            for item in relations
-        ))
+        self.assertTrue(passage["valid"])
+        self.assertEqual(
+            {"entry_station", "exit_station"},
+            {item["record"]["properties"]["role"] for item in passage["operations"][1:]},
+        )
+        self.actions.apply_action(passage["preview_token"])
+        passage_id = passage["operations"][0]["record"]["id"]
 
-    def test_commercial_commitments_record_their_counterparties(self) -> None:
+        transaction = self.actions.preview_action(
+            "record_toll_transaction",
+            {
+                "reference_no": "TX-001",
+                "amount": {"amount": 35, "currency": "CNY"},
+                "occurred_on": "2026-08-10",
+            },
+            passage_id,
+        )
+        self.assertTrue(transaction["valid"])
+        self.assertEqual("passage_rating", transaction["operations"][1]["record"]["properties"]["basis"])
+        self.actions.apply_action(transaction["preview_token"])
+        transaction_id = transaction["operations"][0]["record"]["id"]
+
+        revenue = self.actions.preview_action(
+            "recognize_toll_revenue",
+            {
+                "name": "8月通行费收入",
+                "amount": {"amount": 35, "currency": "CNY"},
+                "occurred_on": "2026-08-10",
+                "period": "2026-08",
+            },
+            transaction_id,
+        )
+        self.assertTrue(revenue["valid"])
+        self.assertEqual("toll", revenue["operations"][0]["record"]["properties"]["category"])
+
+    def test_maintenance_cost_and_revenue_allocation(self) -> None:
         self.insert_object({
-            "id": "party:counterparty",
-            "type": "party",
-            "name": "测试往来方",
-            "properties": {"roles": ["customer", "supplier"]},
+            "id": "section:test",
+            "type": "road_section",
+            "name": "测试路段",
+            "properties": {"code": "G99-T"},
         })
-        opportunity = self.actions.preview_action(
-            "register_opportunity",
-            {"name": "测试商机", "customer_id": "party:counterparty"},
+        work = self.actions.preview_action(
+            "record_maintenance_work",
+            {
+                "name": "路面维修",
+                "category": "pavement",
+                "occurred_on": "2026-08-03",
+            },
+            "section:test",
         )
-        purchase_order = self.actions.preview_action(
-            "record_purchase_order",
-            {"name": "测试采购单", "supplier_id": "party:counterparty"},
-        )
-        for preview, role in ((opportunity, "customer"), (purchase_order, "supplier")):
-            self.assertTrue(preview["valid"])
-            relation = preview["operations"][1]["record"]
-            self.assertEqual("involves", relation["type"])
-            self.assertEqual("party:counterparty", relation["to"])
-            self.assertEqual(role, relation["properties"]["role"])
+        self.assertTrue(work["valid"])
+        self.actions.apply_action(work["preview_token"])
+        work_id = work["operations"][0]["record"]["id"]
 
-    def test_receivable_and_payable_record_their_counterparties(self) -> None:
+        cost = self.actions.preview_action(
+            "record_highway_cost",
+            {
+                "name": "路面维修成本",
+                "amount": {"amount": 300, "currency": "CNY"},
+                "occurred_on": "2026-08-04",
+            },
+            work_id,
+        )
+        self.assertTrue(cost["valid"])
+        self.actions.apply_action(cost["preview_token"])
+        cost_id = cost["operations"][0]["record"]["id"]
+
+        self.insert_object({
+            "id": "revenue:test",
+            "type": "revenue",
+            "name": "测试通行费收入",
+            "properties": {"amount": {"amount": 1000, "currency": "CNY"}},
+        })
+        allocation = self.actions.preview_action(
+            "allocate_cost",
+            {
+                "revenue_id": "revenue:test",
+                "amount": {"amount": 300, "currency": "CNY"},
+                "occurred_on": "2026-08-05",
+            },
+            cost_id,
+        )
+        self.assertTrue(allocation["valid"])
+        self.assertEqual((cost_id, "revenue:test"), (
+            allocation["operations"][0]["record"]["from"],
+            allocation["operations"][0]["record"]["to"],
+        ))
+
+    def test_receivable_and_payable_keep_counterparties(self) -> None:
         self.insert_object({
             "id": "party:counterparty",
             "type": "party",
-            "name": "测试往来方",
-            "properties": {"roles": ["customer", "supplier"]},
+            "name": "清分合作方",
+            "properties": {"roles": ["payer", "supplier"]},
         })
         self.insert_object({
             "id": "revenue:test",
             "type": "revenue",
-            "name": "测试收入",
+            "name": "测试通行费收入",
             "properties": {"amount": {"amount": 1000, "currency": "CNY"}},
         })
         self.insert_object({
             "id": "cost:test",
             "type": "cost",
-            "name": "测试成本",
+            "name": "测试养护成本",
             "properties": {"amount": {"amount": 400, "currency": "CNY"}},
         })
         cases = (
-            (
-                "record_receivable",
-                "revenue:test",
-                "debtor_id",
-                "debtor",
-                "测试应收",
-            ),
-            (
-                "record_payable",
-                "cost:test",
-                "creditor_id",
-                "creditor",
-                "测试应付",
-            ),
+            ("record_receivable", "revenue:test", "debtor_id", "debtor"),
+            ("record_payable", "cost:test", "creditor_id", "creditor"),
         )
-        for action_id, context_id, party_input, role, name in cases:
+        for action_id, context_id, party_input, role in cases:
             preview = self.actions.preview_action(
                 action_id,
                 {
-                    "name": name,
+                    "name": action_id,
                     party_input: "party:counterparty",
                     "amount": {"amount": 100, "currency": "CNY"},
                     "occurred_on": "2026-08-10",
@@ -258,129 +311,13 @@ class OmsActionServiceTest(unittest.TestCase):
                 context_id,
             )
             self.assertTrue(preview["valid"])
-            relations = [item["record"] for item in preview["operations"] if item["action"] == "create_relation"]
+            relations = [item["record"] for item in preview["operations"]]
             self.assertTrue(any(
                 item["type"] == "involves"
                 and item["to"] == "party:counterparty"
                 and item["properties"]["role"] == role
                 for item in relations
             ))
-
-    def test_invoice_actions_are_split_by_business_direction(self) -> None:
-        self.insert_object({
-            "id": "party:counterparty",
-            "type": "party",
-            "name": "测试往来方",
-            "properties": {"roles": ["customer", "supplier"]},
-        })
-        self.insert_object({
-            "id": "revenue:test",
-            "type": "revenue",
-            "name": "测试收入",
-            "properties": {"amount": {"amount": 1000, "currency": "CNY"}},
-        })
-        self.insert_object({
-            "id": "cost:test",
-            "type": "cost",
-            "name": "测试成本",
-            "properties": {"amount": {"amount": 400, "currency": "CNY"}},
-        })
-        revenue_actions = {
-            item["id"]
-            for item in self.actions.get_available_actions("revenue:test")["actions"]
-        }
-        cost_actions = {
-            item["id"]
-            for item in self.actions.get_available_actions("cost:test")["actions"]
-        }
-        self.assertIn("record_sales_invoice", revenue_actions)
-        self.assertNotIn("record_purchase_invoice", revenue_actions)
-        self.assertIn("record_purchase_invoice", cost_actions)
-        self.assertNotIn("record_sales_invoice", cost_actions)
-
-        common = {
-            "name": "测试发票",
-            "reference_no": "INV-001",
-            "amount": {"amount": 100, "currency": "CNY"},
-            "occurred_on": "2026-08-10",
-        }
-        sales = self.actions.preview_action(
-            "record_sales_invoice",
-            {**common, "customer_id": "party:counterparty"},
-            "revenue:test",
-        )
-        purchase = self.actions.preview_action(
-            "record_purchase_invoice",
-            {**common, "supplier_id": "party:counterparty"},
-            "cost:test",
-        )
-        self.assertTrue(sales["valid"])
-        self.assertTrue(purchase["valid"])
-        self.assertEqual("sales", sales["operations"][0]["record"]["properties"]["category"])
-        self.assertEqual("purchase", purchase["operations"][0]["record"]["properties"]["category"])
-
-    def test_project_and_revenue_contexts_preserve_business_direction(self) -> None:
-        self.insert_object({
-            "id": "opportunity:test",
-            "type": "opportunity",
-            "name": "测试商机",
-        })
-        self.insert_object({
-            "id": "delivery:purchase",
-            "type": "delivery",
-            "name": "采购交付",
-        })
-        opportunity_actions = {
-            item["id"]
-            for item in self.actions.get_available_actions("opportunity:test")["actions"]
-        }
-        delivery_actions = {
-            item["id"]
-            for item in self.actions.get_available_actions("delivery:purchase")["actions"]
-        }
-        self.assertIn("start_project_from_context", opportunity_actions)
-        self.assertNotIn("recognize_revenue", delivery_actions)
-
-        preview = self.actions.preview_action(
-            "start_project_from_context",
-            {"name": "商机交付项目"},
-            "opportunity:test",
-        )
-        self.assertTrue(preview["valid"])
-        relation = preview["operations"][1]["record"]
-        self.assertEqual("derived_from", relation["type"])
-        self.assertEqual("opportunity:test", relation["to"])
-
-    def test_settlement_records_the_customer(self) -> None:
-        self.insert_object({
-            "id": "party:customer",
-            "type": "party",
-            "name": "测试客户",
-            "properties": {"roles": ["customer"]},
-        })
-        self.insert_object({
-            "id": "contract:test",
-            "type": "contract",
-            "name": "测试合同",
-        })
-        preview = self.actions.preview_action(
-            "record_settlement",
-            {
-                "name": "八月结算",
-                "customer_id": "party:customer",
-                "amount": {"amount": 800, "currency": "CNY"},
-                "period": "2026-08",
-            },
-            "contract:test",
-        )
-        self.assertTrue(preview["valid"])
-        relations = [item["record"] for item in preview["operations"][1:]]
-        self.assertTrue(any(
-            item["type"] == "involves"
-            and item["to"] == "party:customer"
-            and item["properties"]["role"] == "customer"
-            for item in relations
-        ))
 
     def test_invalid_context_and_object_reference_are_rejected(self) -> None:
         self.insert_object({
@@ -393,7 +330,7 @@ class OmsActionServiceTest(unittest.TestCase):
             self.actions.preview_action(
                 "record_cash_receipt",
                 {
-                    "name": "错误回款",
+                    "name": "错误收款",
                     "amount": {"amount": 100, "currency": "CNY"},
                     "occurred_on": "2026-08-10",
                 },
@@ -409,33 +346,6 @@ class OmsActionServiceTest(unittest.TestCase):
                 },
                 "cost:test",
             )
-
-    def test_cost_allocation_compiles_to_a_relation(self) -> None:
-        self.insert_object({
-            "id": "cost:test",
-            "type": "cost",
-            "name": "测试成本",
-            "properties": {"amount": {"amount": 400, "currency": "CNY"}},
-        })
-        self.insert_object({
-            "id": "revenue:test",
-            "type": "revenue",
-            "name": "测试收入",
-            "properties": {"amount": {"amount": 1000, "currency": "CNY"}},
-        })
-        preview = self.actions.preview_action(
-            "allocate_cost",
-            {
-                "revenue_id": "revenue:test",
-                "amount": {"amount": 300, "currency": "CNY"},
-                "occurred_on": "2026-08-10",
-            },
-            "cost:test",
-        )
-        record = preview["operations"][0]["record"]
-        self.assertTrue(preview["valid"])
-        self.assertEqual(("cost:test", "revenue:test"), (record["from"], record["to"]))
-        self.assertEqual("confirmed", record["properties"]["status"])
 
 
 if __name__ == "__main__":

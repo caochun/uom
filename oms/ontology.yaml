@@ -1,9 +1,8 @@
 schema: oms.ontology.v2
-name: OMS 企业经营模型
-version: 2.1.0
-reference: ../docs/TwinCore企业运营管理平台全域对象关系图_v1.md
+name: OMS 高速公路经营模型
+version: 2.2.0
 description: >-
-  面向 LLM 的企业运营对象关系与业务追溯语义。模型只定义 Object 和 Relation；
+  面向 LLM 的高速公路经营对象关系与业务追溯语义。模型只定义 Object 和 Relation；
   具体业务含义由开放的 type、properties 和可选 tags 表达。
   具体业务类型词汇通过 get_model_vocabulary 按需读取。
 
@@ -158,7 +157,7 @@ presentation_tools:
       根据 action_id 打开 model.yaml 定义的 Action 表单；可以预填用户已经明确给出的输入，
       但不预览、不确认、不执行业务数据变更。
     usage_prompt: >-
-      用户表达登记、确认、开票、收付款、核销、归因或关联等业务操作意图时使用。
+      用户表达登记公路或路段、记录通行、收费清分、确认收入、养护、收付款、核销或成本归因等业务操作意图时使用。
       一旦确定 action_id 就立即调用；未知的业务输入留给表单，不要先在对话中逐项追问。
       initial_inputs 只填写用户已经明确给出且符合模型格式的值，不得猜测。
     category: ui
@@ -179,7 +178,7 @@ interaction_policies:
       - Object 和 Relation 的 type 是开放词汇；遇到未知语义时先调用 get_model_vocabulary。
       - 用户要求正式扩展模型时，提出简洁定义并用 upsert 类型操作提交。
       - tags 只用于非排他检索，不得代替 type、金额、状态、期间、方向或依据。
-      - 用户明确说出“登记合同”等业务操作时，首轮直接调用 ui_open_action_form 打开模型驱动表单；只有无法确定 action_id 时才先调用 get_available_actions，不要先查模型词汇。
+      - 用户明确说出“登记收费公路”等业务操作时，首轮直接调用 ui_open_action_form 打开模型驱动表单；只有无法确定 action_id 时才先调用 get_available_actions，不要先查模型词汇。
       - 不要为了补齐 Action 的必填输入在对话中逐项追问；将已明确且格式可靠的值放入 initial_inputs，其余由用户在表单中填写。
       - ui_open_action_form 只负责交给前端采集信息；调用后不要继续调用 preview_action、apply_action 或自行构造业务数据变更。
       - preview_changes 和 apply_changes 只用于模型扩展、修复或动作尚未覆盖的高级维护。
@@ -192,7 +191,7 @@ principles:
   - properties 保存可计算或可判断的事实，tags 只用于非排他的横向检索。
   - tags 不得替代 type、金额、状态、期间、方向或业务依据。
   - 原始对象不因后续归因而改写，认识变化通过新增或更新关系表达。
-  - 项目、合同和部门都是普通对象，不是所有链路必须经过的中心。
+  - 公路、路段和收费站提供经营上下文，但收入与成本不被强制合并为一条流程。
 
 tag_policy:
   vocabulary: open
