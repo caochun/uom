@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Validate the minimal OMS metamodel, ontology, data, and money allocations."""
+"""Validate the two-concept OMS ontology and its object-relation data."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -13,8 +15,9 @@ from typing import Any
 import yaml
 
 
-DEFINITION_ID = re.compile(r"^[a-z][a-z0-9_]*$")
+TYPE_ID = re.compile(r"^[a-z][a-z0-9_]*$")
 INSTANCE_ID = re.compile(r"^[a-z][a-z0-9_:/.-]*$")
+VALUE_TYPES = {"string", "number", "date", "period", "money", "boolean", "json"}
 
 
 @dataclass
@@ -37,23 +40,49 @@ def load_yaml(path: Path) -> dict[str, Any]:
     return value
 
 
+def load_data(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    database_path = root / "data" / "oms.db"
+    if not database_path.exists():
+        raise FileNotFoundError(
+            f"OMS database not found: {database_path}"
+        )
+
+    connection = sqlite3.connect(database_path)
+    try:
+        objects = [
+            json.loads(row[0])
+            for row in connection.execute("SELECT payload FROM objects ORDER BY rowid")
+        ]
+        relations = [
+            json.loads(row[0])
+            for row in connection.execute("SELECT payload FROM relations ORDER BY rowid")
+        ]
+    finally:
+        connection.close()
+    return (
+        {"schema": "oms.data.objects.v2", "objects": objects},
+        {"schema": "oms.data.relations.v2", "relations": relations},
+    )
+
+
 class ModelValidator:
     def __init__(
         self,
-        metamodel: dict[str, Any],
         ontology: dict[str, Any],
         object_data: dict[str, Any],
         relation_data: dict[str, Any],
+        business_model: dict[str, Any] | None = None,
     ) -> None:
-        self.meta = metamodel
         self.ontology = ontology
         self.object_data = object_data
         self.relation_data = relation_data
+        self.business_model = business_model
         self.result = ValidationResult()
-        self.concepts = self._mapping(ontology.get("concepts"))
-        self.relations = self._mapping(ontology.get("relations"))
-        self.functions = self._mapping(ontology.get("functions"))
-        self.value_types = set(self._mapping(metamodel.get("value_types")))
+        self.object_definitions = self._mapping(ontology.get("objects"))
+        model = self._mapping(business_model)
+        self.property_definitions = self._mapping(model.get("property_definitions"))
+        self.object_type_definitions = self._mapping(model.get("object_types"))
+        self.relation_type_definitions = self._mapping(model.get("relation_types"))
         self.object_index: dict[str, dict[str, Any]] = {}
         self.relation_items: list[dict[str, Any]] = []
 
@@ -61,104 +90,162 @@ class ModelValidator:
     def _mapping(value: Any) -> dict[str, Any]:
         return value if isinstance(value, dict) else {}
 
-    @staticmethod
-    def _as_list(value: Any) -> list[Any]:
-        return value if isinstance(value, list) else [value]
-
     def validate(self) -> ValidationResult:
-        self._validate_metamodel()
         self._validate_ontology()
         self._validate_data()
-        self._validate_money_allocations()
+        if self.business_model is not None:
+            self._validate_business_model()
+            self._validate_data_against_business_model()
+        self._validate_semantics()
         return self.result
 
-    def _validate_metamodel(self) -> None:
-        if self.meta.get("schema") != "oms.metamodel.v1":
-            self.result.error("metamodel.schema", "must be oms.metamodel.v1")
-        elements = self._mapping(self.meta.get("elements"))
-        expected = {"Concept", "Relation", "Property", "Function"}
-        if set(elements) != expected:
-            self.result.error("metamodel.elements", "must contain only Concept, Relation, Property, Function")
-        for name in expected:
-            if not self._mapping(elements.get(name)).get("purpose"):
-                self.result.error(f"metamodel.elements.{name}", "missing purpose")
-        for section in ("value_types", "cardinalities", "data_contract"):
-            if section not in self.meta:
-                self.result.error("metamodel", f"missing {section}")
+    def _validate_business_model(self) -> None:
+        model = self.business_model or {}
+        if model.get("schema") != "oms.business_model.v2":
+            self.result.error("model.schema", "must be oms.business_model.v2")
+        metadata = self._mapping(model.get("model"))
+        if not metadata.get("name") or not metadata.get("version"):
+            self.result.error("model.model", "must contain name and version")
+
+        if not isinstance(model.get("property_definitions"), dict):
+            self.result.error("model.property_definitions", "must be a mapping")
+        for property_id, definition in self.property_definitions.items():
+            path = f"model.property_definitions.{property_id}"
+            self._validate_type_id(property_id, path)
+            if not isinstance(definition, dict):
+                self.result.error(path, "must be a mapping")
+                continue
+            if not definition.get("name"):
+                self.result.error(path, "must contain name")
+            if definition.get("type") not in VALUE_TYPES:
+                self.result.error(f"{path}.type", f"must be one of {', '.join(sorted(VALUE_TYPES))}")
+
+        for kind in ("object", "relation"):
+            section_name = f"{kind}_types"
+            section = model.get(section_name)
+            if not isinstance(section, dict):
+                self.result.error(f"model.{section_name}", "must be a mapping")
+                continue
+            for type_id, definition in section.items():
+                path = f"model.{section_name}.{type_id}"
+                self._validate_type_id(type_id, path)
+                if not isinstance(definition, dict):
+                    self.result.error(path, "must be a mapping")
+                    continue
+                if not definition.get("name") or not definition.get("description"):
+                    self.result.error(path, "must contain name and description")
+
+                properties = definition.get("properties", {})
+                if not isinstance(properties, dict):
+                    self.result.error(f"{path}.properties", "must be a mapping")
+                else:
+                    for property_id, usage in properties.items():
+                        property_path = f"{path}.properties.{property_id}"
+                        self._validate_type_id(property_id, property_path)
+                        if property_id not in self.property_definitions:
+                            self.result.error(property_path, "references an unknown property definition")
+                        if not isinstance(usage, dict):
+                            self.result.error(property_path, "must be a mapping")
+                            continue
+                        if set(usage) - {"required"}:
+                            self.result.error(property_path, "only required is supported")
+                        if "required" in usage and not isinstance(usage["required"], bool):
+                            self.result.error(f"{property_path}.required", "must be a boolean")
+
+                for field_name in (["from_types", "to_types"] if kind == "relation" else []):
+                    value = definition.get(field_name, [])
+                    if not isinstance(value, list):
+                        self.result.error(f"{path}.{field_name}", "must be a list")
+                        continue
+                    for index, item in enumerate(value):
+                        self._validate_type_id(item, f"{path}.{field_name}[{index}]")
+                if kind == "relation" and "acyclic" in definition and not isinstance(definition["acyclic"], bool):
+                    self.result.error(f"{path}.acyclic", "must be a boolean")
+
+    def _validate_data_against_business_model(self) -> None:
+        for index, item in enumerate(self.object_index.values()):
+            definition = self._mapping(self.object_type_definitions.get(item.get("type")))
+            self._validate_typed_properties(
+                item.get("properties", {}),
+                definition,
+                f"data.objects[{index}].properties",
+            )
+
+        for index, relation in enumerate(self.relation_items):
+            definition = self._mapping(self.relation_type_definitions.get(relation.get("type")))
+            path = f"data.relations[{index}]"
+            source = self.object_index.get(relation.get("from"), {})
+            target = self.object_index.get(relation.get("to"), {})
+            from_types = definition.get("from_types", [])
+            to_types = definition.get("to_types", [])
+            if from_types and source.get("type") not in from_types:
+                self.result.error(f"{path}.from", "object type does not match business model")
+            if to_types and target.get("type") not in to_types:
+                self.result.error(f"{path}.to", "object type does not match business model")
+            self._validate_typed_properties(
+                relation.get("properties", {}),
+                definition,
+                f"{path}.properties",
+            )
 
     def _validate_ontology(self) -> None:
-        if self.ontology.get("schema") != "oms.ontology.v1":
-            self.result.error("ontology.schema", "must be oms.ontology.v1")
-        if not self.concepts:
-            self.result.error("ontology.concepts", "must not be empty")
-        if not self.relations:
-            self.result.error("ontology.relations", "must not be empty")
-        if not self.functions:
-            self.result.error("ontology.functions", "must not be empty")
+        if self.ontology.get("schema") != "oms.ontology.v2":
+            self.result.error("ontology.schema", "must be oms.ontology.v2")
+        if not self.ontology.get("name") or not self.ontology.get("description"):
+            self.result.error("ontology", "must contain OAG name and description")
 
-        elements = self._mapping(self.meta.get("elements"))
-        concept_contract = self._mapping(elements.get("Concept"))
-        for concept_id, concept in self.concepts.items():
-            path = f"ontology.concepts.{concept_id}"
-            self._validate_definition_id(concept_id, path)
-            if not isinstance(concept, dict):
-                self.result.error(path, "must be a mapping")
-                continue
-            self._require_fields(concept, concept_contract.get("required"), path)
-            self._validate_property_definitions(concept.get("properties", {}), f"{path}.properties")
-
-        relation_contract = self._mapping(elements.get("Relation"))
-        cardinalities = set(self.meta.get("cardinalities") or [])
-        default_cardinality = self._mapping(relation_contract.get("defaults")).get(
-            "cardinality", "many_to_many"
-        )
-        for relation_id, relation in self.relations.items():
-            path = f"ontology.relations.{relation_id}"
-            self._validate_definition_id(relation_id, path)
-            if not isinstance(relation, dict):
-                self.result.error(path, "must be a mapping")
-                continue
-            self._require_fields(relation, relation_contract.get("required"), path)
-            for endpoint in ("from", "to"):
-                refs = self._as_list(relation.get(endpoint))
-                if not refs or any(ref not in self.concepts for ref in refs):
-                    self.result.error(f"{path}.{endpoint}", "references an unknown concept")
-            if relation.get("cardinality", default_cardinality) not in cardinalities:
-                self.result.error(f"{path}.cardinality", "unknown cardinality")
-            self._validate_property_definitions(relation.get("properties", {}), f"{path}.properties")
-
-        function_contract = self._mapping(elements.get("Function"))
-        model_elements = set(self.concepts) | set(self.relations)
-        for function_id, function in self.functions.items():
-            path = f"ontology.functions.{function_id}"
-            self._validate_definition_id(function_id, path)
-            if not isinstance(function, dict):
-                self.result.error(path, "must be a mapping")
-                continue
-            self._require_fields(function, function_contract.get("required"), path)
-            for input_name, value_type in self._mapping(function.get("inputs")).items():
-                if value_type not in self.value_types:
-                    self.result.error(f"{path}.inputs.{input_name}", "unknown value type")
-            reads = function.get("reads")
-            if not isinstance(reads, list) or any(item not in model_elements for item in reads):
-                self.result.error(f"{path}.reads", "must contain known concepts or relations")
-
-    def _validate_property_definitions(self, properties: Any, path: str) -> None:
-        if not isinstance(properties, dict):
-            self.result.error(path, "must be a property-to-type mapping")
-            return
-        for property_id, value_type in properties.items():
-            self._validate_definition_id(property_id, f"{path}.{property_id}")
-            if value_type not in self.value_types:
-                self.result.error(f"{path}.{property_id}", f"unknown value type {value_type}")
+        expected_objects = {
+            "Object": {
+                "id": ("str", True),
+                "type": ("str", True),
+                "name": ("str", True),
+                "properties": ("dict", False),
+                "tags": ("list", False),
+                "source_refs": ("list", False),
+            },
+            "Relation": {
+                "id": ("str", True),
+                "type": ("str", True),
+                "from": ("str", True),
+                "to": ("str", True),
+                "properties": ("dict", False),
+                "tags": ("list", False),
+                "source_refs": ("list", False),
+            },
+        }
+        if set(self.object_definitions) != set(expected_objects):
+            self.result.error("ontology.objects", "must contain only Object and Relation")
+        for object_name, expected_properties in expected_objects.items():
+            definition = self._mapping(self.object_definitions.get(object_name))
+            path = f"ontology.objects.{object_name}"
+            if not definition.get("display_name") or not definition.get("description"):
+                self.result.error(path, "must contain display_name and description")
+            if definition.get("type_policy") != "open":
+                self.result.error(f"{path}.type_policy", "must be open")
+            source = self._mapping(definition.get("source"))
+            if source.get("type") != "resolver" or not source.get("resolver"):
+                self.result.error(f"{path}.source", "must declare an OAG resolver")
+            properties = self._mapping(definition.get("properties"))
+            if set(properties) != set(expected_properties):
+                self.result.error(
+                    f"{path}.properties",
+                    "does not match the OMS record contract",
+                )
+            for property_name, (value_type, required) in expected_properties.items():
+                property_definition = self._mapping(properties.get(property_name))
+                property_path = f"{path}.properties.{property_name}"
+                if property_definition.get("type") != value_type:
+                    self.result.error(property_path, f"type must be {value_type}")
+                if bool(property_definition.get("required", False)) != required:
+                    self.result.error(property_path, f"required must be {str(required).lower()}")
 
     def _validate_data(self) -> None:
-        if self.object_data.get("schema") != "oms.data.objects.v1":
-            self.result.error("data.objects.schema", "must be oms.data.objects.v1")
-        if self.relation_data.get("schema") != "oms.data.relations.v1":
-            self.result.error("data.relations.schema", "must be oms.data.relations.v1")
+        if self.object_data.get("schema") != "oms.data.objects.v2":
+            self.result.error("data.objects.schema", "must be oms.data.objects.v2")
+        if self.relation_data.get("schema") != "oms.data.relations.v2":
+            self.result.error("data.relations.schema", "must be oms.data.relations.v2")
 
-        object_contract = self._mapping(self._mapping(self.meta.get("data_contract")).get("object"))
+        object_contract = self._record_contract("Object")
         objects = self.object_data.get("objects")
         if not isinstance(objects, list):
             self.result.error("data.objects", "must be a list")
@@ -168,22 +255,19 @@ class ModelValidator:
             if not isinstance(item, dict):
                 self.result.error(path, "must be a mapping")
                 continue
-            self._require_fields(item, object_contract.get("required"), path)
+            self._validate_record_fields(item, object_contract, path)
             object_id = item.get("id")
             self._validate_instance_id(object_id, f"{path}.id")
+            self._validate_type_id(item.get("type"), f"{path}.type")
             if object_id in self.object_index:
                 self.result.error(f"{path}.id", "duplicate object ID")
             elif isinstance(object_id, str):
                 self.object_index[object_id] = item
-            concept_id = item.get("type")
-            if concept_id not in self.concepts:
-                self.result.error(f"{path}.type", "unknown concept")
-                continue
-            properties = self._mapping(self._mapping(self.concepts[concept_id]).get("properties"))
-            self._validate_facts(item.get("facts", {}), properties, f"{path}.facts")
+            self._validate_properties(item.get("properties", {}), f"{path}.properties")
+            self._validate_tags(item.get("tags"), f"{path}.tags")
             self._validate_source_refs(item.get("source_refs"), f"{path}.source_refs")
 
-        relation_contract = self._mapping(self._mapping(self.meta.get("data_contract")).get("relation"))
+        relation_contract = self._record_contract("Relation")
         relations = self.relation_data.get("relations")
         if not isinstance(relations, list):
             self.result.error("data.relations", "must be a list")
@@ -195,30 +279,97 @@ class ModelValidator:
                 self.result.error(path, "must be a mapping")
                 continue
             self.relation_items.append(item)
-            self._require_fields(item, relation_contract.get("required"), path)
+            self._validate_record_fields(item, relation_contract, path)
             relation_id = item.get("id")
             self._validate_instance_id(relation_id, f"{path}.id")
+            self._validate_type_id(item.get("type"), f"{path}.type")
             if relation_id in relation_ids:
                 self.result.error(f"{path}.id", "duplicate relation ID")
             elif isinstance(relation_id, str):
                 relation_ids.add(relation_id)
-            definition = self._mapping(self.relations.get(item.get("type")))
-            if not definition:
-                self.result.error(f"{path}.type", "unknown relation type")
-                continue
             source = self.object_index.get(item.get("from"))
             target = self.object_index.get(item.get("to"))
             if source is None:
                 self.result.error(f"{path}.from", "unknown object")
-            elif source.get("type") not in self._as_list(definition.get("from")):
-                self.result.error(f"{path}.from", "object type is not allowed by relation")
             if target is None:
                 self.result.error(f"{path}.to", "unknown object")
-            elif target.get("type") not in self._as_list(definition.get("to")):
-                self.result.error(f"{path}.to", "object type is not allowed by relation")
-            properties = self._mapping(definition.get("properties"))
-            self._validate_facts(item.get("facts", {}), properties, f"{path}.facts")
+            if item.get("from") == item.get("to"):
+                self.result.error(path, "self-relations are not allowed")
+            self._validate_properties(item.get("properties", {}), f"{path}.properties")
+            self._validate_tags(item.get("tags"), f"{path}.tags")
             self._validate_source_refs(item.get("source_refs"), f"{path}.source_refs")
+
+    def _validate_record_fields(
+        self,
+        item: dict[str, Any],
+        contract: dict[str, Any],
+        path: str,
+    ) -> None:
+        required = contract.get("required", [])
+        optional = contract.get("optional", [])
+        for field_name in required:
+            if field_name not in item:
+                self.result.error(path, f"missing required field {field_name}")
+        allowed = set(required) | set(optional)
+        unknown = set(item) - allowed
+        if unknown:
+            self.result.error(path, f"contains unknown fields: {', '.join(sorted(unknown))}")
+
+    def _record_contract(self, object_name: str) -> dict[str, list[str]]:
+        definition = self._mapping(self.object_definitions.get(object_name))
+        properties = self._mapping(definition.get("properties"))
+        required = [
+            name
+            for name, property_definition in properties.items()
+            if self._mapping(property_definition).get("required") is True
+        ]
+        return {
+            "required": required,
+            "optional": [name for name in properties if name not in required],
+        }
+
+    def _validate_properties(self, properties: Any, path: str) -> None:
+        if not isinstance(properties, dict):
+            self.result.error(path, "must be a mapping")
+            return
+        for property_name, value in properties.items():
+            self._validate_type_id(property_name, f"{path}.{property_name}")
+            self._validate_json_value(value, f"{path}.{property_name}")
+
+    def _validate_typed_properties(
+        self,
+        properties: Any,
+        type_definition: dict[str, Any],
+        path: str,
+    ) -> None:
+        if not isinstance(properties, dict):
+            return
+        usages = self._mapping(type_definition.get("properties"))
+        for property_name, usage in usages.items():
+            if self._mapping(usage).get("required") is True and property_name not in properties:
+                self.result.error(path, f"missing required property {property_name}")
+        for property_name, value in properties.items():
+            definition = self._mapping(self.property_definitions.get(property_name))
+            value_type = definition.get("type")
+            if value_type in VALUE_TYPES:
+                self._validate_value(value, value_type, f"{path}.{property_name}")
+
+    def _validate_tags(self, value: Any, path: str) -> None:
+        if value is None:
+            return
+        if not isinstance(value, list):
+            self.result.error(path, "must be a list")
+            return
+        seen: set[str] = set()
+        has_duplicates = False
+        for index, tag in enumerate(value):
+            self._validate_type_id(tag, f"{path}[{index}]")
+            if isinstance(tag, str):
+                if tag in seen:
+                    has_duplicates = True
+                seen.add(tag)
+        if has_duplicates:
+            self.result.error(path, "must not contain duplicates")
 
     def _validate_source_refs(self, value: Any, path: str) -> None:
         if value is None:
@@ -226,22 +377,13 @@ class ModelValidator:
         if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
             self.result.error(path, "must be a list of non-empty strings")
 
-    def _validate_facts(self, facts: Any, definitions: dict[str, Any], path: str) -> None:
-        if not isinstance(facts, dict):
-            self.result.error(path, "must be a mapping")
-            return
-        for property_id, value in facts.items():
-            value_type = definitions.get(property_id)
-            if value_type is None:
-                self.result.error(f"{path}.{property_id}", "property is not declared")
-            else:
-                self._validate_value(value, value_type, f"{path}.{property_id}")
-
     def _validate_value(self, value: Any, value_type: str, path: str) -> None:
         if value_type == "string" and not isinstance(value, str):
             self.result.error(path, "must be a string")
         elif value_type == "number" and not self._is_number(value):
             self.result.error(path, "must be a number")
+        elif value_type == "boolean" and not isinstance(value, bool):
+            self.result.error(path, "must be a boolean")
         elif value_type == "date":
             if not isinstance(value, str):
                 self.result.error(path, "must be an ISO date")
@@ -261,39 +403,51 @@ class ModelValidator:
                 self.result.error(f"{path}.amount", "must be a number")
             elif not isinstance(value["currency"], str) or not re.fullmatch(r"[A-Z]{3}", value["currency"]):
                 self.result.error(f"{path}.currency", "must be an ISO currency code")
+        elif value_type == "json":
+            self._validate_json_value(value, path)
 
-    def _validate_money_allocations(self) -> None:
-        groups = [
-            ("expenditure disposition", {"expenditure_recognized_as_cost": "recognized_amount", "expenditure_capitalized_as_asset": "capitalized_amount"}, "from", set()),
-            ("cost disposition", {"cost_attributed_to_revenue": "allocated_amount", "cost_absorbed_by_enterprise": "absorbed_amount"}, "from", {"cost_attributed_to_revenue"}),
-            ("revenue receivable", {"revenue_creates_receivable": "linked_amount"}, "from", set()),
-            ("receivable creation", {"revenue_creates_receivable": "linked_amount"}, "to", set()),
-            ("receipt settlement", {"cash_receipt_settles_receivable": "settled_amount"}, "from", set()),
-            ("receivable settlement", {"cash_receipt_settles_receivable": "settled_amount"}, "to", set()),
-            ("expenditure payable", {"expenditure_creates_payable": "linked_amount"}, "from", set()),
-            ("payable creation", {"expenditure_creates_payable": "linked_amount"}, "to", set()),
-            ("payment settlement", {"cash_payment_settles_payable": "settled_amount"}, "from", set()),
-            ("payable settlement", {"cash_payment_settles_payable": "settled_amount"}, "to", set()),
-        ]
-        for name, relation_properties, endpoint, confirmed_only in groups:
-            self._validate_amount_group(name, relation_properties, endpoint, confirmed_only)
+    def _validate_json_value(self, value: Any, path: str) -> None:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                self._validate_json_value(item, f"{path}[{index}]")
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    self.result.error(path, "mapping keys must be strings")
+                self._validate_json_value(item, f"{path}.{key}")
+            return
+        self.result.error(path, "must be JSON-compatible")
 
-    def _validate_amount_group(
+    def _validate_semantics(self) -> None:
+        self._validate_relation_amounts(
+            {"cost_attribution", "enterprise_absorption"},
+            "from",
+            confirmed_only=True,
+        )
+        for relation_type in ("settles_receivable", "settles_payable"):
+            self._validate_relation_amounts({relation_type}, "from")
+            self._validate_relation_amounts({relation_type}, "to")
+        for relation_type, definition in self.relation_type_definitions.items():
+            if self._mapping(definition).get("acyclic") is True:
+                self._validate_acyclic(relation_type)
+
+    def _validate_relation_amounts(
         self,
-        name: str,
-        relation_properties: dict[str, str],
+        relation_types: set[str],
         endpoint: str,
-        confirmed_only: set[str],
+        confirmed_only: bool = False,
     ) -> None:
         totals: dict[tuple[str, str], float] = {}
         for item in self.relation_items:
-            relation_type = item.get("type")
-            property_name = relation_properties.get(relation_type)
-            if property_name is None:
+            if item.get("type") not in relation_types:
                 continue
-            if relation_type in confirmed_only and self._mapping(item.get("facts")).get("status") != "confirmed":
+            properties = self._mapping(item.get("properties"))
+            if confirmed_only and properties.get("status") != "confirmed":
                 continue
-            money = self._mapping(self._mapping(item.get("facts")).get(property_name))
+            money = self._mapping(properties.get("amount"))
             amount = money.get("amount")
             currency = money.get("currency")
             object_id = item.get(endpoint)
@@ -304,28 +458,47 @@ class ModelValidator:
 
         for (object_id, currency), total in totals.items():
             item = self.object_index.get(object_id)
-            object_money = self._mapping(self._mapping(item).get("facts")).get("amount")
+            object_money = self._mapping(self._mapping(item).get("properties")).get("amount")
             object_money = self._mapping(object_money)
-            object_amount = object_money.get("amount")
+            amount = object_money.get("amount")
             object_currency = object_money.get("currency")
-            if not self._is_number(object_amount):
+            if not self._is_number(amount):
                 continue
             if object_currency != currency:
-                self.result.error(f"money.{name}.{object_id}", "currency differs from object amount")
-            elif total > float(object_amount) + 1e-9:
+                self.result.error(f"money.{object_id}", "currency differs from object")
+            elif total > float(amount) + 1e-9:
                 self.result.error(
-                    f"money.{name}.{object_id}",
-                    f"allocated {total:g} exceeds object amount {float(object_amount):g}",
+                    f"money.{object_id}",
+                    f"related amount {total:g} exceeds object amount {float(amount):g}",
                 )
 
-    def _require_fields(self, value: dict[str, Any], required: Any, path: str) -> None:
-        for field_name in required or []:
-            if field_name not in value:
-                self.result.error(path, f"missing required field {field_name}")
+    def _validate_acyclic(self, relation_type: str) -> None:
+        graph: dict[str, list[str]] = {}
+        for item in self.relation_items:
+            if item.get("type") == relation_type:
+                graph.setdefault(str(item.get("from")), []).append(str(item.get("to")))
 
-    def _validate_definition_id(self, value: Any, path: str) -> None:
-        if not isinstance(value, str) or not DEFINITION_ID.fullmatch(value):
-            self.result.error(path, "invalid definition ID")
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(node: str) -> bool:
+            if node in visiting:
+                return True
+            if node in visited:
+                return False
+            visiting.add(node)
+            if any(visit(target) for target in graph.get(node, [])):
+                return True
+            visiting.remove(node)
+            visited.add(node)
+            return False
+
+        if any(visit(node) for node in list(graph)):
+            self.result.error(f"relation.{relation_type}", "must not contain a cycle")
+
+    def _validate_type_id(self, value: Any, path: str) -> None:
+        if not isinstance(value, str) or not TYPE_ID.fullmatch(value):
+            self.result.error(path, "must be an ASCII snake_case identifier")
 
     def _validate_instance_id(self, value: Any, path: str) -> None:
         if not isinstance(value, str) or not INSTANCE_ID.fullmatch(value):
@@ -337,11 +510,13 @@ class ModelValidator:
 
 
 def validate_model(root: Path) -> ValidationResult:
+    model_path = root / "model.yaml"
+    object_data, relation_data = load_data(root)
     return ModelValidator(
-        load_yaml(root / "metamodel.yaml"),
         load_yaml(root / "ontology.yaml"),
-        load_yaml(root / "data" / "objects.yaml"),
-        load_yaml(root / "data" / "relations.yaml"),
+        object_data,
+        relation_data,
+        load_yaml(model_path) if model_path.exists() else None,
     ).validate()
 
 

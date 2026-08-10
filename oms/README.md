@@ -1,105 +1,180 @@
-# 企业收支 OMS 本体
+# OMS Domain
 
-本目录定义面向 LLM 的企业经营 MVP 语义层。它参考
-[`TwinCore企业运营管理平台全域对象关系图_v1.md`](../docs/TwinCore企业运营管理平台全域对象关系图_v1.md)，
-但不复制项目、合同、工资和采购等来源系统对象。
+本目录是 OMS 的 OAG domain，负责定义企业经营对象关系语义、用户业务词汇、实例数据和确定性经营函数。
 
-模型不设置统一的项目或经营核算中心。收入、支出和现金事实可以分别产生，成本与收入通过可延后建立的
-归因关系连接。
+## 设计边界
 
-## 三层结构
+OMS 只有两个本体概念：
 
-```text
-metamodel.yaml       建模语言：Concept / Relation / Property / Function
-ontology.yaml        企业收支概念、关系和分析函数
-data/
-  objects.yaml       具体经济事实
-  relations.yaml     核销、拆分和归因关系
-```
+- `Object`：企业经营中具有稳定 ID 的主体、意图、承诺、工作、事件、资源或结果。
+- `Relation`：两个 Object 之间具有方向、类型和可选事实的业务联系。
 
-元模型不包含 Graph、Node 或 Edge。对象和关系可以使用图存储，也可以使用关系数据库或其他实现。
+`revenue`、`cost`、`contract`、`cash_receipt` 等是 Object 的开放 `type`；`derived_from`、
+`cost_attribution`、`settles_receivable` 等是 Relation 的开放 `type`。项目、合同、部门和人员都只是普通
+Object，不是所有经营链路必须经过的中心。
 
-## 核心结构
+Graph、Node 和 Edge 属于存储及查询视图，不是业务本体概念，因此不设置 `metamodel.yaml`。
+
+## 文件职责
 
 ```text
-收入链：
-revenue -> receivable <- cash_receipt
-
-支出链：
-expenditure -> cost_expense
-            -> asset -> cost_expense
-            -> payable <- cash_payment
-
-经营关联：
-cost_expense --allocated_amount--> revenue
-cost_expense --absorbed_amount----> enterprise
+ontology.yaml         固定的 Object / Relation 契约、函数和交互策略
+model.yaml            用户维护的 Property、对象类型和关系类型
+data/oms.db           对象与关系实例的唯一业务数据源
+functions/__init__.py OAG resolver 和领域函数注册入口
+store.py              SQLite、ChangeSet 和确定性经营计算
+scripts/              模型与数据校验
+tests/                模型、存储和 OAG 集成测试
 ```
 
-本体只有 10 个概念：
+`ontology.yaml` 是标准 OAG domain，由 `oag.ontology.loader.load_domain()` 直接加载。运行时代码只注册 resolver
+和函数实现，不重复构造本体。
 
-- `enterprise`、`counterparty`：事实归属企业和相关交易方。
-- `revenue`：已经确认的收入。
-- `expenditure`：取得或使用资源的支出事项，不等同于付款。
-- `cost_expense`、`asset`：支出形成的当期消耗或未来价值。
-- `receivable`、`payable`：收款权利和付款义务。
-- `cash_receipt`、`cash_payment`：实际现金流入和流出。
+## Object
 
-合同、结算、项目、商机、人员入项、工资单、采购单和发票通过 `source_refs` 保留为事实来源。
-它们可以帮助判断成本归因，但不是收入和成本之间的必经节点。
+```yaml
+id: revenue:a-2026-07
+type: revenue
+name: 客户 A 2026 年 7 月收入
+properties:
+  status: recognized
+  amount: {amount: 1000000, currency: CNY}
+  period: "2026-07"
+tags: [management_view]
+source_refs: [erp:revenue-1]
+```
 
-## 成本归因
+- `id` 是稳定标识，更新操作不能修改。
+- `type` 直接表达主要业务语义。
+- `name` 提供面向人和 LLM 的名称。
+- `properties` 保存可计算或可判断的事实。
+- `tags` 只用于非排他检索，不参与金额计算或关系推理。
+- `source_refs` 保存可选的来源系统引用。
 
-`cost_attributed_to_revenue` 是模型的核心关系，保存归因金额、依据、状态和期间。成本与收入是多对多关系：
-一项成本可以拆给多项收入，一项收入也可以承担多项成本。
+不使用 `type: business_object` 加 `object_type: revenue` 的双重表达。
 
-成本金额存在三种去向：
+## Relation
+
+```yaml
+id: rel:people-cost-revenue
+type: cost_attribution
+from: cost:people-a
+to: revenue:a-2026-07
+properties:
+  amount: {amount: 300000, currency: CNY}
+  basis: resource_assignment
+  status: confirmed
+  period: "2026-07"
+```
+
+`from` 和 `to` 是有方向的 Object ID。Relation 的 `properties` 描述联系自身的金额、依据、状态或时间，
+不应改写到任一端点对象上。
+
+## 用户模型
+
+`model.yaml` 不是元模型，而是企业认可的业务词汇表：
+
+```yaml
+schema: oms.business_model.v2
+
+property_definitions:
+  amount:
+    name: 金额
+    type: money
+    description: 由数值和 ISO 币种组成的金额。
+
+object_types:
+  cost:
+    name: 成本
+    description: 已消耗并需要解释承担去向的经济资源。
+    properties:
+      amount: {required: false}
+      period: {required: false}
+
+relation_types:
+  cost_attribution:
+    name: 成本归因
+    description: 将成本的一部分或全部金额归因到收入。
+    from_types: [cost]
+    to_types: [revenue]
+    properties:
+      amount: {required: true}
+      basis: {required: true}
+```
+
+Property 定义一次值类型，各业务类型只引用 Property 并声明是否必填。支持的值类型为：
+
+- `string`
+- `number`
+- `money`，结构为 `{amount, currency}`
+- `date`，格式为 `YYYY-MM-DD`
+- `period`，格式为 `YYYY-MM`
+- `boolean`
+- `json`
+
+未知业务 `type` 可以先作为开放词汇进入数据。未知 Property 作为 JSON 兼容值保存；一旦同名 Property 在
+`property_definitions` 中登记，所有数据中的该字段都必须满足定义类型。
+
+## 经营关系
+
+模型不把收入和支出强制塞进同一条流程，而是分别记录事实，再按业务证据建立关系：
 
 ```text
-已归因金额    已通过 confirmed 关系归因到具体收入
-企业承担金额  已明确作为企业整体期间消耗
-待归因金额    成本金额 - 已归因金额 - 企业承担金额
+收入 -> derived_from -> 结算结果 -> derived_from -> 合同 -> derived_from -> 商机
+成本 -> cost_attribution -> 收入
+成本 -> enterprise_absorption -> 企业
+收款 -> settles_receivable -> 应收 -> derived_from -> 收入
+付款 -> settles_payable -> 应付 -> derived_from -> 采购订单
 ```
 
-待归因不代表成本尚未发生。它表示成本已经进入企业经营结果，但尚未确定由哪项收入承担。未来收入出现后，
-可以新增归因关系；如果投入无法转化，则新增企业承担关系。原始成本事实不需要被改写。
+关键规则：
 
-## 示例数据
+- `derived_from` 的方向是结果指向来源，且不能形成循环。
+- `cost_attribution` 从成本指向收入，可按金额拆分并延后建立。
+- `enterprise_absorption` 表示成本不再归因到具体收入，由企业整体承担。
+- `settles_receivable` 和 `settles_payable` 分别表达收款核销应收、付款核销应付。
+- 已确认归因或核销金额不能超过对应对象金额。
+- 原始成本不因后续归因结论而改写，认识变化通过 Relation 表达。
 
-示例企业在 2026 年 7 月有：
+示例中，100 万收入关联 30 万人员成本和 15 万采购成本，收入贡献为 55 万。5 万前置成本可以保持待归因；
+失败商机的 2 万成本通过 `enterprise_absorption` 由企业承担。
+
+## 存储与变更
+
+`data/oms.db` 使用 SQLite 保存属性图：
+
+- `objects` 保存 Object。
+- `relations` 保存 Relation，并用外键约束端点。
+- `metadata` 保存 schema 版本和数据修订号。
+
+完整记录保存在 JSON payload 中，ID、type、name、source 和 target 同时保存为索引列。SQLite 是唯一实例数据源，
+不存在 YAML 数据副本。
+
+所有变更使用结构化 ChangeSet：
 
 ```text
-收入                         1,000,000
-已归因人员成本                 300,000
-已归因采购服务成本             150,000
-等待未来收入归因的前置成本       50,000
-失败商机、由企业承担的费用         20,000
-采购形成的资产                   50,000
+preview_changes -> 用户确认 -> apply_changes
 ```
 
-因此：
+支持创建、更新和删除 Object/Relation，以及更新 Property、对象类型和关系类型。预览不会写入数据；应用操作
+必须与当前快照上已通过的预览完全一致。业务数据在 SQLite 事务中提交，用户模型通过原子文件替换更新。
 
-```text
-该项收入贡献 = 1,000,000 - 300,000 - 150,000 = 550,000
-企业经营结果 = 1,000,000 - 300,000 - 150,000 - 50,000 - 20,000 = 480,000
-```
+## OAG 函数
 
-收入贡献和企业经营结果不同，是因为前置成本和公共/失败投入不能在没有依据时强行归到某项收入。
+- `get_business_overview`：汇总收入、成本、收付款和待归因成本。
+- `calculate_revenue_contribution`：计算指定收入的确认归因成本和贡献。
+- `find_unattributed_costs`：查找尚未完全归因的成本余额。
+- `trace_object`：按深度双向追溯对象及关系。
+- `get_model_vocabulary`：读取 Property、对象类型和关系类型。
+- `preview_changes` / `apply_changes`：校验并应用用户确认的变更。
 
-采购支出 20 万元被拆为 15 万元成本和 5 万元资产；付款 20 万元只核销应付，不能整体作为成本。
+## 验证
 
-## Function
-
-- `analyze_revenue_contribution`：解释某项收入承担的成本、贡献、应收和实收。
-- `analyze_expenditure`：解释支出形成了成本、资产、应付和付款中的哪些事实。
-- `analyze_enterprise_result`：按期间计算企业全部收入减全部成本。
-- `find_unattributed_costs`：找出仍等待收入归因的成本余额及来源线索。
-
-## 校验
+从仓库根目录执行：
 
 ```bash
 python3 oms/scripts/validate_model.py
 python3 -m unittest discover -s oms/tests -v
 ```
 
-校验器会拒绝未知概念、错误关系端点、未声明属性、无效金额类型，以及超过原始收入、支出、成本、
-应收、应付或现金事实金额的拆分、归因和核销。
+校验覆盖记录契约、Property 类型、必填属性、端点类型、重复 ID、循环关系、金额上限和 JSON 兼容性。

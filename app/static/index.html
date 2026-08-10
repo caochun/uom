@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OMS</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand">
+        <div class="brand-mark">OMS</div>
+        <div>
+          <strong>OMS</strong>
+          <span>经营对象工作台</span>
+        </div>
+      </div>
+
+      <nav class="primary-nav">
+        <button class="nav-item active" data-view="objects">
+          <i data-lucide="boxes"></i><span>对象</span><b id="objectNavCount">0</b>
+        </button>
+        <button class="nav-item" data-view="relations">
+          <i data-lucide="git-branch"></i><span>关系</span><b id="relationNavCount">0</b>
+        </button>
+        <button class="nav-item" data-view="model">
+          <i data-lucide="book-open"></i><span>模型</span><b id="modelNavCount">0</b>
+        </button>
+      </nav>
+
+      <div class="sidebar-spacer"></div>
+      <div class="model-card">
+        <span class="eyebrow">当前业务模型</span>
+        <strong id="sidebarModelName">加载中</strong>
+        <span id="sidebarModelVersion">-</span>
+        <div class="model-health"><i data-lucide="circle-check"></i> Object + Relation</div>
+      </div>
+      <button class="nav-item muted" id="openChangesBtn">
+        <i data-lucide="history"></i><span>本次变更</span><b id="changeCount">0</b>
+      </button>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div class="mobile-brand"><span>OMS</span><strong>OMS</strong></div>
+        <div class="search-wrap">
+          <i data-lucide="search"></i>
+          <input id="globalSearch" type="search" placeholder="搜索名称、ID、类型或属性" aria-label="搜索">
+        </div>
+        <div class="top-actions">
+          <button class="icon-button" id="refreshBtn" title="刷新数据" aria-label="刷新数据"><i data-lucide="refresh-cw"></i></button>
+          <button class="agent-toggle" id="agentToggle"><i data-lucide="sparkles"></i><span>Agent</span></button>
+        </div>
+      </header>
+
+      <div class="content-scroll">
+        <section class="view active" id="objectsView">
+          <div class="page-heading">
+            <div>
+              <span class="eyebrow">经营事实</span>
+              <h1>业务对象</h1>
+              <p>收入、成本、合同与资金事实在同一张关系网络中保持独立。</p>
+            </div>
+            <button class="primary-button" data-open-form="object"><i data-lucide="plus"></i>新增对象</button>
+          </div>
+
+          <div class="metric-strip" id="metricStrip">
+            <article><span>确认收入</span><strong id="metricRevenue">-</strong><small>已确认经营成果</small></article>
+            <article><span>已归因成本</span><strong id="metricCost">-</strong><small>直接解释收入贡献</small></article>
+            <article><span>收入贡献</span><strong id="metricContribution">-</strong><small>收入减已归因成本</small></article>
+            <article class="attention"><span>待归因成本</span><strong id="metricPending">-</strong><small id="metricPendingHint">需要经营判断</small></article>
+          </div>
+
+          <div class="toolbar">
+            <div class="segmented" id="objectFilters" aria-label="对象筛选">
+              <button class="active" data-filter="all">全部</button>
+              <button data-filter="revenue">收入</button>
+              <button data-filter="cost">成本</button>
+              <button data-filter="cash">资金</button>
+              <button data-filter="context">经营上下文</button>
+            </div>
+            <div class="toolbar-meta"><span id="objectResultCount">0 项</span></div>
+          </div>
+
+          <div class="data-surface">
+            <table>
+              <thead><tr><th>业务对象</th><th>类型</th><th>金额</th><th>期间 / 日期</th><th>状态</th><th>关系</th><th></th></tr></thead>
+              <tbody id="objectsTable"></tbody>
+            </table>
+            <div class="empty-state hidden" id="objectsEmpty"><i data-lucide="search-x"></i><strong>没有匹配的对象</strong><span>调整搜索词或类型筛选。</span></div>
+          </div>
+        </section>
+
+        <section class="view" id="relationsView">
+          <div class="page-heading">
+            <div>
+              <span class="eyebrow">经营解释</span>
+              <h1>业务关系</h1>
+              <p>用方向、类型和关系事实解释对象之间为什么有关。</p>
+            </div>
+            <button class="primary-button" data-open-form="relation"><i data-lucide="plus"></i>新增关系</button>
+          </div>
+
+          <div class="relation-summary" id="relationSummary"></div>
+
+          <div class="toolbar">
+            <div class="segmented" id="relationFilters" aria-label="关系筛选">
+              <button class="active" data-filter="all">全部</button>
+              <button data-filter="economic">经营核算</button>
+              <button data-filter="trace">来源追溯</button>
+              <button data-filter="context">上下文</button>
+            </div>
+            <div class="toolbar-meta"><span id="relationResultCount">0 项</span></div>
+          </div>
+
+          <div class="data-surface">
+            <table>
+              <thead><tr><th>关系</th><th>From</th><th>方向</th><th>To</th><th>金额 / 状态</th><th></th></tr></thead>
+              <tbody id="relationsTable"></tbody>
+            </table>
+            <div class="empty-state hidden" id="relationsEmpty"><i data-lucide="search-x"></i><strong>没有匹配的关系</strong><span>调整搜索词或关系筛选。</span></div>
+          </div>
+        </section>
+
+        <section class="view" id="modelView">
+          <div class="page-heading">
+            <div>
+              <span class="eyebrow">业务词汇</span>
+              <h1>用户模型</h1>
+              <p>在 Object 与 Relation 之上定义企业认可的类型、含义和必要约束。</p>
+            </div>
+            <button class="primary-button" data-open-form="model"><i data-lucide="plus"></i>扩展模型</button>
+          </div>
+
+          <div class="model-principle">
+            <div class="principle-node"><i data-lucide="box"></i><strong>Object</strong><span>是什么</span></div>
+            <div class="principle-line"><span>开放 type + properties</span><i data-lucide="arrow-right"></i></div>
+            <div class="principle-node"><i data-lucide="git-branch"></i><strong>Relation</strong><span>为什么有关</span></div>
+            <div class="principle-note"><i data-lucide="tags"></i><span>tags 仅用于横向检索</span></div>
+          </div>
+
+          <div class="model-tabs">
+            <div class="segmented" id="modelKindTabs">
+              <button class="active" data-kind="object">对象类型</button>
+              <button data-kind="relation">关系类型</button>
+            </div>
+            <div class="model-version"><i data-lucide="git-commit-horizontal"></i><span id="modelVersion">v-</span></div>
+          </div>
+          <div class="type-grid" id="typeGrid"></div>
+        </section>
+      </div>
+    </main>
+
+    <aside class="agent-panel" id="agentPanel" aria-label="OAG Agent">
+      <div class="agent-header">
+        <div class="agent-title">
+          <div class="agent-mark"><i data-lucide="sparkles"></i></div>
+          <div><strong>经营 Agent</strong><span id="agentRuntimeLabel">oag-agent</span></div>
+        </div>
+        <button class="icon-button" id="closeAgentBtn" title="收起 Agent" aria-label="收起 Agent"><i data-lucide="panel-right-close"></i></button>
+      </div>
+
+      <div class="agent-context" id="agentContext">
+        <i data-lucide="mouse-pointer-2"></i>
+        <span>当前上下文：全部经营对象</span>
+        <button id="clearContextBtn" title="清除上下文" aria-label="清除上下文"><i data-lucide="x"></i></button>
+      </div>
+
+      <div class="agent-messages" id="agentMessages">
+        <div class="message assistant">
+          <div class="message-avatar"><i data-lucide="sparkles"></i></div>
+          <div class="message-body">
+            <p id="initialAgentMessage">正在汇总当前经营关系。</p>
+            <div class="suggestions">
+              <button>解释 7 月收入贡献</button>
+              <button>找出尚未归因的成本</button>
+              <button>新增一种业务类型</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="agent-status" id="agentStatus"><span class="status-dot"></span><span>正在检查 oag-agent</span></div>
+      <form class="agent-composer" id="agentForm">
+        <textarea id="agentInput" rows="1" placeholder="询问经营情况，或描述你想做的变更…"></textarea>
+        <div class="composer-footer">
+          <span><i data-lucide="shield-check"></i>写入需确认</span>
+          <button type="submit" class="send-button" aria-label="发送"><i data-lucide="arrow-up"></i></button>
+        </div>
+      </form>
+    </aside>
+  </div>
+
+  <div class="scrim hidden" id="scrim"></div>
+
+  <aside class="detail-drawer" id="detailDrawer" aria-label="详情">
+    <div class="drawer-header"><div><span class="eyebrow" id="detailEyebrow">对象详情</span><h2 id="detailTitle">-</h2></div><button class="icon-button" data-close-drawer title="关闭" aria-label="关闭"><i data-lucide="x"></i></button></div>
+    <div class="drawer-body" id="detailBody"></div>
+    <div class="drawer-footer"><button class="secondary-button" id="askAboutBtn"><i data-lucide="sparkles"></i>询问 Agent</button><button class="secondary-button" data-close-drawer>关闭</button></div>
+  </aside>
+
+  <dialog class="form-dialog" id="editorDialog">
+    <form method="dialog" id="editorForm">
+      <div class="dialog-header"><div><span class="eyebrow" id="formEyebrow">新增</span><h2 id="formTitle">新增业务对象</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="关闭"><i data-lucide="x"></i></button></div>
+      <div class="dialog-body" id="formBody"></div>
+      <div class="form-error hidden" id="formError"></div>
+      <div class="dialog-footer"><button class="secondary-button" value="cancel" formnovalidate>取消</button><button class="primary-button" id="previewSubmit" value="default"><i data-lucide="scan-eye"></i>预览变更</button></div>
+    </form>
+  </dialog>
+
+  <dialog class="change-dialog" id="changeDialog">
+    <div class="dialog-header"><div><span class="eyebrow">ChangeSet</span><h2>确认本次变更</h2></div><button class="icon-button" data-close-changes aria-label="关闭"><i data-lucide="x"></i></button></div>
+    <div class="change-content">
+      <div class="change-summary" id="changeSummary"></div>
+      <pre class="change-code" id="changeCode"></pre>
+      <div class="validation-box" id="validationBox"></div>
+    </div>
+    <div class="dialog-footer"><button class="secondary-button" data-close-changes>返回编辑</button><button class="primary-button" id="applyChangesBtn"><i data-lucide="check"></i>应用变更</button></div>
+  </dialog>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

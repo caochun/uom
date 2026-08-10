@@ -1,176 +1,133 @@
-schema: oms.ontology.v1
-metamodel: ./metamodel.yaml
+schema: oms.ontology.v2
+name: OMS 企业经营模型
+version: 2.0.0
+reference: ../docs/TwinCore企业运营管理平台全域对象关系图_v1.md
+description: >-
+  面向 LLM 的企业运营对象关系与业务追溯语义。模型只定义 Object 和 Relation；
+  具体业务含义由开放的 type、properties 和可选 tags 表达。
+  具体业务类型词汇通过 get_model_vocabulary 按需读取。
 
-ontology:
-  name: Enterprise Revenue and Expenditure Ontology
-  version: 1.0.0
-  reference: ../docs/TwinCore企业运营管理平台全域对象关系图_v1.md
-  description: >-
-    面向 LLM 的企业经营 MVP 语义层。收入事实、支出事实和现金事实可以独立发生；
-    成本通过可延后、可拆分的归因关系与收入建立联系，不要求经过项目或统一核算中心。
+tool_preferences:
+  generic_search: fallback_only
 
-principles:
-  - 收入、应收和收款分别表示价值确认、收款权利和现金流入，不能互相替代。
-  - 支出、成本费用、资产、应付和付款分别表示资源取得、价值消耗、未来价值、付款义务和现金流出。
-  - 收入事实与支出事实先独立记录，合同、项目、商机、部门和人员只提供来源及归因线索。
-  - 成本与收入是多对多关系，归因可以晚于成本发生，并可按金额拆分、调整和确认。
-  - 未归因成本既可能是等待未来收入的前置投入，也可能最终由企业作为期间消耗承担。
-  - 企业整体利润统计全部收入和成本；单项收入贡献只扣除已归因到该收入的成本。
+excluded_tools: [describe, mutate, summarize_progress, dispatch_workers]
 
-concepts:
-  enterprise:
-    name: 企业
-    description: 拥有收入、支出、资产、债权债务和现金事实的经营主体。
-    properties: {status: string}
+objects:
+  Object:
+    display_name: 业务对象
+    summary: 企业运营中具有稳定 ID 的主体、意图、规则、承诺、工作、事件、资源或结果。
+    description: 具体语义由开放的 type、properties 和可选 tags 表达；不使用额外 object_type。
+    type_policy: open
+    mutability: mutable
+    data_source: human_confirmed
+    source:
+      type: resolver
+      resolver: oms_objects
+      id_field: id
+    properties:
+      id: {type: str, required: true, description: 稳定对象 ID}
+      type: {type: str, required: true, description: 开放对象业务类型}
+      name: {type: str, required: true, description: 对象名称}
+      properties: {type: dict, description: 金额、状态、期间等事实}
+      tags: {type: list, description: 可选横向检索标签}
+      source_refs: {type: list, description: 可选来源系统引用}
 
-  counterparty:
-    name: 交易方
-    description: 与企业发生收入、支出或资金往来的组织或个人，其客户、供应商、员工等身份由实际关系体现。
-    properties: {party_type: string, status: string}
-
-  revenue:
-    name: 收入
-    description: 企业在特定期间确认的经济利益流入，不等于合同额、开票额、应收额或收款额。
-    properties: {amount: money, period: period, revenue_type: string, status: string}
-
-  expenditure:
-    name: 支出事项
-    description: 企业为取得或使用资源发生的经济事项；它可以形成成本费用或资产，与是否已经付款相互独立。
-    properties: {amount: money, occurred_on: date, expenditure_type: string, status: string}
-
-  cost_expense:
-    name: 成本费用
-    description: 企业已经消耗并计入特定期间的经济价值；可归因到收入、由企业承担，或暂时等待归因。
-    properties: {amount: money, period: period, cost_type: string, status: string}
-
-  asset:
-    name: 资产
-    description: 支出后仍由企业控制并预期带来未来经济利益的价值，只有后续耗用部分才转为成本费用。
-    properties: {amount: money, asset_type: string, status: string}
-
-  receivable:
-    name: 应收
-    description: 企业已经取得、等待交易方偿付的收款权利。
-    properties: {amount: money, due_date: date, status: string}
-
-  payable:
-    name: 应付
-    description: 企业已经形成、等待向交易方偿付的付款义务。
-    properties: {amount: money, due_date: date, status: string}
-
-  cash_receipt:
-    name: 收款
-    description: 现金或银行资金实际流入企业的事实，通过核销关系说明清偿了哪些应收。
-    properties: {amount: money, occurred_on: date, status: string}
-
-  cash_payment:
-    name: 付款
-    description: 现金或银行资金实际流出企业的事实，通过核销关系说明清偿了哪些应付。
-    properties: {amount: money, occurred_on: date, status: string}
-
-relations:
-  enterprise_owns_fact:
-    from: enterprise
-    predicate: 拥有
-    to: [revenue, expenditure, cost_expense, asset, receivable, payable, cash_receipt, cash_payment]
-    description: 明确经济事实归属的企业；它不是项目或核算中心。
-    cardinality: one_to_many
-
-  fact_involves_counterparty:
-    from: [revenue, expenditure, receivable, payable, cash_receipt, cash_payment]
-    predicate: 涉及
-    to: counterparty
-    description: 记录经济事实涉及的客户、供应商、员工或其他交易方。
-    properties: {role: string}
-
-  revenue_creates_receivable:
-    from: revenue
-    predicate: 形成
-    to: receivable
-    description: 收入取得无条件收款权时形成应收；收入与应收可以不在同一时间发生。
-    properties: {linked_amount: money}
-
-  cash_receipt_settles_receivable:
-    from: cash_receipt
-    predicate: 核销
-    to: receivable
-    description: 收款按金额清偿应收，支持一笔收款对应多笔应收或一笔应收分多次收款。
-    properties: {settled_amount: money, settled_on: date}
-
-  expenditure_recognized_as_cost:
-    from: expenditure
-    predicate: 确认为
-    to: cost_expense
-    description: 支出取得的价值被消耗后形成成本费用，一笔支出可以分期间或分类确认。
-    properties: {recognized_amount: money}
-
-  expenditure_capitalized_as_asset:
-    from: expenditure
-    predicate: 形成
-    to: asset
-    description: 支出取得的未来经济利益形成资产，不直接进入当期成本。
-    properties: {capitalized_amount: money}
-
-  asset_consumption_creates_cost:
-    from: asset
-    predicate: 耗用形成
-    to: cost_expense
-    description: 资产折旧、摊销或其他耗用在特定期间转为成本费用。
-    properties: {consumed_amount: money}
-
-  expenditure_creates_payable:
-    from: expenditure
-    predicate: 形成
-    to: payable
-    description: 支出达到偿付条件后形成应付，支出金额和应付金额不要求完全相等。
-    properties: {linked_amount: money}
-
-  cash_payment_settles_payable:
-    from: cash_payment
-    predicate: 核销
-    to: payable
-    description: 付款按金额清偿应付，支持一笔付款对应多笔应付或一笔应付分多次付款。
-    properties: {settled_amount: money, settled_on: date}
-
-  cost_attributed_to_revenue:
-    from: cost_expense
-    predicate: 归因于
-    to: revenue
-    description: 记录某项收入应承担的成本金额；关系可在收入出现后补建，也可拆分和调整。
-    properties: {allocated_amount: money, basis: string, status: string, period: period}
-
-  cost_absorbed_by_enterprise:
-    from: cost_expense
-    predicate: 由其承担
-    to: enterprise
-    description: 记录不再归因到具体收入、由企业整体承担的成本费用金额。
-    properties: {absorbed_amount: money, reason: string, period: period}
+  Relation:
+    display_name: 业务关系
+    summary: 两个业务对象之间具有方向、类型和可选事实的业务联系。
+    description: from 和 to 连接 Object，type 直接表达关系业务语义。
+    type_policy: open
+    mutability: mutable
+    data_source: human_confirmed
+    source:
+      type: resolver
+      resolver: oms_relations
+      id_field: id
+    properties:
+      id: {type: str, required: true, description: 稳定关系 ID}
+      type: {type: str, required: true, description: 开放关系业务类型}
+      from: {type: str, required: true, description: 起点对象 ID}
+      to: {type: str, required: true, description: 终点对象 ID}
+      properties: {type: dict, description: 金额、依据、状态等事实}
+      tags: {type: list, description: 可选横向检索标签}
+      source_refs: {type: list, description: 可选来源系统引用}
 
 functions:
-  analyze_revenue_contribution:
-    description: 汇总某项收入、对应应收和收款，以及已归因成本和收入贡献。
-    inputs: {revenue_id: string}
-    returns: {type: json, description: 收入额、归因成本、贡献额、应收和实收情况}
-    reads: [revenue, revenue_creates_receivable, cash_receipt_settles_receivable, cost_attributed_to_revenue]
-    instructions: 收入贡献等于收入减已确认归因的成本；待归因成本和企业承担成本不擅自分配到该收入。
+  get_business_overview:
+    summary: 获取收入、成本、收付款和待归因成本概览
+    function_type: get
+    involves_objects: [Object, Relation]
 
-  analyze_expenditure:
-    description: 解释一笔支出形成了多少成本、资产、应付和付款，以及相关成本最终归因到哪里。
-    inputs: {expenditure_id: string}
-    returns: {type: json, description: 支出经济去向、结算情况和成本归因结果}
-    reads: [expenditure_recognized_as_cost, expenditure_capitalized_as_asset, expenditure_creates_payable, cash_payment_settles_payable, cost_attributed_to_revenue, cost_absorbed_by_enterprise]
-    instructions: 支出、成本、资产、应付和付款分别汇总，不能用付款金额代替成本金额。
-
-  analyze_enterprise_result:
-    description: 计算企业指定期间的全部收入、成本费用和经营结果，并区分成本归因状态。
-    inputs: {enterprise_id: string, period: period}
-    returns: {type: json, description: 企业收入、全部成本、经营结果及成本归因结构}
-    reads: [enterprise_owns_fact, cost_attributed_to_revenue, cost_absorbed_by_enterprise]
-    instructions: 企业经营结果等于全部收入减全部成本费用；成本是否已归因不影响企业成本总额，只影响收入贡献解释。
+  calculate_revenue_contribution:
+    summary: 根据已确认的成本归因计算一项收入的贡献
+    function_type: get
+    involves_objects: [Object, Relation]
+    params:
+      revenue_id: {type: str, description: 收入对象 ID}
 
   find_unattributed_costs:
-    description: 找出尚未归因到收入、也未明确由企业承担的成本余额。
-    inputs: {enterprise_id: string, period: period}
-    returns: {type: json, description: 待归因成本及其来源线索}
-    reads: [enterprise_owns_fact, cost_attributed_to_revenue, cost_absorbed_by_enterprise]
-    instructions: 待归因金额等于成本金额减已确认归因金额和企业承担金额；不得仅凭项目或时间相近自动确认归因。
+    summary: 查找尚未完全归因到收入或企业的成本
+    function_type: get
+    involves_objects: [Object, Relation]
+
+  trace_object:
+    summary: 双向追溯对象及其相邻关系
+    function_type: get
+    involves_objects: [Object, Relation]
+    params:
+      object_id: {type: str, description: 起始对象 ID}
+      depth: {type: int, description: 追溯深度, default: 2}
+
+  get_model_vocabulary:
+    summary: 查看用户已经定义的属性、对象和关系业务词汇
+    function_type: get
+    involves_objects: [Object, Relation]
+    params:
+      kind: {type: str, description: all、property、object 或 relation, default: all}
+      type_id: {type: str, description: 可选的具体属性或 type ID, default: ""}
+
+  preview_changes:
+    summary: 校验对象、关系或业务类型变更并返回预览，不写入数据
+    description: >-
+      operations 支持 create/update/delete_object、create/update/delete_relation、
+      upsert_property_definition、upsert_object_type、upsert_relation_type。
+    function_type: get
+    involves_objects: [Object, Relation]
+    params:
+      operations: {type: list, description: 结构化 ChangeSet 操作数组}
+
+  apply_changes:
+    summary: 应用已经预览且由用户明确要求的 OMS 变更
+    description: 将结构化 ChangeSet 校验后写入 model.yaml 或 SQLite 业务数据。
+    usage_prompt: >-
+      必须先用 preview_changes 校验完全相同的 operations。只有用户明确要求新增、修改、
+      删除或扩展模型时才调用；执行前说明将变更哪些对象、关系或业务类型。
+    function_type: business
+    writes_to: [Object, Relation]
+    involves_objects: [Object, Relation]
+    params:
+      operations: {type: list, description: 已通过预览的 ChangeSet 操作数组}
+
+interaction_policies:
+  user_chat:
+    include_in_system_prompt: true
+    instructions:
+      - 经营结论优先使用确定性函数，不自行猜测金额或关系。
+      - Object 和 Relation 的 type 是开放词汇；遇到未知语义时先调用 get_model_vocabulary。
+      - 用户要求正式扩展模型时，提出简洁定义并用 upsert 类型操作提交。
+      - tags 只用于非排他检索，不得代替 type、金额、状态、期间、方向或依据。
+      - 所有写入必须先调用 preview_changes；预览有错误时不得调用 apply_changes。
+      - 成本可以暂不归因；收入形成后再创建 cost_attribution，失败投入可由企业承担。
+
+principles:
+  - 对象记录“有什么”，关系记录“为什么有关”。
+  - 对象和关系的 type 都是开放业务词汇，新增类型不要求修改本体。
+  - properties 保存可计算或可判断的事实，tags 只用于非排他的横向检索。
+  - tags 不得替代 type、金额、状态、期间、方向或业务依据。
+  - 原始对象不因后续归因而改写，认识变化通过新增或更新关系表达。
+  - 项目、合同和部门都是普通对象，不是所有链路必须经过的中心。
+
+tag_policy:
+  vocabulary: open
+  format: ascii_snake_case
+  purpose: 用于一个 type 无法表达的非排他检索维度，不参与金额计算和关系推理。

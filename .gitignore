@@ -1,32 +1,49 @@
-# Python
+# Python bytecode and caches
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.coverage.*
 htmlcov/
 
-# Virtual environments and local tooling
+# Python environments and build output
 .venv/
 venv/
 env/
+build/
+dist/
+*.egg-info/
+
+# Local configuration and secrets
 .env
 .env.*
+!.env.example
 .direnv/
 
-# OAG runtime/session artifacts
+# OAG runtime and session state
 .oag_data/
 trace_*.jsonl
 chat_*.db
+
+# Local databases and SQLite side files
+*.db
 *.sqlite
 *.sqlite3
-*.db
+*.db-journal
+*.db-shm
+*.db-wal
 *.db-*
+!oms/data/oms.db
 
-# OS/editor noise
+# Frontend tooling and browser tests
+node_modules/
+coverage/
+playwright-report/
+test-results/
+
+# Editors and operating systems
 .DS_Store
 Thumbs.db
 .idea/
@@ -34,17 +51,17 @@ Thumbs.db
 *.swp
 *.swo
 
-# Office temporary files
-~$*.xlsx
-~$*.xls
-
 # Logs and temporary output
 *.log
+*.pid
+*.sock
 tmp/
 temp/
 
-# Deployment/local service state
+# Local service state
 .cloudflared/
 cloudflared/
-*.pid
-*.sock
+
+# Office temporary files
+~$*.xlsx
+~$*.xls

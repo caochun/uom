@@ -1,0 +1,203 @@
+schema: oms.business_model.v2
+
+model:
+  name: OMS 企业经营模型
+  version: 2.0.0
+  description: >-
+    基于 Object / Relation 两个抽象概念形成的企业经营业务词汇。
+    类型定义用于解释和校验，未登记的新类型仍可先作为开放词汇进入数据。
+
+property_definitions:
+  status:
+    name: 状态
+    type: string
+    description: 对象或关系当前所处的业务状态。
+  amount:
+    name: 金额
+    type: money
+    description: 由数值和 ISO 币种组成的金额。
+  period:
+    name: 经营期间
+    type: period
+    description: 事实归属的月份，格式为 YYYY-MM。
+  occurred_on:
+    name: 发生日期
+    type: date
+    description: 业务事实实际发生的日期。
+  start_date:
+    name: 开始日期
+    type: date
+    description: 关系或事实有效期的开始日期。
+  end_date:
+    name: 结束日期
+    type: date
+    description: 关系或事实有效期的结束日期。
+  allocation_rate:
+    name: 分配比例
+    type: number
+    description: 用于资源分配或归因的数值比例。
+  basis:
+    name: 业务依据
+    type: string
+    description: 建立关系或作出经营判断的依据。
+  details:
+    name: 详细信息
+    type: json
+    description: 尚未形成稳定字段定义的结构化补充事实。
+
+object_types:
+  enterprise:
+    name: 企业
+    description: 经营活动、经济利益和资源消耗的最终主体。
+    properties:
+      status: {required: false}
+  customer:
+    name: 客户
+    description: 购买企业产品或服务的交易相对方。
+    properties:
+      status: {required: false}
+  supplier:
+    name: 供应商
+    description: 向企业提供商品、服务或资源的交易相对方。
+    properties:
+      status: {required: false}
+  opportunity:
+    name: 商机
+    description: 尚在争取或已经形成结果的客户需求机会。
+    properties:
+      status: {required: false}
+      amount: {required: false}
+  contract:
+    name: 合同
+    description: 企业与交易相对方形成的业务承诺和权利义务依据。
+    properties:
+      status: {required: false}
+      amount: {required: false}
+      occurred_on: {required: false}
+  project:
+    name: 项目
+    description: 为组织交付工作和资源投入形成的普通经营对象。
+    properties:
+      status: {required: false}
+      details: {required: false}
+  settlement_result:
+    name: 结算结果
+    description: 按合同、规则和履约事实确认的结算结果。
+    properties:
+      status: {required: false}
+      amount: {required: false}
+      period: {required: false}
+  revenue:
+    name: 收入
+    description: 企业因履约等经营活动确认的经济利益。
+    properties:
+      status: {required: false}
+      amount: {required: false}
+      period: {required: false}
+  cost:
+    name: 成本
+    description: 已消耗并需要解释承担去向的经济资源。
+    properties:
+      status: {required: false}
+      amount: {required: false}
+      period: {required: false}
+  receivable:
+    name: 应收
+    description: 企业已经取得但尚未收回的收款权利。
+    properties:
+      status: {required: false}
+      amount: {required: false}
+      details: {required: false}
+  payable:
+    name: 应付
+    description: 企业已经形成但尚未支付的付款义务。
+    properties:
+      status: {required: false}
+      amount: {required: false}
+      details: {required: false}
+  cash_receipt:
+    name: 收款
+    description: 已实际进入企业资金账户的现金流入。
+    properties:
+      status: {required: false}
+      amount: {required: false}
+      occurred_on: {required: false}
+  cash_payment:
+    name: 付款
+    description: 已实际离开企业资金账户的现金流出。
+    properties:
+      status: {required: false}
+      amount: {required: false}
+      occurred_on: {required: false}
+  purchase_order:
+    name: 采购订单
+    description: 企业向供应商发出的采购承诺。
+    properties:
+      status: {required: false}
+      amount: {required: false}
+      occurred_on: {required: false}
+  asset:
+    name: 资产
+    description: 尚未作为成本消耗、仍能带来未来利益的资源。
+    properties:
+      status: {required: false}
+      amount: {required: false}
+
+relation_types:
+  derived_from:
+    name: 来源于
+    description: from 对象由 to 对象产生、转换或计算而来。
+    acyclic: true
+    properties:
+      basis: {required: true}
+      status: {required: true}
+  cost_attribution:
+    name: 成本归因
+    description: 将成本的一部分或全部金额归因到收入。
+    from_types: [cost]
+    to_types: [revenue]
+    properties:
+      amount: {required: true}
+      basis: {required: true}
+      status: {required: true}
+      period: {required: true}
+  enterprise_absorption:
+    name: 企业承担
+    description: 无法或无需归因到具体收入的成本由企业承担。
+    from_types: [cost]
+    to_types: [enterprise]
+    properties:
+      amount: {required: true}
+      basis: {required: true}
+      status: {required: true}
+      period: {required: true}
+  settles_receivable:
+    name: 核销应收
+    description: 收款对一项应收进行金额核销。
+    from_types: [cash_receipt]
+    to_types: [receivable]
+    properties:
+      amount: {required: true}
+      occurred_on: {required: true}
+  settles_payable:
+    name: 核销应付
+    description: 付款对一项应付进行金额核销。
+    from_types: [cash_payment]
+    to_types: [payable]
+    properties:
+      amount: {required: true}
+      occurred_on: {required: true}
+  potential_cost_for:
+    name: 潜在成本关联
+    description: 成本与尚未形成收入的经营机会之间的暂定联系。
+    from_types: [cost]
+    to_types: [opportunity]
+    properties:
+      status: {required: true}
+  owned_by:
+    name: 归属于
+    description: 经营对象归属于某个企业主体。
+    to_types: [enterprise]
+  supports:
+    name: 支持证明
+    description: from 对象为 to 对象提供业务证据或上下文。
