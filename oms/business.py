@@ -1,7 +1,8 @@
-"""Deterministic OMS calculations over the OAG ObjectRepository."""
+"""Deterministic highway-domain queries over the OAG ObjectRepository."""
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 from oag.ontology.repository import ObjectRepository
@@ -9,110 +10,87 @@ from oag.ontology.repository import ObjectRepository
 
 def get_business_overview(repository: ObjectRepository) -> dict[str, Any]:
     objects = repository.query("Object")
-    totals: dict[str, dict[str, float]] = {
-        "revenue": {},
-        "cost": {},
-        "cash_receipt": {},
-        "cash_payment": {},
-    }
+    relations = repository.query("Relation")
+    object_counts = Counter(str(item.get("type", "unknown")) for item in objects)
+    relation_counts = Counter(str(item.get("type", "unknown")) for item in relations)
+    amount_totals: dict[str, dict[str, float]] = {}
     for item in objects:
-        object_type = item.get("type")
-        if object_type not in totals:
-            continue
         money = item.get("properties", {}).get("amount", {})
         amount, currency = money.get("amount"), money.get("currency")
         if isinstance(amount, (int, float)) and isinstance(currency, str):
-            totals[object_type][currency] = totals[object_type].get(currency, 0) + amount
+            object_type = str(item.get("type", "unknown"))
+            totals = amount_totals.setdefault(object_type, {})
+            totals[currency] = totals.get(currency, 0.0) + float(amount)
+
+    incomplete = find_incomplete_passages(repository)
     return {
         "counts": {
             "objects": len(objects),
-            "relations": repository.count("Relation"),
+            "relations": len(relations),
         },
-        "totals": totals,
-        "unattributed_costs": find_unattributed_costs(repository),
+        "object_types": dict(sorted(object_counts.items())),
+        "relation_types": dict(sorted(relation_counts.items())),
+        "amount_totals": amount_totals,
+        "incomplete_passage_count": len(incomplete),
     }
 
 
-def calculate_revenue_contribution(
+def get_passage_trace(
     repository: ObjectRepository,
-    revenue_id: str,
+    passage_id: str,
+    depth: int = 4,
 ) -> dict[str, Any]:
-    revenue = repository.query_by_id("Object", revenue_id)
-    if not revenue or revenue.get("type") != "revenue":
-        raise ValueError(f"未找到收入对象: {revenue_id}")
-    money = revenue.get("properties", {}).get("amount", {})
-    currency = money.get("currency")
-    revenue_amount = money.get("amount")
-    if not isinstance(revenue_amount, (int, float)) or not isinstance(currency, str):
-        raise ValueError("收入对象缺少有效金额")
+    passage = repository.query_by_id("Object", passage_id)
+    if not passage or passage.get("type") != "passage":
+        raise ValueError(f"未找到通行记录: {passage_id}")
 
-    attributions = []
-    attributed = 0.0
-    for relation in repository.query(
-        "Relation",
-        filters={"type": "allocated_to", "to": revenue_id},
-    ):
-        source = repository.query_by_id("Object", str(relation.get("from")))
-        if not source or source.get("type") != "cost":
-            continue
-        properties = relation.get("properties", {})
-        relation_money = properties.get("amount", {})
-        if (
-            properties.get("status") == "confirmed"
-            and relation_money.get("currency") == currency
-            and isinstance(relation_money.get("amount"), (int, float))
-        ):
-            amount = float(relation_money["amount"])
-            attributed += amount
-            attributions.append({
-                "relation_id": relation.get("id"),
-                "cost_id": relation.get("from"),
-                "amount": amount,
-                "basis": properties.get("basis"),
-            })
+    graph = trace_object(repository, passage_id, depth)
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in graph["objects"]:
+        grouped.setdefault(str(item.get("type", "unknown")), []).append(item)
     return {
-        "revenue_id": revenue_id,
-        "revenue_amount": revenue_amount,
-        "currency": currency,
-        "attributed_cost": attributed,
-        "contribution": float(revenue_amount) - attributed,
-        "attributions": attributions,
+        "passage": passage,
+        "facts_by_type": grouped,
+        "relations": graph["relations"],
     }
 
 
-def find_unattributed_costs(repository: ObjectRepository) -> list[dict[str, Any]]:
-    disposition: dict[tuple[str, str], float] = {}
-    cost_ids = {
-        str(item.get("id"))
-        for item in repository.query("Object", filters={"type": "cost"})
+def find_incomplete_passages(repository: ObjectRepository) -> list[dict[str, Any]]:
+    object_index = {
+        str(item.get("id")): item
+        for item in repository.query("Object")
+        if isinstance(item.get("id"), str)
     }
-    for relation in repository.query("Relation", filters={"type": "allocated_to"}):
-        if str(relation.get("from")) not in cost_ids:
-            continue
-        properties = relation.get("properties", {})
-        if properties.get("status") != "confirmed":
-            continue
-        money = properties.get("amount", {})
-        amount, currency = money.get("amount"), money.get("currency")
-        if isinstance(amount, (int, float)) and isinstance(currency, str):
-            key = (str(relation.get("from")), currency)
-            disposition[key] = disposition.get(key, 0) + float(amount)
-
+    relations = repository.query("Relation")
     result = []
-    for item in repository.query("Object", filters={"type": "cost"}):
-        money = item.get("properties", {}).get("amount", {})
-        amount, currency = money.get("amount"), money.get("currency")
-        if not isinstance(amount, (int, float)) or not isinstance(currency, str):
-            continue
-        remaining = float(amount) - disposition.get((str(item.get("id")), currency), 0)
-        if remaining > 1e-9:
+    for passage in repository.query("Object", filters={"type": "passage"}):
+        passage_id = str(passage.get("id"))
+        stages: set[str] = set()
+        has_split = False
+        for relation in relations:
+            if relation.get("from") != passage_id:
+                continue
+            target = object_index.get(str(relation.get("to")), {})
+            if relation.get("type") == "references" and target.get("type") == "toll_transaction":
+                stage = target.get("properties", {}).get("stage")
+                if isinstance(stage, str):
+                    stages.add(stage)
+            if relation.get("type") == "derives" and target.get("type") == "split_record":
+                has_split = True
+
+        missing = []
+        for stage in ("entry", "exit"):
+            if stage not in stages:
+                missing.append(f"{stage}_transaction")
+        if not has_split:
+            missing.append("split_record")
+        if missing:
             result.append({
-                "id": item.get("id"),
-                "name": item.get("name"),
-                "amount": amount,
-                "currency": currency,
-                "unattributed_amount": remaining,
-                "period": item.get("properties", {}).get("period"),
+                "id": passage.get("id"),
+                "name": passage.get("name"),
+                "status": passage.get("properties", {}).get("status"),
+                "transaction_stages": sorted(stages),
+                "missing": missing,
             })
     return result
 

@@ -633,79 +633,9 @@ class ModelValidator:
         self.result.error(path, "must be JSON-compatible")
 
     def _validate_semantics(self) -> None:
-        self._validate_allocations()
         for relation_type, definition in self.relation_type_definitions.items():
             if self._mapping(definition).get("acyclic") is True:
                 self._validate_acyclic(relation_type)
-
-    def _validate_allocations(self) -> None:
-        valid_pairs = {
-            ("cost", "revenue"),
-            ("cash_receipt", "receivable"),
-            ("cash_payment", "payable"),
-        }
-        for index, relation in enumerate(self.relation_items):
-            if relation.get("type") != "allocated_to":
-                continue
-            source = self.object_index.get(relation.get("from"), {})
-            target = self.object_index.get(relation.get("to"), {})
-            pair = (source.get("type"), target.get("type"))
-            if pair not in valid_pairs:
-                self.result.error(
-                    f"data.relations[{index}]",
-                    "allocated_to only supports cost -> revenue, "
-                    "cash_receipt -> receivable, or cash_payment -> payable",
-                )
-
-        self._validate_relation_amounts({"allocated_to"}, "from", confirmed_only=True)
-        self._validate_relation_amounts(
-            {"allocated_to"},
-            "to",
-            confirmed_only=True,
-            source_types={"cash_receipt", "cash_payment"},
-        )
-
-    def _validate_relation_amounts(
-        self,
-        relation_types: set[str],
-        endpoint: str,
-        confirmed_only: bool = False,
-        source_types: set[str] | None = None,
-    ) -> None:
-        totals: dict[tuple[str, str], float] = {}
-        for item in self.relation_items:
-            if item.get("type") not in relation_types:
-                continue
-            source = self.object_index.get(item.get("from"), {})
-            if source_types is not None and source.get("type") not in source_types:
-                continue
-            properties = self._mapping(item.get("properties"))
-            if confirmed_only and properties.get("status") != "confirmed":
-                continue
-            money = self._mapping(properties.get("amount"))
-            amount = money.get("amount")
-            currency = money.get("currency")
-            object_id = item.get(endpoint)
-            if not self._is_number(amount) or not isinstance(currency, str) or not isinstance(object_id, str):
-                continue
-            key = (object_id, currency)
-            totals[key] = totals.get(key, 0.0) + float(amount)
-
-        for (object_id, currency), total in totals.items():
-            item = self.object_index.get(object_id)
-            object_money = self._mapping(self._mapping(item).get("properties")).get("amount")
-            object_money = self._mapping(object_money)
-            amount = object_money.get("amount")
-            object_currency = object_money.get("currency")
-            if not self._is_number(amount):
-                continue
-            if object_currency != currency:
-                self.result.error(f"money.{object_id}", "currency differs from object")
-            elif total > float(amount) + 1e-9:
-                self.result.error(
-                    f"money.{object_id}",
-                    f"related amount {total:g} exceeds object amount {float(amount):g}",
-                )
 
     def _validate_acyclic(self, relation_type: str) -> None:
         graph: dict[str, list[str]] = {}

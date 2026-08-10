@@ -13,7 +13,7 @@
         <div class="brand-mark">OMS</div>
         <div>
           <strong>OMS</strong>
-          <span>经营对象工作台</span>
+          <span>联网收费对象工作台</span>
         </div>
       </div>
 
@@ -58,18 +58,18 @@
         <section class="view active" id="objectsView">
           <div class="page-heading">
             <div>
-              <span class="eyebrow">经营事实</span>
+              <span class="eyebrow">联网收费事实</span>
               <h1>业务对象</h1>
-              <p>收费公路、车辆通行、收入、养护成本与资金事实在同一张关系网络中保持独立。</p>
+              <p>路网、车辆与介质、通行交易、拆分清分和客服资金事实在同一张关系网络中保持可追溯。</p>
             </div>
             <button class="primary-button" data-open-actions><i data-lucide="play"></i>业务操作</button>
           </div>
 
           <div class="metric-strip" id="metricStrip">
-            <article><span>确认收入</span><strong id="metricRevenue">-</strong><small>已确认经营成果</small></article>
-            <article><span>已归因成本</span><strong id="metricCost">-</strong><small>直接解释收入贡献</small></article>
-            <article><span>收入贡献</span><strong id="metricContribution">-</strong><small>收入减已归因成本</small></article>
-            <article class="attention"><span>待归因成本</span><strong id="metricPending">-</strong><small id="metricPendingHint">需要经营判断</small></article>
+            <article><span>通行记录</span><strong id="metricPassages">-</strong><small>完整通行聚合事实</small></article>
+            <article><span>交易金额</span><strong id="metricTransactions">-</strong><small>入口、门架和出口计费</small></article>
+            <article><span>清分金额</span><strong id="metricClearing">-</strong><small>按路网拆分后的结算结果</small></article>
+            <article class="attention"><span>待完善通行</span><strong id="metricIncomplete">-</strong><small id="metricIncompleteHint">缺少关键追溯事实</small></article>
           </div>
 
           <div class="toolbar">
@@ -89,7 +89,7 @@
         <section class="view" id="relationsView">
           <div class="page-heading">
             <div>
-              <span class="eyebrow">经营解释</span>
+              <span class="eyebrow">业务解释</span>
               <h1>业务关系</h1>
               <p>用方向、类型和关系事实解释对象之间为什么有关。</p>
             </div>
@@ -151,14 +151,14 @@
       <div class="agent-header">
         <div class="agent-title">
           <div class="agent-mark"><i data-lucide="sparkles"></i></div>
-          <div><strong>经营 Agent</strong><span id="agentRuntimeLabel">oag-agent</span></div>
+          <div><strong>收费 Agent</strong><span id="agentRuntimeLabel">oag-agent</span></div>
         </div>
         <button class="icon-button" id="closeAgentBtn" title="收起 Agent" aria-label="收起 Agent"><i data-lucide="panel-right-close"></i></button>
       </div>
 
       <div class="agent-context" id="agentContext">
         <i data-lucide="mouse-pointer-2"></i>
-        <span>当前上下文：全部经营对象</span>
+        <span>当前上下文：全部业务对象</span>
         <button id="clearContextBtn" title="清除上下文" aria-label="清除上下文"><i data-lucide="x"></i></button>
       </div>
 
@@ -166,10 +166,10 @@
         <div class="message assistant">
           <div class="message-avatar"><i data-lucide="sparkles"></i></div>
           <div class="message-body markdown-content">
-            <p id="initialAgentMessage">正在汇总当前经营关系。</p>
+            <p id="initialAgentMessage">正在汇总当前联网收费关系。</p>
             <div class="suggestions">
-              <button>解释 8 月通行费收入贡献</button>
-              <button>找出尚未归因的养护成本</button>
+              <button>查找待完善的通行记录</button>
+              <button>追溯一笔通行的清分结果</button>
               <button>登记收费公路</button>
             </div>
           </div>
@@ -178,7 +178,7 @@
 
       <div class="agent-status" id="agentStatus"><span class="status-dot"></span><span>正在检查 oag-agent</span></div>
       <form class="agent-composer" id="agentForm">
-        <textarea id="agentInput" rows="1" placeholder="询问经营情况，或描述你想做的变更…"></textarea>
+        <textarea id="agentInput" rows="1" placeholder="询问联网收费情况，或描述你想做的变更…"></textarea>
         <div class="composer-footer">
           <span><i data-lucide="shield-check"></i>写入需确认</span>
           <button type="submit" class="send-button" aria-label="发送"><i data-lucide="arrow-up"></i></button>

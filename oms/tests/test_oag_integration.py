@@ -34,33 +34,59 @@ class OagIntegrationTest(unittest.TestCase):
         self.repository.close()
         self.temp_dir.cleanup()
 
-    def seed_contribution_example(self) -> None:
+    def seed_passage_example(self) -> None:
         for record in (
             {
-                "id": "revenue:test",
-                "type": "revenue",
-                "name": "测试收入",
-                "properties": {"amount": {"amount": 1000, "currency": "CNY"}},
+                "id": "vehicle:test",
+                "type": "vehicle",
+                "name": "测试车辆",
+                "properties": {"plate_no": "川A00001", "vehicle_type": "客车一类"},
             },
             {
-                "id": "cost:test",
-                "type": "cost",
-                "name": "测试成本",
-                "properties": {"amount": {"amount": 400, "currency": "CNY"}},
+                "id": "passage:test",
+                "type": "passage",
+                "name": "测试通行",
+                "properties": {"reference_no": "P-001", "occurred_on": "2026-08-10"},
+            },
+            {
+                "id": "split:test",
+                "type": "split_record",
+                "name": "测试拆分",
+                "properties": {
+                    "reference_no": "S-001",
+                    "amount": {"amount": 100, "currency": "CNY"},
+                    "occurred_on": "2026-08-10",
+                },
+            },
+            {
+                "id": "clearing:test",
+                "type": "clearing_result",
+                "name": "测试清分",
+                "properties": {
+                    "reference_no": "C-001",
+                    "amount": {"amount": 100, "currency": "CNY"},
+                    "period": "2026-08",
+                    "occurred_on": "2026-08-10",
+                },
             },
         ):
             self.repository.insert_record("Object", record)
         self.repository.insert_record(
             "Relation",
             {
-                "id": "rel:test-allocation",
-                "type": "allocated_to",
-                "from": "cost:test",
-                "to": "revenue:test",
-                "properties": {
-                    "amount": {"amount": 400, "currency": "CNY"},
-                    "status": "confirmed",
-                },
+                "id": "rel:test-passage-split",
+                "type": "derives",
+                "from": "passage:test",
+                "to": "split:test",
+            },
+        )
+        self.repository.insert_record(
+            "Relation",
+            {
+                "id": "rel:test-split-clearing",
+                "type": "derives",
+                "from": "split:test",
+                "to": "clearing:test",
             },
         )
 
@@ -75,15 +101,15 @@ class OagIntegrationTest(unittest.TestCase):
         )
 
     def test_domain_functions_keep_graph_queries_outside_the_llm(self) -> None:
-        self.seed_contribution_example()
-        contribution = self.registry.call(
-            "calculate_revenue_contribution",
-            revenue_id="revenue:test",
+        self.seed_passage_example()
+        trace = self.registry.call(
+            "get_passage_trace",
+            passage_id="passage:test",
+            depth=3,
         )
-        trace = self.registry.call("trace_object", object_id="revenue:test", depth=2)
 
-        self.assertEqual(600, contribution["contribution"])
-        self.assertTrue(any(item["type"] == "allocated_to" for item in trace["relations"]))
+        self.assertEqual("passage:test", trace["passage"]["id"])
+        self.assertTrue(any(item["type"] == "derives" for item in trace["relations"]))
         self.assertIn("mutate", self.ontology.excluded_tools)
 
     def test_repository_crud_is_persisted_in_sqlite(self) -> None:
@@ -148,7 +174,7 @@ class OagIntegrationTest(unittest.TestCase):
         preview = self.registry.call(
             "preview_action",
             action_id="register_party",
-            inputs={"name": "测试客户", "roles": ["customer"]},
+            inputs={"name": "测试客户", "category": "issuer"},
         )
         applied = self.registry.call(
             "apply_action",
@@ -169,7 +195,7 @@ class OagIntegrationTest(unittest.TestCase):
         self.assertIsNotNone(tool)
         self.assertEqual(["action_id"], tool.parameters["required"])
         result = json.loads(tool.handler({
-            "action_id": "register_highway",
+            "action_id": "register_toll_road",
             "initial_inputs": {"name": "济青高速", "code": "G35"},
         }))
         self.assertEqual("action_form", result["presentation"]["kind"])

@@ -35,10 +35,11 @@ class OmsWorkspaceServiceTest(unittest.TestCase):
     def test_bootstrap_contains_model_and_usage(self) -> None:
         data = self.store.bootstrap()
         self.assertEqual({"Object", "Relation"}, set(data["ontology"]["objects"]))
-        self.assertIn("revenue", data["model"]["object_types"])
+        self.assertIn("passage", data["model"]["object_types"])
+        self.assertIn("clearing_result", data["model"]["object_types"])
         self.assertEqual(0, data["stats"]["object_count"])
         self.assertEqual(0, data["stats"]["relation_count"])
-        self.assertNotIn("revenue", data["model_usage"]["object"])
+        self.assertNotIn("passage", data["model_usage"]["object"])
 
     def test_tracked_database_contains_object_relation_graph(self) -> None:
         self.assertTrue(self.store.database_path.is_file())
@@ -188,32 +189,31 @@ class OmsWorkspaceServiceTest(unittest.TestCase):
             {
                 "action": "create_object",
                 "record": {
-                    "id": "revenue:invalid",
-                    "type": "revenue",
-                    "name": "测试收入",
-                    "properties": {"amount": {"amount": 100, "currency": "CNY"}},
+                    "id": "road:invalid",
+                    "type": "toll_road",
+                    "name": "测试公路",
+                    "properties": {"code": "G99"},
                 },
             },
             {
                 "action": "create_object",
                 "record": {
-                    "id": "cost:invalid",
-                    "type": "cost",
-                    "name": "测试成本",
-                    "properties": {"amount": {"amount": 10, "currency": "CNY"}},
+                    "id": "vehicle:invalid",
+                    "type": "vehicle",
+                    "name": "测试车辆",
+                    "properties": {
+                        "plate_no": "川A00001",
+                        "vehicle_type": "客车一类",
+                    },
                 },
             },
             {
                 "action": "create_relation",
                 "record": {
-                    "id": "rel:invalid-allocation",
-                    "type": "allocated_to",
-                    "from": "revenue:invalid",
-                    "to": "cost:invalid",
-                    "properties": {
-                        "amount": {"amount": 10, "currency": "CNY"},
-                        "status": "confirmed",
-                    },
+                    "id": "rel:invalid-contains",
+                    "type": "contains",
+                    "from": "road:invalid",
+                    "to": "vehicle:invalid",
                 },
             },
         ]
@@ -221,51 +221,22 @@ class OmsWorkspaceServiceTest(unittest.TestCase):
         self.assertFalse(result["valid"])
         self.assertTrue(any("business model" in error for error in result["errors"]))
 
-    def test_revenue_contribution_and_pending_cost_are_deterministic(self) -> None:
-        for record in (
-            {
-                "id": "revenue:test",
-                "type": "revenue",
-                "name": "测试收入",
-                "properties": {"amount": {"amount": 1000, "currency": "CNY"}},
-            },
-            {
-                "id": "cost:allocated",
-                "type": "cost",
-                "name": "已对应成本",
-                "properties": {"amount": {"amount": 450, "currency": "CNY"}},
-            },
-            {
-                "id": "cost:pending",
-                "type": "cost",
-                "name": "待对应成本",
-                "properties": {"amount": {"amount": 50, "currency": "CNY"}},
-            },
-        ):
-            self.repository.insert_record("Object", record)
+    def test_highway_overview_reports_incomplete_passages(self) -> None:
         self.repository.insert_record(
-            "Relation",
+            "Object",
             {
-                "id": "rel:test-allocation",
-                "type": "allocated_to",
-                "from": "cost:allocated",
-                "to": "revenue:test",
+                "id": "passage:test",
+                "type": "passage",
+                "name": "测试通行",
                 "properties": {
-                    "amount": {"amount": 450, "currency": "CNY"},
-                    "status": "confirmed",
+                    "reference_no": "P-001",
+                    "occurred_on": "2026-08-10",
                 },
             },
         )
-        contribution = self.registry.call(
-            "calculate_revenue_contribution",
-            revenue_id="revenue:test",
-        )
-        self.assertEqual(550, contribution["contribution"])
-        pending_ids = {
-            item["id"]
-            for item in self.registry.call("find_unattributed_costs")
-        }
-        self.assertEqual({"cost:pending"}, pending_ids)
+        overview = self.registry.call("get_business_overview")
+        self.assertEqual(1, overview["incomplete_passage_count"])
+        self.assertEqual(1, overview["object_types"]["passage"])
 
 
 if __name__ == "__main__":

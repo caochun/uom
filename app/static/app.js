@@ -184,19 +184,23 @@ function renderMetrics() {
   const objects = state.data.objects;
   const relations = state.data.relations;
   const index = objectIndex();
-  const revenue = sumObjectMoney(objects.filter((item) => item.type === "revenue"));
-  const costAllocations = relations.filter((item) => item.type === "allocated_to" && item.properties?.status === "confirmed" && index[item.from]?.type === "cost" && index[item.to]?.type === "revenue");
-  const attributed = costAllocations.reduce((sum, item) => sum + Number(item.properties?.amount?.amount || 0), 0);
-  const disposed = costAllocations.reduce((map, item) => map.set(item.from, (map.get(item.from) || 0) + Number(item.properties?.amount?.amount || 0)), new Map());
-  const pending = objects.filter((item) => item.type === "cost").reduce((sum, item) => sum + Math.max(0, Number(item.properties?.amount?.amount || 0) - (disposed.get(item.id) || 0)), 0);
-  const currency = revenue.currency || "CNY";
-  $("#metricRevenue").textContent = money(revenue.amount, currency);
-  $("#metricCost").textContent = money(attributed, currency);
-  $("#metricContribution").textContent = money(revenue.amount - attributed, currency);
-  $("#metricPending").textContent = money(pending, currency);
-  const pendingCount = objects.filter((item) => item.type === "cost" && Number(item.properties?.amount?.amount || 0) > (disposed.get(item.id) || 0)).length;
-  $("#metricPendingHint").textContent = `${pendingCount} 项需要经营判断`;
-  $("#initialAgentMessage").textContent = `当前确认收入 ${money(revenue.amount, currency)}，已归因成本 ${money(attributed, currency)}，收入贡献 ${money(revenue.amount - attributed, currency)}。仍有 ${money(pending, currency)} 成本等待经营判断。`;
+  const passages = objects.filter((item) => item.type === "passage");
+  const transactions = sumObjectMoney(objects.filter((item) => item.type === "toll_transaction"));
+  const clearing = sumObjectMoney(objects.filter((item) => item.type === "clearing_result"));
+  const incomplete = passages.filter((passage) => {
+    const outbound = relations.filter((item) => item.from === passage.id);
+    const stages = new Set(outbound
+      .filter((item) => item.type === "references" && index[item.to]?.type === "toll_transaction")
+      .map((item) => index[item.to]?.properties?.stage));
+    const hasSplit = outbound.some((item) => item.type === "derives" && index[item.to]?.type === "split_record");
+    return !stages.has("entry") || !stages.has("exit") || !hasSplit;
+  });
+  $("#metricPassages").textContent = passages.length;
+  $("#metricTransactions").textContent = money(transactions.amount, transactions.currency || "CNY");
+  $("#metricClearing").textContent = money(clearing.amount, clearing.currency || "CNY");
+  $("#metricIncomplete").textContent = incomplete.length;
+  $("#metricIncompleteHint").textContent = incomplete.length ? "需要补充入口、出口或拆分" : "通行主链完整";
+  $("#initialAgentMessage").textContent = `当前有 ${passages.length} 条通行记录，交易金额 ${money(transactions.amount, transactions.currency || "CNY")}，清分金额 ${money(clearing.amount, clearing.currency || "CNY")}；${incomplete.length ? `仍有 ${incomplete.length} 条通行待完善。` : "通行主链暂未发现缺口。"}`;
 }
 
 function sumObjectMoney(items) {
@@ -249,8 +253,6 @@ function renderObjects() {
 
 function renderRelations() {
   if (!state.data) return;
-  const economic = ["allocated_to"];
-  const trace = ["derived_from"];
   const items = state.data.relations
     .filter((item) => state.relationFilter === "all" || item.type === state.relationFilter)
     .filter(matchesSearch);
@@ -271,9 +273,9 @@ function renderRelations() {
   }).join("");
   $$("#relationsTable tr").forEach((row) => row.addEventListener("click", () => showDetail("relation", row.dataset.relationId)));
   const summary = [
-    ["circle-dollar-sign", state.data.relations.filter((item) => economic.includes(item.type)).length, "经营核算关系"],
-    ["waypoints", state.data.relations.filter((item) => trace.includes(item.type)).length, "来源追溯关系"],
-    ["link-2", new Set(state.data.relations.flatMap((item) => [item.from, item.to])).size, "已连接对象"],
+    ["boxes", state.data.relations.filter((item) => item.type === "contains").length, "结构关系"],
+    ["waypoints", state.data.relations.filter((item) => item.type === "derives").length, "派生追溯关系"],
+    ["link-2", state.data.relations.filter((item) => ["references", "associates"].includes(item.type)).length, "引用与关联"],
   ];
   $("#relationSummary").innerHTML = summary.map(([icon, count, label]) => `<article><div class="summary-icon"><i data-lucide="${icon}"></i></div><div><strong>${count}</strong><span>${label}</span></div></article>`).join("");
   icons();
@@ -329,7 +331,7 @@ function showDetail(kind, id) {
 function detailMarkup(kind, id, item) {
   if (kind === "model") {
     const title = state.modelKind === "action" ? "操作定义" : "类型定义";
-    return detailSection(title, { id, ...item }) + `<div class="detail-section"><h3>设计边界</h3><p class="muted-text">${state.modelKind === "action" ? "业务操作生成 Object / Relation 变更，但自身不进入经营关系图。" : "该定义是用户业务词汇，不会增加新的本体概念。Object / Relation 的结构保持不变。"}</p></div>`;
+    return detailSection(title, { id, ...item }) + `<div class="detail-section"><h3>设计边界</h3><p class="muted-text">${state.modelKind === "action" ? "业务操作生成 Object / Relation 变更，但自身不进入业务关系图。" : "该定义是用户业务词汇，不会增加新的本体概念。Object / Relation 的结构保持不变。"}</p></div>`;
   }
   const links = state.data.relations.filter((rel) => rel.from === id || rel.to === id);
   const index = objectIndex();
@@ -533,7 +535,7 @@ function closeActionDialog() {
 
 function openEditor(kind) {
   const definitions = kind === "object" ? objectTypeOptions() : relationTypeOptions();
-  $("#formEyebrow").textContent = kind === "model" ? "业务词汇" : "经营数据";
+  $("#formEyebrow").textContent = kind === "model" ? "业务词汇" : "业务数据";
   $("#formTitle").textContent = { object: "新增业务对象", relation: "新增业务关系", model: "扩展用户模型" }[kind];
   $("#editorForm").dataset.kind = kind;
   $("#formError").classList.add("hidden");
@@ -549,7 +551,7 @@ function openEditor(kind) {
 
 function objectForm(definitions) {
   return `
-    ${field("对象 ID", "id", "text", "例如 revenue:customer-a-2026-08", true)}
+    ${field("对象 ID", "id", "text", "例如 passage:customer-a-2026-08", true)}
     ${selectField("对象类型", "type", Object.entries(definitions).map(([id, def]) => [id, def.name]), true)}
     ${field("名称", "name", "text", "面向业务人员的清晰名称", true, "full")}
     ${instancePropertiesContainer()}
@@ -560,7 +562,7 @@ function objectForm(definitions) {
 function relationForm(definitions) {
   const objectOptions = state.data.objects.map((item) => [item.id, `${item.name} · ${typeNames()[item.type]?.name || item.type}`]);
   return `
-    ${field("关系 ID", "id", "text", "例如 rel:cost-revenue-002", true)}
+    ${field("关系 ID", "id", "text", "例如 rel:passage-split-002", true)}
     ${selectField("关系类型", "type", Object.entries(definitions).map(([id, def]) => [id, def.name]), true)}
     ${selectField("From", "from", objectOptions, true, "full")}
     ${selectField("To", "to", objectOptions, true, "full")}
@@ -575,7 +577,7 @@ function modelForm() {
     ${selectField("类型种类", "model_kind", [["object", "对象类型"], ["relation", "关系类型"]], true)}
     ${field("Type ID", "type_id", "text", "例如 channel_commission", true)}
     ${field("显示名称", "display_name", "text", "渠道返佣", true, "full")}
-    ${field("业务定义", "description", "textarea", "说明它在企业经营中的含义", true, "full")}
+    ${field("业务定义", "description", "textarea", "说明它在联网收费中的含义", true, "full")}
     <div class="field model-relation-fields hidden">${selectInner("From 类型", "from_type", [["", "不限"], ...objectOptions], false)}</div>
     <div class="field model-relation-fields hidden">${selectInner("To 类型", "to_type", [["", "不限"], ...objectOptions], false)}</div>
     <div class="field full property-editor">
@@ -596,7 +598,7 @@ function modelPropertyRow() {
     <div class="mini-field"><label>值类型</label><select name="property_type">${propertyTypeOptions.map(([value, text]) => `<option value="${value}">${text} · ${value}</option>`).join("")}</select></div>
     <label class="required-toggle"><input name="property_required" type="checkbox"><span>必填</span></label>
     <button type="button" class="icon-button remove-property" data-remove-property title="删除属性" aria-label="删除属性"><i data-lucide="trash-2"></i></button>
-    <div class="mini-field property-description"><label>属性说明</label><input name="property_description" placeholder="说明属性在经营语境中的含义"></div>
+    <div class="mini-field property-description"><label>属性说明</label><input name="property_description" placeholder="说明属性在业务语境中的含义"></div>
     <small class="property-definition-status">新属性将写入用户模型</small>
   </div>`;
 }
@@ -849,7 +851,7 @@ function renderChangePreview() {
   $("#changeCode").textContent = JSON.stringify(state.pendingOperations, null, 2);
   const box = $("#validationBox");
   box.classList.toggle("invalid", !preview.valid);
-  box.innerHTML = preview.valid ? `<i data-lucide="shield-check"></i><span>结构与经营约束校验通过，将更新 ${preview.changed_files.join("、")}。</span>` : `<i data-lucide="circle-x"></i><span>${escapeHtml(preview.errors.join("\n"))}</span>`;
+  box.innerHTML = preview.valid ? `<i data-lucide="shield-check"></i><span>结构与业务约束校验通过，将更新 ${preview.changed_files.join("、")}。</span>` : `<i data-lucide="circle-x"></i><span>${escapeHtml(preview.errors.join("\n"))}</span>`;
   $("#actionReasonField").classList.toggle("hidden", !isAction);
   if (!isAction) $("#actionReason").value = "";
   $("#applyChangesBtn").disabled = !preview.valid;
@@ -1025,16 +1027,26 @@ async function handleAgentClick(event) {
   if (confirm) { confirm.closest(".confirmation-actions").remove(); await streamAgent("/api/agent/confirm", { session_id: state.sessionId, approved: confirm.dataset.agentConfirm === "true" }); }
 }
 
-function askAboutSelection() { if (!state.selected) return; closeDetail(); openAgent(); $("#agentInput").value = `解释这个${state.selected.kind === "relation" ? "关系" : "对象"}及其经营含义：${state.selected.id}`; $("#agentInput").focus(); }
+function askAboutSelection() { if (!state.selected) return; closeDetail(); openAgent(); $("#agentInput").value = `解释这个${state.selected.kind === "relation" ? "关系" : "对象"}及其业务含义：${state.selected.id}`; $("#agentInput").focus(); }
 function clearAgentContext() { state.selected = null; updateAgentContext(); }
-function updateAgentContext() { $("#agentContext span").textContent = state.selected ? `当前上下文：${state.selected.id}` : "当前上下文：全部经营对象"; }
+function updateAgentContext() { $("#agentContext span").textContent = state.selected ? `当前上下文：${state.selected.id}` : "当前上下文：全部业务对象"; }
 function autoGrowTextarea(event) { const input = event.target; input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 160)}px`; }
 function isAgentNearBottom() { const messages = $("#agentMessages"); return messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80; }
 function scrollAgent(force = false) { const messages = $("#agentMessages"); if (force || isAgentNearBottom()) messages.scrollTop = messages.scrollHeight; }
 
 function endpoint(item) { return `<div class="endpoint"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.id)} · ${escapeHtml(typeNames()[item.type]?.name || item.type)}</span></div>`; }
 function actionIcon(icon) { return String(icon || "play").replaceAll("_", "-"); }
-function typeIcon(type) { if (["revenue", "cash_receipt"].includes(type)) return "trending-up"; if (["cost", "cash_payment"].includes(type)) return "trending-down"; if (["contract", "receivable", "payable", "evidence"].includes(type)) return "file-text"; if (["party", "department"].includes(type)) return "building-2"; if (type === "resource") return "user-round"; if (["project", "opportunity"].includes(type)) return "briefcase-business"; return "box"; }
+function typeIcon(type) {
+  if (["toll_road", "section", "toll_interval", "toll_station", "toll_plaza", "toll_lane", "toll_gantry"].includes(type)) return "route";
+  if (["vehicle", "passage"].includes(type)) return "car-front";
+  if (type === "passage_medium") return "credit-card";
+  if (["toll_transaction", "vehicle_id_record", "consumption_detail"].includes(type)) return "scan-line";
+  if (["split_record", "clearing_result", "invoice_basis_data"].includes(type)) return "waypoints";
+  if (["account", "account_transaction", "bill", "bill_settlement"].includes(type)) return "wallet-cards";
+  if (type === "party") return "building-2";
+  if (["fee_module", "fee_rule", "control_entry"].includes(type)) return "shield-check";
+  return "box";
+}
 function statusPill(status) { return status ? `<span class="status-pill ${escapeAttr(status)}">${escapeHtml(status)}</span>` : '<span class="muted-text">-</span>'; }
 function money(amount, currency = "CNY") { if (amount === null || amount === undefined || Number.isNaN(Number(amount))) return "-"; return new Intl.NumberFormat("zh-CN", { style: "currency", currency, maximumFractionDigits: 0 }).format(Number(amount)); }
 function formatValue(value) { return typeof value === "object" ? JSON.stringify(value, null, 2) : String(value ?? "-"); }

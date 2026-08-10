@@ -129,9 +129,9 @@ tbody tr:hover { background: #f7faf8; }
 th:first-child { width: 29%; } th:nth-child(2) { width: 14%; } th:nth-child(3) { width: 14%; } th:nth-child(4) { width: 14%; } th:nth-child(5) { width: 12%; } th:nth-child(6) { width: 10%; } th:last-child { width: 36px; }
 .object-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .type-icon { display: grid; place-items: center; flex: 0 0 auto; width: 32px; height: 32px; border-radius: 5px; color: var(--green); background: var(--green-soft); }
-.type-icon.revenue, .type-icon.cash_receipt { color: var(--green); background: var(--green-soft); }
-.type-icon.cost, .type-icon.cash_payment { color: var(--red); background: var(--red-soft); }
-.type-icon.contract, .type-icon.receivable, .type-icon.payable { color: var(--blue); background: var(--blue-soft); }
+.type-icon.toll_road, .type-icon.section, .type-icon.toll_station, .type-icon.toll_gantry { color: var(--blue); background: var(--blue-soft); }
+.type-icon.toll_transaction, .type-icon.clearing_result { color: var(--green); background: var(--green-soft); }
+.type-icon.account, .type-icon.account_transaction, .type-icon.bill { color: var(--amber); background: var(--amber-soft); }
 .object-main { min-width: 0; }
 .object-main strong, .object-main span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .object-main strong { font-size: 12px; }

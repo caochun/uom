@@ -6,9 +6,9 @@ from pathlib import Path
 
 from oms.actions import OmsActionService
 from oms.business import (
-    calculate_revenue_contribution,
-    find_unattributed_costs,
+    find_incomplete_passages,
     get_business_overview,
+    get_passage_trace,
     trace_object,
 )
 from oms.sqlite_adapter import OmsSqliteAdapter
@@ -25,10 +25,12 @@ def register(registry, repository, ontology) -> None:
 
     handlers = {
         "get_business_overview": lambda: get_business_overview(repository),
-        "calculate_revenue_contribution": (
-            lambda revenue_id: calculate_revenue_contribution(repository, revenue_id)
+        "get_passage_trace": (
+            lambda passage_id, depth=4: get_passage_trace(
+                repository, passage_id, depth
+            )
         ),
-        "find_unattributed_costs": lambda: find_unattributed_costs(repository),
+        "find_incomplete_passages": lambda: find_incomplete_passages(repository),
         "trace_object": (
             lambda object_id, depth=2: trace_object(repository, object_id, depth)
         ),
