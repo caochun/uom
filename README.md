@@ -11,12 +11,13 @@ Relation 两个 Object 之间有方向、可携带事实的业务联系
 ```
 
 具体业务含义由用户模型中的 `type`、`properties` 和可选 `tags` 表达。`revenue`、`cost`、
-`cost_attribution` 等都是开放业务词汇，不是新的本体概念。
+`allocated_to` 等都是开放业务词汇，不是新的本体概念。
 
 ## 当前能力
 
 - 浏览和搜索经营对象、关系及相邻关系。
-- 通过表单创建对象、关系，并通过 ChangeSet 预览后写入。
+- 通过模型定义的业务操作登记经营事实，确认业务结果后写入。
+- 在对象上下文中执行确认收入、核销收付款、分配成本和添加凭据等操作。
 - 扩展对象类型、关系类型和带值类型的 Property 定义。
 - 根据用户模型动态生成金额、日期、期间、布尔值和 JSON 等表单控件。
 - 计算收入贡献、查找待归因成本并追溯对象关系。
@@ -33,10 +34,13 @@ app/
 
 oms/
   ontology.yaml         Object / Relation 本体、函数和交互策略
-  model.yaml            用户维护的 Property、对象类型和关系类型
+  model.yaml            用户维护的 Property、对象类型、关系类型和业务操作
   data/oms.db           对象与关系实例的唯一业务数据源
-  functions/            OAG resolver 和领域函数注册入口
-  store.py              SQLite、经营计算和 ChangeSet 服务
+  functions/            OAG adapter 和领域函数注册入口
+  sqlite_adapter.py     Object / Relation 的 SQLite 数据源适配器
+  business.py           基于 ObjectRepository 的确定性经营计算
+  actions.py            业务操作解析和 ChangeSet 生成
+  store.py              用户模型和 ChangeSet 应用服务
   scripts/              模型校验器
   tests/                模型、存储和 OAG 集成测试
 
@@ -46,6 +50,10 @@ docs/                   原始业务资料
 
 `ontology.yaml` 只定义稳定的 Object/Relation 记录契约和 Agent 能力。属性类型、业务类型、关系端点与必填规则
 属于用户语义，统一放在 `model.yaml`。对象和关系在存储层形成属性图，但 Graph、Node、Edge 不进入业务本体。
+
+OAG Agent 的 `query`、`count`、`search`、领域函数和数据变更统一以 `ObjectRepository` 为实例访问边界。
+Repository 根据 `ontology.yaml` 中的 `source.type: oms_sqlite` 将 Object/Relation 路由到 SQLite adapter；领域函数
+不会自行创建另一套 store 读取数据库。
 
 ## 快速开始
 
@@ -93,13 +101,14 @@ object_types:
       amount: {required: false}
 
 relation_types:
-  cost_attribution:
-    name: 成本归因
-    description: 将成本的一部分或全部金额归因到收入。
-    from_types: [cost]
-    to_types: [revenue]
+  allocated_to:
+    name: 金额对应
+    description: 用于成本对应收入、收款核销应收和付款核销应付。
+    from_types: [cost, cash_receipt, cash_payment]
+    to_types: [revenue, receivable, payable]
     properties:
       amount: {required: true}
+      status: {required: true}
 ```
 
 MVP 支持 `string`、`number`、`money`、`date`、`period`、`boolean` 和 `json`。业务数据允许使用尚未登记的
@@ -109,35 +118,39 @@ MVP 支持 `string`、`number`、`money`、`date`、`period`、`boolean` 和 `js
 
 ## 数据与写入
 
-`oms/data/oms.db` 是唯一业务数据源。SQLite 中使用 `objects`、`relations` 和 `metadata` 三张表；完整记录保存在
+`oms/data/oms.db` 是唯一业务数据源。SQLite 中使用 `objects`、`relations`、`metadata` 和 `action_log`；完整记录保存在
 JSON payload 中，常用 ID、type 和关系端点同时建立独立列与索引。
 
-表单和 Agent 使用同一条写入路径：
+表单和 Agent 使用同一条业务写入路径：
 
 ```text
-表单 / OAG Agent
+业务表单 / OAG Agent
         |
         v
-preview_changes  ->  结构、类型、端点和经营约束校验
+model.yaml Action  ->  生成 Object / Relation ChangeSet
+        |
+        v
+preview_action    ->  结构、类型、端点和经营约束校验
         |
         v
 用户明确确认
         |
         v
-apply_changes    ->  SQLite 事务或 model.yaml 原子更新
+apply_action      ->  图数据与操作审计在同一 SQLite 事务提交
 ```
 
-`apply_changes` 只接受在当前数据快照上预览过的同一组操作。对象仍被关系引用时不能删除，也不会发生隐式级联。
+Action 不是本体概念，也不进入对象关系图。通用 `preview_changes` / `apply_changes` 保留给模型扩展、修复和高级数据
+维护；所有提交只接受基于当前快照生成的预览。对象仍被关系引用时不能删除，也不会发生隐式级联。
 
 ## 经营口径
 
 - 收入、应收和收款分别表示价值确认、收款权利和现金流入。
 - 成本、应付和付款分别表示价值消耗、付款义务和现金流出。
 - 成本可以晚于发生时间归因到收入，也可以拆分给多项收入。
-- 暂未形成收入的投入可以先保持待归因，失败投入可以由企业承担。
+- 暂未形成收入的投入可以先关联商机、项目或部门，不必提前对应收入。
 - 单项收入贡献只扣除确认归因到该收入的成本；企业经营结果统计企业全部收入和成本。
 
-示例数据中，100 万收入关联 45 万已确认成本，因此收入贡献为 55 万。
+当前实例库保持为空，待业务模型确认后再重新 seed 数据。
 
 ## 验证
 
@@ -147,4 +160,5 @@ python3 -m unittest discover -s oms/tests -v
 node --check app/static/app.js
 ```
 
-测试覆盖模型结构、Property 类型、关系端点、金额上限、SQLite 事务、ChangeSet 预览确认和 OAG resolver 集成。
+测试覆盖模型结构、Property 类型、Action 编译、关系端点、金额上限、SQLite 原子审计、ChangeSet 预览确认和
+OAG Repository 集成。

@@ -14,9 +14,28 @@ class OagAgentRuntime:
         self._agent = None
         self._error = ""
         self._lock = threading.RLock()
+        self.ontology = None
+        self.repository = None
+        self.registry = None
+        self.workspace = None
+        self.actions = None
         self._configure()
 
     def _configure(self) -> None:
+        try:
+            from oag.ontology.loader import load_domain
+
+            self.ontology, self.repository, self.registry = load_domain(
+                self.root / "oms"
+            )
+            self.actions = self.registry.get_resolver("oms_actions")
+            if self.actions is None:
+                raise RuntimeError("OMS Action service 未注册")
+            self.workspace = self.actions.workspace
+        except Exception as exc:
+            self._error = f"OMS domain 初始化失败: {exc}"
+            return
+
         model = (
             os.environ.get("OAG_MODEL")
             or os.environ.get("OPENAI_MODEL")
@@ -40,18 +59,17 @@ class OagAgentRuntime:
 
             from oag.agent import Agent
             from oag.harness import Harness
-            from oag.ontology.loader import load_domain
             from oag.runtime import HarnessConfig
+            from app.presentation_tools import register_presentation_tools
 
-            ontology, repository, registry = load_domain(self.root / "oms")
             client_args: dict[str, Any] = {"api_key": api_key}
             if base_url:
                 client_args["base_url"] = base_url
             client = OpenAI(**client_args)
             harness = Harness(
-                ontology=ontology,
-                repository=repository,
-                registry=registry,
+                ontology=self.ontology,
+                repository=self.repository,
+                registry=self.registry,
                 llm_client=client,
                 model=model,
                 config=HarnessConfig(
@@ -67,6 +85,12 @@ class OagAgentRuntime:
                     append_system_prompt="/no_think" if disable_reasoning else "",
                 ),
             )
+            register_presentation_tools(
+                harness,
+                self.ontology,
+                self.workspace,
+                self.actions,
+            )
             self._agent = Agent(
                 harness,
                 client,
@@ -75,6 +99,16 @@ class OagAgentRuntime:
             )
         except Exception as exc:  # The web shell remains usable without LLM credentials.
             self._error = f"OAG Agent 初始化失败: {exc}"
+
+    def bootstrap(self) -> dict[str, Any]:
+        if self.workspace is None:
+            raise RuntimeError(self._error or "OMS domain 未初始化")
+        return self.workspace.bootstrap()
+
+    def call_domain(self, name: str, **kwargs: Any) -> Any:
+        if self.registry is None:
+            raise RuntimeError(self._error or "OMS domain 未初始化")
+        return self.registry.call(name, **kwargs)
 
     def status(self) -> dict[str, Any]:
         return {
@@ -99,6 +133,10 @@ class OagAgentRuntime:
         with self._lock:
             for event in self._agent.confirm_tool(session_id, approved=approved, answer=answer):
                 yield event_to_dict(event)
+
+    def close(self) -> None:
+        if self.repository is not None:
+            self.repository.close()
 
 
 def _is_truthy(value: str | None) -> bool:

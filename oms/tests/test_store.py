@@ -2,36 +2,43 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+import sys
 import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
 
-from oms.store import OmsStore
-
-
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "oag-agent"))
+sys.path.insert(0, str(ROOT))
+
+from oag.ontology.loader import load_domain  # noqa: E402
+from oms.store import OmsWorkspaceService  # noqa: E402
 
 
-class OmsStoreTest(unittest.TestCase):
+class OmsWorkspaceServiceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.oms_root = Path(self.temp_dir.name) / "oms"
         shutil.copytree(
             ROOT / "oms",
             self.oms_root,
-            ignore=shutil.ignore_patterns("__pycache__", "*.db-*"),
+            ignore=shutil.ignore_patterns("__pycache__", "*.db", "*.db-*"),
         )
-        self.store = OmsStore(self.oms_root)
+        self.ontology, self.repository, self.registry = load_domain(self.oms_root)
+        self.store = OmsWorkspaceService(self.oms_root, self.repository)
 
     def tearDown(self) -> None:
+        self.repository.close()
         self.temp_dir.cleanup()
 
     def test_bootstrap_contains_model_and_usage(self) -> None:
         data = self.store.bootstrap()
         self.assertEqual({"Object", "Relation"}, set(data["ontology"]["objects"]))
         self.assertIn("revenue", data["model"]["object_types"])
-        self.assertGreater(data["model_usage"]["object"]["revenue"]["count"], 0)
+        self.assertEqual(0, data["stats"]["object_count"])
+        self.assertEqual(0, data["stats"]["relation_count"])
+        self.assertNotIn("revenue", data["model_usage"]["object"])
 
     def test_tracked_database_contains_object_relation_graph(self) -> None:
         self.assertTrue(self.store.database_path.is_file())
@@ -44,16 +51,21 @@ class OmsStoreTest(unittest.TestCase):
             }
             object_count = connection.execute("SELECT COUNT(*) FROM objects").fetchone()[0]
             relation_count = connection.execute("SELECT COUNT(*) FROM relations").fetchone()[0]
-        self.assertTrue({"metadata", "objects", "relations"}.issubset(tables))
+        self.assertTrue({"metadata", "objects", "relations", "action_log"}.issubset(tables))
         self.assertEqual(len(self.store.list_objects()), object_count)
         self.assertEqual(len(self.store.list_relations()), relation_count)
 
     def test_missing_database_is_initialized_empty(self) -> None:
         empty_database = self.oms_root / "data" / "empty.db"
-        empty_store = OmsStore(self.oms_root, database_path=empty_database)
+        for object_name in ("Object", "Relation"):
+            self.ontology.objects[object_name].source.config["database"] = "data/empty.db"
+        self.repository.close()
+        self.repository._adapters.clear()
+        empty_store = OmsWorkspaceService(self.oms_root, self.repository)
 
         self.assertEqual([], empty_store.list_objects())
         self.assertEqual([], empty_store.list_relations())
+        self.assertEqual(empty_database.resolve(), empty_store.database_path)
 
     def test_preview_does_not_write(self) -> None:
         before = self.store.snapshot()
@@ -131,8 +143,11 @@ class OmsStoreTest(unittest.TestCase):
         self.assertTrue(any(item["id"] == "commission:2026-08" for item in self.store.list_objects()))
         self.assertEqual(["data/oms.db", "model.yaml"], result["changed_files"])
 
-        reopened = OmsStore(self.oms_root)
+        reopened_ontology, reopened_repository, _ = load_domain(self.oms_root)
+        reopened = OmsWorkspaceService(self.oms_root, reopened_repository)
         self.assertTrue(any(item["id"] == "commission:2026-08" for item in reopened.list_objects()))
+        self.assertEqual(self.ontology.name, reopened_ontology.name)
+        reopened_repository.close()
 
     def test_object_and_relation_are_committed_in_one_database(self) -> None:
         operations = [
@@ -141,12 +156,16 @@ class OmsStoreTest(unittest.TestCase):
                 "record": {"id": "note:sqlite", "type": "note", "name": "SQLite 记录"},
             },
             {
+                "action": "create_object",
+                "record": {"id": "context:sqlite", "type": "context", "name": "SQLite 上下文"},
+            },
+            {
                 "action": "create_relation",
                 "record": {
-                    "id": "rel:sqlite-enterprise",
-                    "type": "owned_by",
+                    "id": "rel:sqlite-context",
+                    "type": "observed_by",
                     "from": "note:sqlite",
-                    "to": "enterprise:oms",
+                    "to": "context:sqlite",
                 },
             },
         ]
@@ -159,36 +178,94 @@ class OmsStoreTest(unittest.TestCase):
                 "SELECT type FROM objects WHERE id = 'note:sqlite'"
             ).fetchone()
             relation_row = connection.execute(
-                "SELECT source_id, target_id FROM relations WHERE id = 'rel:sqlite-enterprise'"
+                "SELECT source_id, target_id FROM relations WHERE id = 'rel:sqlite-context'"
             ).fetchone()
         self.assertEqual(("note",), object_row)
-        self.assertEqual(("note:sqlite", "enterprise:oms"), relation_row)
+        self.assertEqual(("note:sqlite", "context:sqlite"), relation_row)
 
     def test_user_relation_constraints_are_enforced(self) -> None:
-        operation = {
-            "action": "create_relation",
-            "record": {
-                "id": "rel:invalid-attribution",
-                "type": "cost_attribution",
-                "from": "revenue:a-2026-07",
-                "to": "cost:people-a",
-                "properties": {
-                    "amount": {"amount": 10, "currency": "CNY"},
-                    "basis": "invalid",
-                    "status": "confirmed",
-                    "period": "2026-07",
+        operations = [
+            {
+                "action": "create_object",
+                "record": {
+                    "id": "revenue:invalid",
+                    "type": "revenue",
+                    "name": "测试收入",
+                    "properties": {"amount": {"amount": 100, "currency": "CNY"}},
                 },
             },
-        }
-        result = self.store.preview_changes([operation])
+            {
+                "action": "create_object",
+                "record": {
+                    "id": "cost:invalid",
+                    "type": "cost",
+                    "name": "测试成本",
+                    "properties": {"amount": {"amount": 10, "currency": "CNY"}},
+                },
+            },
+            {
+                "action": "create_relation",
+                "record": {
+                    "id": "rel:invalid-allocation",
+                    "type": "allocated_to",
+                    "from": "revenue:invalid",
+                    "to": "cost:invalid",
+                    "properties": {
+                        "amount": {"amount": 10, "currency": "CNY"},
+                        "status": "confirmed",
+                    },
+                },
+            },
+        ]
+        result = self.store.preview_changes(operations)
         self.assertFalse(result["valid"])
         self.assertTrue(any("business model" in error for error in result["errors"]))
 
     def test_revenue_contribution_and_pending_cost_are_deterministic(self) -> None:
-        contribution = self.store.revenue_contribution("revenue:a-2026-07")
-        self.assertEqual(550000, contribution["contribution"])
-        pending_ids = {item["id"] for item in self.store.find_unattributed_costs()}
-        self.assertEqual({"cost:presales-pending"}, pending_ids)
+        for record in (
+            {
+                "id": "revenue:test",
+                "type": "revenue",
+                "name": "测试收入",
+                "properties": {"amount": {"amount": 1000, "currency": "CNY"}},
+            },
+            {
+                "id": "cost:allocated",
+                "type": "cost",
+                "name": "已对应成本",
+                "properties": {"amount": {"amount": 450, "currency": "CNY"}},
+            },
+            {
+                "id": "cost:pending",
+                "type": "cost",
+                "name": "待对应成本",
+                "properties": {"amount": {"amount": 50, "currency": "CNY"}},
+            },
+        ):
+            self.repository.insert_record("Object", record)
+        self.repository.insert_record(
+            "Relation",
+            {
+                "id": "rel:test-allocation",
+                "type": "allocated_to",
+                "from": "cost:allocated",
+                "to": "revenue:test",
+                "properties": {
+                    "amount": {"amount": 450, "currency": "CNY"},
+                    "status": "confirmed",
+                },
+            },
+        )
+        contribution = self.registry.call(
+            "calculate_revenue_contribution",
+            revenue_id="revenue:test",
+        )
+        self.assertEqual(550, contribution["contribution"])
+        pending_ids = {
+            item["id"]
+            for item in self.registry.call("find_unattributed_costs")
+        }
+        self.assertEqual({"cost:pending"}, pending_ids)
 
 
 if __name__ == "__main__":

@@ -83,6 +83,7 @@ class ModelValidator:
         self.property_definitions = self._mapping(model.get("property_definitions"))
         self.object_type_definitions = self._mapping(model.get("object_types"))
         self.relation_type_definitions = self._mapping(model.get("relation_types"))
+        self.action_definitions = self._mapping(model.get("actions"))
         self.object_index: dict[str, dict[str, Any]] = {}
         self.relation_items: list[dict[str, Any]] = []
 
@@ -162,6 +163,206 @@ class ModelValidator:
                 if kind == "relation" and "acyclic" in definition and not isinstance(definition["acyclic"], bool):
                     self.result.error(f"{path}.acyclic", "must be a boolean")
 
+        self._validate_actions(model.get("actions"))
+
+    def _validate_actions(self, actions: Any) -> None:
+        if not isinstance(actions, dict):
+            self.result.error("model.actions", "must be a mapping")
+            return
+        for action_id, definition in actions.items():
+            path = f"model.actions.{action_id}"
+            self._validate_type_id(action_id, path)
+            if not isinstance(definition, dict):
+                self.result.error(path, "must be a mapping")
+                continue
+            allowed = {
+                "name", "description", "icon", "handler", "confirmation",
+                "available_on", "inputs", "effects",
+            }
+            unknown = set(definition) - allowed
+            if unknown:
+                self.result.error(path, f"contains unknown fields: {', '.join(sorted(unknown))}")
+            if not definition.get("name") or not definition.get("description"):
+                self.result.error(path, "must contain name and description")
+            if definition.get("handler") != "changeset":
+                self.result.error(f"{path}.handler", "must be changeset")
+            if "confirmation" in definition and not isinstance(definition["confirmation"], str):
+                self.result.error(f"{path}.confirmation", "must be a string")
+            if "icon" in definition and not isinstance(definition["icon"], str):
+                self.result.error(f"{path}.icon", "must be a string")
+
+            available_on = definition.get("available_on")
+            if available_on is not None:
+                if not isinstance(available_on, list) or not available_on:
+                    self.result.error(f"{path}.available_on", "must be a non-empty list")
+                else:
+                    for index, type_id in enumerate(available_on):
+                        item_path = f"{path}.available_on[{index}]"
+                        if type_id == "*":
+                            continue
+                        self._validate_type_id(type_id, item_path)
+                        if type_id not in self.object_type_definitions:
+                            self.result.error(item_path, "references an unknown object type")
+                    if "*" in available_on and available_on != ["*"]:
+                        self.result.error(f"{path}.available_on", "* must be used alone")
+
+            inputs = definition.get("inputs")
+            if not isinstance(inputs, dict):
+                self.result.error(f"{path}.inputs", "must be a mapping")
+                inputs = {}
+            for input_id, input_definition in inputs.items():
+                self._validate_action_input(input_id, input_definition, f"{path}.inputs.{input_id}")
+
+            effects = definition.get("effects")
+            if not isinstance(effects, list) or not effects:
+                self.result.error(f"{path}.effects", "must be a non-empty list")
+                continue
+            created_refs: set[str] = set()
+            for index, effect in enumerate(effects):
+                effect_path = f"{path}.effects[{index}]"
+                if not isinstance(effect, dict) or len(effect) != 1:
+                    self.result.error(effect_path, "must contain one effect")
+                    continue
+                effect_kind, effect_definition = next(iter(effect.items()))
+                if effect_kind not in {"create_object", "create_relation"}:
+                    self.result.error(effect_path, "only create_object and create_relation are supported")
+                    continue
+                if not isinstance(effect_definition, dict):
+                    self.result.error(f"{effect_path}.{effect_kind}", "must be a mapping")
+                    continue
+                if effect_kind == "create_object":
+                    ref = effect_definition.get("ref")
+                    self._validate_type_id(ref, f"{effect_path}.create_object.ref")
+                    if isinstance(ref, str):
+                        if ref in created_refs:
+                            self.result.error(f"{effect_path}.create_object.ref", "must be unique")
+                    object_type = effect_definition.get("type")
+                    self._validate_type_id(object_type, f"{effect_path}.create_object.type")
+                    if object_type not in self.object_type_definitions:
+                        self.result.error(f"{effect_path}.create_object.type", "references an unknown object type")
+                    self._validate_action_effect(
+                        effect_definition,
+                        {"ref", "type", "name", "properties", "tags"},
+                        inputs,
+                        created_refs,
+                        available_on is not None,
+                        effect_path,
+                        self._mapping(self.object_type_definitions.get(object_type)),
+                    )
+                    if isinstance(ref, str):
+                        created_refs.add(ref)
+                else:
+                    relation_type = effect_definition.get("type")
+                    self._validate_type_id(relation_type, f"{effect_path}.create_relation.type")
+                    if relation_type not in self.relation_type_definitions:
+                        self.result.error(f"{effect_path}.create_relation.type", "references an unknown relation type")
+                    self._validate_action_effect(
+                        effect_definition,
+                        {"type", "from", "to", "properties", "tags"},
+                        inputs,
+                        created_refs,
+                        available_on is not None,
+                        effect_path,
+                        self._mapping(self.relation_type_definitions.get(relation_type)),
+                    )
+
+    def _validate_action_input(self, input_id: Any, definition: Any, path: str) -> None:
+        self._validate_type_id(input_id, path)
+        if not isinstance(definition, dict):
+            self.result.error(path, "must be a mapping")
+            return
+        allowed = {"name", "required", "property", "type", "object_types", "default"}
+        unknown = set(definition) - allowed
+        if unknown:
+            self.result.error(path, f"contains unknown fields: {', '.join(sorted(unknown))}")
+        if not definition.get("name"):
+            self.result.error(path, "must contain name")
+        if "required" not in definition or not isinstance(definition.get("required"), bool):
+            self.result.error(f"{path}.required", "must be a boolean")
+        source_fields = [key for key in ("property", "type", "object_types") if key in definition]
+        if len(source_fields) != 1:
+            self.result.error(path, "must contain exactly one of property, type or object_types")
+            return
+        if "property" in definition:
+            property_id = definition.get("property")
+            self._validate_type_id(property_id, f"{path}.property")
+            if property_id not in self.property_definitions:
+                self.result.error(f"{path}.property", "references an unknown property definition")
+            value_type = self._mapping(self.property_definitions.get(property_id)).get("type")
+        elif "type" in definition:
+            value_type = definition.get("type")
+            if value_type not in VALUE_TYPES:
+                self.result.error(f"{path}.type", f"must be one of {', '.join(sorted(VALUE_TYPES))}")
+        else:
+            value_type = None
+            object_types = definition.get("object_types")
+            if not isinstance(object_types, list) or not object_types:
+                self.result.error(f"{path}.object_types", "must be a non-empty list")
+            else:
+                for index, type_id in enumerate(object_types):
+                    item_path = f"{path}.object_types[{index}]"
+                    self._validate_type_id(type_id, item_path)
+                    if type_id not in self.object_type_definitions:
+                        self.result.error(item_path, "references an unknown object type")
+        if "default" in definition and value_type in VALUE_TYPES:
+            self._validate_value(definition["default"], value_type, f"{path}.default")
+
+    def _validate_action_effect(
+        self,
+        definition: dict[str, Any],
+        allowed: set[str],
+        inputs: dict[str, Any],
+        created_refs: set[str],
+        has_context: bool,
+        path: str,
+        type_definition: dict[str, Any],
+    ) -> None:
+        unknown = set(definition) - allowed
+        if unknown:
+            self.result.error(path, f"contains unknown fields: {', '.join(sorted(unknown))}")
+        for required in ({"type", "name"} if "name" in allowed else {"type", "from", "to"}):
+            if required not in definition:
+                self.result.error(path, f"missing required field {required}")
+        properties = definition.get("properties", {})
+        if not isinstance(properties, dict):
+            self.result.error(f"{path}.properties", "must be a mapping")
+        else:
+            allowed_properties = self._mapping(type_definition.get("properties"))
+            for property_id in properties:
+                if property_id not in allowed_properties:
+                    self.result.error(f"{path}.properties.{property_id}", "is not defined for this type")
+        for field, value in definition.items():
+            if field in {"ref", "type"}:
+                continue
+            self._validate_action_value(value, inputs, created_refs, has_context, f"{path}.{field}")
+
+    def _validate_action_value(
+        self,
+        value: Any,
+        inputs: dict[str, Any],
+        created_refs: set[str],
+        has_context: bool,
+        path: str,
+    ) -> None:
+        if isinstance(value, str) and value.startswith("$"):
+            if value == "$context":
+                if not has_context:
+                    self.result.error(path, "$context requires available_on")
+                return
+            if value.startswith("$input."):
+                if value[7:] not in inputs:
+                    self.result.error(path, "references an unknown input")
+                return
+            if value[1:] not in created_refs:
+                self.result.error(path, "references an unknown or future object ref")
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                self._validate_action_value(item, inputs, created_refs, has_context, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                self._validate_action_value(item, inputs, created_refs, has_context, f"{path}[{index}]")
+
     def _validate_data_against_business_model(self) -> None:
         for index, item in enumerate(self.object_index.values()):
             definition = self._mapping(self.object_type_definitions.get(item.get("type")))
@@ -223,8 +424,18 @@ class ModelValidator:
             if definition.get("type_policy") != "open":
                 self.result.error(f"{path}.type_policy", "must be open")
             source = self._mapping(definition.get("source"))
-            if source.get("type") != "resolver" or not source.get("resolver"):
-                self.result.error(f"{path}.source", "must declare an OAG resolver")
+            source_config = self._mapping(source.get("config"))
+            expected_kind = "object" if object_name == "Object" else "relation"
+            if (
+                source.get("type") != "oms_sqlite"
+                or source.get("id_field") != "id"
+                or source_config.get("database") != "data/oms.db"
+                or source_config.get("kind") != expected_kind
+            ):
+                self.result.error(
+                    f"{path}.source",
+                    "must declare the matching OMS SQLite adapter source",
+                )
             properties = self._mapping(definition.get("properties"))
             if set(properties) != set(expected_properties):
                 self.result.error(
@@ -422,27 +633,51 @@ class ModelValidator:
         self.result.error(path, "must be JSON-compatible")
 
     def _validate_semantics(self) -> None:
-        self._validate_relation_amounts(
-            {"cost_attribution", "enterprise_absorption"},
-            "from",
-            confirmed_only=True,
-        )
-        for relation_type in ("settles_receivable", "settles_payable"):
-            self._validate_relation_amounts({relation_type}, "from")
-            self._validate_relation_amounts({relation_type}, "to")
+        self._validate_allocations()
         for relation_type, definition in self.relation_type_definitions.items():
             if self._mapping(definition).get("acyclic") is True:
                 self._validate_acyclic(relation_type)
+
+    def _validate_allocations(self) -> None:
+        valid_pairs = {
+            ("cost", "revenue"),
+            ("cash_receipt", "receivable"),
+            ("cash_payment", "payable"),
+        }
+        for index, relation in enumerate(self.relation_items):
+            if relation.get("type") != "allocated_to":
+                continue
+            source = self.object_index.get(relation.get("from"), {})
+            target = self.object_index.get(relation.get("to"), {})
+            pair = (source.get("type"), target.get("type"))
+            if pair not in valid_pairs:
+                self.result.error(
+                    f"data.relations[{index}]",
+                    "allocated_to only supports cost -> revenue, "
+                    "cash_receipt -> receivable, or cash_payment -> payable",
+                )
+
+        self._validate_relation_amounts({"allocated_to"}, "from", confirmed_only=True)
+        self._validate_relation_amounts(
+            {"allocated_to"},
+            "to",
+            confirmed_only=True,
+            source_types={"cash_receipt", "cash_payment"},
+        )
 
     def _validate_relation_amounts(
         self,
         relation_types: set[str],
         endpoint: str,
         confirmed_only: bool = False,
+        source_types: set[str] | None = None,
     ) -> None:
         totals: dict[tuple[str, str], float] = {}
         for item in self.relation_items:
             if item.get("type") not in relation_types:
+                continue
+            source = self.object_index.get(item.get("from"), {})
+            if source_types is not None and source.get("type") not in source_types:
                 continue
             properties = self._mapping(item.get("properties"))
             if confirmed_only and properties.get("status") != "confirmed":

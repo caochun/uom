@@ -8,6 +8,10 @@ const state = {
   selected: null,
   pendingOperations: [],
   preview: null,
+  previewMode: "changeset",
+  actionContextId: "",
+  availableActions: [],
+  currentAction: null,
   sessionId: `oms-${crypto.randomUUID()}`,
   agentBusy: false,
 };
@@ -35,8 +39,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 function bindEvents() {
   $$(".nav-item[data-view]").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
   $$('[data-open-form]').forEach((button) => button.addEventListener("click", () => openEditor(button.dataset.openForm)));
-  $("#objectFilters").addEventListener("click", segmentedHandler("objectFilter", renderObjects));
-  $("#relationFilters").addEventListener("click", segmentedHandler("relationFilter", renderRelations));
+  $$('[data-open-actions]').forEach((button) => button.addEventListener("click", () => openActionLauncher("")));
+  $("#objectFilters").addEventListener("click", (event) => handleTypeFilterClick(event, "object"));
+  $("#relationFilters").addEventListener("click", (event) => handleTypeFilterClick(event, "relation"));
   $("#modelKindTabs").addEventListener("click", segmentedHandler("modelKind", renderModel, "kind"));
   $("#globalSearch").addEventListener("input", (event) => { state.search = event.target.value.trim().toLowerCase(); renderCurrentView(); });
   $("#refreshBtn").addEventListener("click", loadData);
@@ -45,11 +50,29 @@ function bindEvents() {
   $("#scrim").addEventListener("click", closeOverlays);
   $$('[data-close-drawer]').forEach((button) => button.addEventListener("click", closeDetail));
   $$('[data-close-changes]').forEach((button) => button.addEventListener("click", () => $("#changeDialog").close()));
+  $("#returnFromChanges").addEventListener("click", returnFromChanges);
   $("#editorForm").addEventListener("submit", submitEditor);
   $("#editorDialog").addEventListener("click", handleEditorClick);
   $("#editorDialog").addEventListener("input", handleEditorInput);
   $("#applyChangesBtn").addEventListener("click", applyPendingChanges);
-  $("#openChangesBtn").addEventListener("click", () => state.pendingOperations.length ? previewOperations(state.pendingOperations) : toast("当前没有待应用的变更"));
+  $("#contextActionBtn").addEventListener("click", () => {
+    const contextId = state.selected?.kind === "object" ? state.selected.id : "";
+    closeDetail();
+    openActionLauncher(contextId);
+  });
+  $$('[data-close-actions]').forEach((button) => button.addEventListener("click", closeActionDialog));
+  $("#backToActions").addEventListener("click", renderActionCatalog);
+  $("#actionCatalog").addEventListener("click", handleActionCatalogClick);
+  $("#actionForm").addEventListener("submit", submitAction);
+  $("#openChangesBtn").addEventListener("click", () => {
+    if (!state.pendingOperations.length) return toast("当前没有待应用的变更");
+    if (state.preview) {
+      renderChangePreview();
+      $("#changeDialog").showModal();
+      return;
+    }
+    previewOperations(state.pendingOperations);
+  });
   $("#askAboutBtn").addEventListener("click", askAboutSelection);
   $("#clearContextBtn").addEventListener("click", clearAgentContext);
   $("#agentForm").addEventListener("submit", sendAgentMessage);
@@ -70,6 +93,55 @@ function segmentedHandler(stateKey, render, dataKey = "filter") {
     state[stateKey] = button.dataset[dataKey];
     render();
   };
+}
+
+function typeCatalog(kind) {
+  const definitions = kind === "object" ? typeNames() : relationNames();
+  const records = kind === "object" ? state.data.objects : state.data.relations;
+  const counts = records.reduce((result, item) => {
+    result[item.type] = (result[item.type] || 0) + 1;
+    return result;
+  }, {});
+  const catalog = Object.entries(definitions).map(([id, definition]) => ({
+    id,
+    name: definition.name || id,
+    count: counts[id] || 0,
+  }));
+  Object.keys(counts).filter((id) => !definitions[id]).sort().forEach((id) => catalog.push({
+    id,
+    name: `${id}（未定义）`,
+    count: counts[id],
+  }));
+  return catalog;
+}
+
+function renderTypeFilters() {
+  const objectTypes = typeCatalog("object");
+  const relationTypes = typeCatalog("relation");
+  if (state.objectFilter !== "all" && !objectTypes.some((item) => item.id === state.objectFilter)) state.objectFilter = "all";
+  if (state.relationFilter !== "all" && !relationTypes.some((item) => item.id === state.relationFilter)) state.relationFilter = "all";
+
+  $("#objectFilters").innerHTML = [
+    filterButton("all", "全部", state.data.objects.length, state.objectFilter),
+    ...objectTypes.map((item) => filterButton(item.id, item.name, item.count, state.objectFilter)),
+  ].join("");
+
+  $("#relationFilters").innerHTML = [
+    filterButton("all", "全部", state.data.relations.length, state.relationFilter),
+    ...relationTypes.map((item) => filterButton(item.id, item.name, item.count, state.relationFilter)),
+  ].join("");
+}
+
+function filterButton(id, name, count, selected) {
+  return `<button class="${selected === id ? "active" : ""}" data-filter="${escapeAttr(id)}" title="${escapeAttr(id)}">${escapeHtml(name)} <span class="filter-count">${count}</span></button>`;
+}
+
+function handleTypeFilterClick(event, kind) {
+  const button = event.target.closest("button[data-filter]");
+  if (!button) return;
+  state[`${kind}Filter`] = button.dataset.filter;
+  renderTypeFilters();
+  (kind === "object" ? renderObjects : renderRelations)();
 }
 
 async function api(path, options = {}) {
@@ -96,10 +168,11 @@ function renderShell() {
   const { stats, model } = state.data;
   $("#objectNavCount").textContent = stats.object_count;
   $("#relationNavCount").textContent = stats.relation_count;
-  $("#modelNavCount").textContent = Object.keys(model.object_types || {}).length + Object.keys(model.relation_types || {}).length;
+  $("#modelNavCount").textContent = Object.keys(model.object_types || {}).length + Object.keys(model.relation_types || {}).length + Object.keys(model.actions || {}).length;
   $("#sidebarModelName").textContent = model.model.name;
   $("#sidebarModelVersion").textContent = `v${model.model.version}`;
   $("#modelVersion").textContent = `v${model.model.version}`;
+  renderTypeFilters();
   renderMetrics();
   renderObjects();
   renderRelations();
@@ -110,9 +183,11 @@ function renderShell() {
 function renderMetrics() {
   const objects = state.data.objects;
   const relations = state.data.relations;
+  const index = objectIndex();
   const revenue = sumObjectMoney(objects.filter((item) => item.type === "revenue"));
-  const attributed = relations.filter((item) => item.type === "cost_attribution" && item.properties?.status === "confirmed").reduce((sum, item) => sum + Number(item.properties?.amount?.amount || 0), 0);
-  const disposed = relations.filter((item) => ["cost_attribution", "enterprise_absorption"].includes(item.type) && item.properties?.status === "confirmed").reduce((map, item) => map.set(item.from, (map.get(item.from) || 0) + Number(item.properties?.amount?.amount || 0)), new Map());
+  const costAllocations = relations.filter((item) => item.type === "allocated_to" && item.properties?.status === "confirmed" && index[item.from]?.type === "cost" && index[item.to]?.type === "revenue");
+  const attributed = costAllocations.reduce((sum, item) => sum + Number(item.properties?.amount?.amount || 0), 0);
+  const disposed = costAllocations.reduce((map, item) => map.set(item.from, (map.get(item.from) || 0) + Number(item.properties?.amount?.amount || 0)), new Map());
   const pending = objects.filter((item) => item.type === "cost").reduce((sum, item) => sum + Math.max(0, Number(item.properties?.amount?.amount || 0) - (disposed.get(item.id) || 0)), 0);
   const currency = revenue.currency || "CNY";
   $("#metricRevenue").textContent = money(revenue.amount, currency);
@@ -150,14 +225,9 @@ function matchesSearch(item) {
 
 function renderObjects() {
   if (!state.data) return;
-  const groups = {
-    all: () => true,
-    revenue: (item) => ["revenue", "receivable", "cash_receipt"].includes(item.type),
-    cost: (item) => ["cost", "payable", "cash_payment", "purchase_order", "asset"].includes(item.type),
-    cash: (item) => ["cash_receipt", "cash_payment", "receivable", "payable"].includes(item.type),
-    context: (item) => !["revenue", "receivable", "cash_receipt", "cost", "payable", "cash_payment"].includes(item.type),
-  };
-  const items = state.data.objects.filter(groups[state.objectFilter] || groups.all).filter(matchesSearch);
+  const items = state.data.objects
+    .filter((item) => state.objectFilter === "all" || item.type === state.objectFilter)
+    .filter(matchesSearch);
   $("#objectResultCount").textContent = `${items.length} 项`;
   $("#objectsEmpty").classList.toggle("hidden", items.length > 0);
   $("#objectsTable").innerHTML = items.map((item) => {
@@ -179,10 +249,11 @@ function renderObjects() {
 
 function renderRelations() {
   if (!state.data) return;
-  const economic = ["cost_attribution", "enterprise_absorption", "settles_receivable", "settles_payable"];
+  const economic = ["allocated_to"];
   const trace = ["derived_from"];
-  const groups = { all: () => true, economic: (item) => economic.includes(item.type), trace: (item) => trace.includes(item.type), context: (item) => !economic.includes(item.type) && !trace.includes(item.type) };
-  const items = state.data.relations.filter(groups[state.relationFilter] || groups.all).filter(matchesSearch);
+  const items = state.data.relations
+    .filter((item) => state.relationFilter === "all" || item.type === state.relationFilter)
+    .filter(matchesSearch);
   const index = objectIndex();
   $("#relationResultCount").textContent = `${items.length} 项`;
   $("#relationsEmpty").classList.toggle("hidden", items.length > 0);
@@ -210,33 +281,45 @@ function renderRelations() {
 
 function renderModel() {
   if (!state.data) return;
-  const definitions = state.modelKind === "object" ? state.data.model.object_types : state.data.model.relation_types;
+  const definitions = state.modelKind === "object"
+    ? state.data.model.object_types
+    : state.modelKind === "relation"
+      ? state.data.model.relation_types
+      : state.data.model.actions;
   const usage = state.data.model_usage[state.modelKind] || {};
   const entries = Object.entries(definitions || {}).filter(([id, definition]) => matchesSearch({ id, ...definition }));
   $("#typeGrid").innerHTML = entries.map(([id, definition]) => {
-    const props = Object.entries(definition.properties || {});
+    const props = state.modelKind === "action"
+      ? Object.keys(definition.inputs || {}).map((id) => [id, {}])
+      : Object.entries(definition.properties || {});
     const endpoints = state.modelKind === "relation" && (definition.from_types?.length || definition.to_types?.length) ? `${(definition.from_types || ["*"]).join(", ")} → ${(definition.to_types || ["*"]).join(", ")}` : "";
+    const availability = state.modelKind === "action"
+      ? (definition.available_on?.length ? `适用于 ${definition.available_on.join(", ")}` : "全局操作")
+      : "";
     return `<article class="type-card" data-type-id="${escapeAttr(id)}">
-      <div class="type-card-header"><div><span class="type-id">${escapeHtml(id)}</span><h3>${escapeHtml(definition.name)}</h3></div><span class="usage-badge">${usage[id]?.count || 0} 条数据</span></div>
+      <div class="type-card-header"><div><span class="type-id">${escapeHtml(id)}</span><h3>${escapeHtml(definition.name)}</h3></div>${state.modelKind === "action" ? `<span class="action-card-icon"><i data-lucide="${actionIcon(definition.icon)}"></i></span>` : `<span class="usage-badge">${usage[id]?.count || 0} 条数据</span>`}</div>
       <p>${escapeHtml(definition.description)}</p>
       ${endpoints ? `<div class="property-list endpoint-types"><span>${escapeHtml(endpoints)}</span></div>` : ""}
+      ${availability ? `<div class="property-list endpoint-types"><span>${escapeHtml(availability)}</span></div>` : ""}
       <div class="property-list">${props.slice(0, 5).map(([id, usage]) => `<span>${escapeHtml(id)}${usage?.required ? " *" : ""}</span>`).join("")}</div>
     </article>`;
   }).join("");
   $$(".type-card").forEach((card) => card.addEventListener("click", () => showDetail("model", card.dataset.typeId)));
+  icons();
 }
 
 function showDetail(kind, id) {
   let item;
   if (kind === "object") item = state.data.objects.find((entry) => entry.id === id);
   if (kind === "relation") item = state.data.relations.find((entry) => entry.id === id);
-  if (kind === "model") item = (state.modelKind === "object" ? state.data.model.object_types : state.data.model.relation_types)[id];
+  if (kind === "model") item = (state.modelKind === "object" ? state.data.model.object_types : state.modelKind === "relation" ? state.data.model.relation_types : state.data.model.actions)[id];
   if (!item) return;
   state.selected = { kind, id, item };
   const title = item.name || item.id || id;
-  $("#detailEyebrow").textContent = kind === "model" ? `${state.modelKind === "object" ? "对象" : "关系"}类型` : `${kind === "object" ? "对象" : "关系"}详情`;
+  $("#detailEyebrow").textContent = kind === "model" ? ({ object: "对象类型", relation: "关系类型", action: "业务操作" }[state.modelKind]) : `${kind === "object" ? "对象" : "关系"}详情`;
   $("#detailTitle").textContent = title;
   $("#detailBody").innerHTML = detailMarkup(kind, id, item);
+  $("#contextActionBtn").classList.toggle("hidden", kind !== "object");
   $("#detailDrawer").classList.add("open");
   $("#scrim").classList.remove("hidden");
   updateAgentContext();
@@ -245,7 +328,8 @@ function showDetail(kind, id) {
 
 function detailMarkup(kind, id, item) {
   if (kind === "model") {
-    return detailSection("类型定义", { type: id, ...item }) + `<div class="detail-section"><h3>设计边界</h3><p class="muted-text">该定义是用户业务词汇，不会增加新的本体概念。Object / Relation 的结构保持不变。</p></div>`;
+    const title = state.modelKind === "action" ? "操作定义" : "类型定义";
+    return detailSection(title, { id, ...item }) + `<div class="detail-section"><h3>设计边界</h3><p class="muted-text">${state.modelKind === "action" ? "业务操作生成 Object / Relation 变更，但自身不进入经营关系图。" : "该定义是用户业务词汇，不会增加新的本体概念。Object / Relation 的结构保持不变。"}</p></div>`;
   }
   const links = state.data.relations.filter((rel) => rel.from === id || rel.to === id);
   const index = objectIndex();
@@ -270,6 +354,182 @@ function closeDetail() { $("#detailDrawer").classList.remove("open"); $("#scrim"
 function closeOverlays() { closeDetail(); closeAgent(); }
 function openAgent() { $(".app-shell").classList.remove("agent-collapsed"); $("#agentPanel").classList.add("open"); if (window.innerWidth <= 1180) $("#scrim").classList.remove("hidden"); }
 function closeAgent() { $("#agentPanel").classList.remove("open"); if (window.innerWidth > 1180) $(".app-shell").classList.add("agent-collapsed"); if (!$("#detailDrawer").classList.contains("open")) $("#scrim").classList.add("hidden"); }
+
+async function openActionLauncher(contextId = "") {
+  state.actionContextId = contextId;
+  state.currentAction = null;
+  $("#actionDialogTitle").textContent = "选择业务操作";
+  $("#actionForm").classList.add("hidden");
+  $("#actionCatalog").classList.remove("hidden");
+  $("#actionCatalog").innerHTML = '<div class="action-loading"><i data-lucide="loader-circle"></i><span>正在读取业务操作</span></div>';
+  $("#actionDialog").showModal();
+  icons();
+  try {
+    const result = await api("/api/actions/available", {
+      method: "POST",
+      body: JSON.stringify({ context_id: contextId }),
+    });
+    state.availableActions = result.actions || [];
+    const context = result.context;
+    renderActionContext(context);
+    renderActionCatalog();
+  } catch (error) {
+    $("#actionCatalog").innerHTML = `<div class="action-empty"><i data-lucide="circle-x"></i><span>${escapeHtml(error.message)}</span></div>`;
+    icons();
+  }
+}
+
+function renderActionCatalog() {
+  state.currentAction = null;
+  $("#actionDialogTitle").textContent = "选择业务操作";
+  $("#actionForm").classList.add("hidden");
+  const catalog = $("#actionCatalog");
+  catalog.classList.remove("hidden");
+  catalog.innerHTML = state.availableActions.length
+    ? state.availableActions.map((action) => `<button class="action-card" type="button" data-action-id="${escapeAttr(action.id)}">
+        <span class="action-card-icon"><i data-lucide="${actionIcon(action.icon)}"></i></span>
+        <span><strong>${escapeHtml(action.name)}</strong><small>${escapeHtml(action.description)}</small></span>
+        <i data-lucide="chevron-right"></i>
+      </button>`).join("")
+    : '<div class="action-empty"><i data-lucide="circle-slash"></i><span>当前上下文没有可用操作</span></div>';
+  icons();
+}
+
+function handleActionCatalogClick(event) {
+  const button = event.target.closest("[data-action-id]");
+  if (!button) return;
+  const action = state.availableActions.find((item) => item.id === button.dataset.actionId);
+  if (action) openActionForm(action);
+}
+
+function openActionForm(action, initialInputs = {}) {
+  state.currentAction = action;
+  $("#actionDialogTitle").textContent = action.name;
+  $("#actionCatalog").classList.add("hidden");
+  $("#actionForm").classList.remove("hidden");
+  $("#actionFormError").classList.add("hidden");
+  $("#actionFormBody").innerHTML = Object.entries(action.inputs || {})
+    .map(([inputId, definition]) => actionInputField(
+      inputId,
+      definition,
+      Object.prototype.hasOwnProperty.call(initialInputs, inputId) ? initialInputs[inputId] : undefined,
+    ))
+    .join("");
+  icons();
+}
+
+function actionInputField(inputId, definition, initialValue = undefined) {
+  const property = definition.property ? propertyDefinitions()[definition.property] : null;
+  const valueType = property?.type || definition.type || (definition.object_types ? "object" : "string");
+  const value = initialValue === undefined ? definition.default : initialValue;
+  const label = definition.name || property?.name || inputId;
+  const required = definition.required === true;
+  const requiredLabel = required ? " <em>*</em>" : "";
+  const requiredAttr = required ? "required" : "";
+  const hint = property?.description ? `<small>${escapeHtml(property.description)}</small>` : "";
+  const attrs = `class="field action-input ${valueType === "money" || valueType === "json" || valueType === "object" ? "full" : ""}" data-action-input="${escapeAttr(inputId)}" data-value-type="${escapeAttr(valueType)}"`;
+  if (valueType === "object") {
+    const options = (state.data?.objects || []).filter((item) => definition.object_types.includes(item.type));
+    const choices = options.map((item, index) => `<label class="object-choice"><input type="radio" name="action_${escapeAttr(inputId)}" value="${escapeAttr(item.id)}" ${required && index === 0 ? "required" : ""} ${value === item.id ? "checked" : ""}><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(typeNames()[item.type]?.name || item.type)} · ${escapeHtml(item.id)}</small></span><i data-lucide="check"></i></label>`).join("");
+    return `<div ${attrs}><label>${escapeHtml(label)}${requiredLabel}</label><div class="object-choice-list">${choices || '<span class="muted-text">没有符合类型的对象</span>'}</div></div>`;
+  }
+  if (valueType === "money") {
+    const amount = value?.amount ?? "";
+    const currency = value?.currency || "CNY";
+    return `<div ${attrs}><label>${escapeHtml(label)}${requiredLabel}</label><div class="money-property-grid"><input data-action-value type="number" step="any" value="${escapeAttr(amount)}" placeholder="0" ${requiredAttr}><input data-action-currency type="text" value="${escapeAttr(currency)}" maxlength="3" pattern="[A-Z]{3}" aria-label="币种"></div>${hint}</div>`;
+  }
+  if (valueType === "boolean") {
+    return `<div ${attrs}><label class="boolean-action-input"><input data-action-value type="checkbox" ${value === true ? "checked" : ""}><span>${escapeHtml(label)}${requiredLabel}</span></label>${hint}</div>`;
+  }
+  const defaultValue = value ?? "";
+  const inputType = { number: "number", date: "date", period: "month" }[valueType] || "text";
+  const control = valueType === "json"
+    ? `<textarea data-action-value placeholder='["customer"]' ${requiredAttr}>${defaultValue === "" ? "" : escapeHtml(JSON.stringify(defaultValue, null, 2))}</textarea>`
+    : `<input data-action-value type="${inputType}" value="${escapeAttr(defaultValue)}" ${valueType === "number" ? 'step="any"' : ""} ${requiredAttr}>`;
+  return `<div ${attrs}><label>${escapeHtml(label)}${requiredLabel}</label>${control}${hint}</div>`;
+}
+
+async function submitAction(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!form.reportValidity() || !state.currentAction) return;
+  try {
+    const inputs = buildActionInputs(state.currentAction, form);
+    const preview = await api("/api/actions/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        action_id: state.currentAction.id,
+        inputs,
+        context_id: state.actionContextId,
+      }),
+    });
+    state.previewMode = "action";
+    state.preview = preview;
+    state.pendingOperations = preview.operations || [];
+    $("#changeCount").textContent = state.pendingOperations.length;
+    closeActionDialog();
+    renderChangePreview();
+    $("#changeDialog").showModal();
+  } catch (error) {
+    $("#actionFormError").textContent = error.message;
+    $("#actionFormError").classList.remove("hidden");
+  }
+}
+
+function buildActionInputs(action, form) {
+  const result = {};
+  Object.entries(action.inputs || {}).forEach(([inputId]) => {
+    const row = $(`[data-action-input="${CSS.escape(inputId)}"]`, form);
+    const valueType = row.dataset.valueType;
+    if (valueType === "object") {
+      const selected = $('input[type="radio"]:checked', row);
+      if (selected) result[inputId] = selected.value;
+      return;
+    }
+    const input = $("[data-action-value]", row);
+    if (valueType === "boolean") {
+      result[inputId] = input.checked;
+      return;
+    }
+    if (!input || input.value === "") return;
+    if (valueType === "money") {
+      result[inputId] = {
+        amount: Number(input.value),
+        currency: $("[data-action-currency]", row).value.trim().toUpperCase(),
+      };
+    } else if (valueType === "number") {
+      result[inputId] = Number(input.value);
+    } else if (valueType === "json") {
+      try { result[inputId] = JSON.parse(input.value); }
+      catch { throw new Error(`${inputId} 必须是有效的 JSON`); }
+    } else {
+      result[inputId] = input.value;
+    }
+  });
+  return result;
+}
+
+function renderActionContext(context) {
+  const contextElement = $("#actionContext");
+  contextElement.classList.toggle("hidden", !context);
+  contextElement.innerHTML = context
+    ? `<i data-lucide="focus"></i><span>${escapeHtml(context.name)} · ${escapeHtml(typeNames()[context.type]?.name || context.type)}</span>`
+    : "";
+}
+
+function openPresentedActionForm(payload) {
+  if (payload?.kind !== "action_form" || !payload.action?.id) return;
+  state.actionContextId = payload.context_id || "";
+  state.availableActions = [payload.action];
+  renderActionContext(payload.context || null);
+  const dialog = $("#actionDialog");
+  if (!dialog.open) dialog.showModal();
+  openActionForm(payload.action, payload.initial_inputs || {});
+}
+
+function closeActionDialog() {
+  if ($("#actionDialog").open) $("#actionDialog").close();
+}
 
 function openEditor(kind) {
   const definitions = kind === "object" ? objectTypeOptions() : relationTypeOptions();
@@ -565,6 +825,7 @@ function buildModelOperations(values, form) {
 }
 
 async function previewOperations(operations) {
+  state.previewMode = "changeset";
   state.pendingOperations = operations;
   $("#changeCount").textContent = operations.length;
   try {
@@ -576,23 +837,52 @@ async function previewOperations(operations) {
 
 function renderChangePreview() {
   const preview = state.preview;
+  const isAction = state.previewMode === "action";
+  $("#changeEyebrow").textContent = isAction ? "业务操作" : "ChangeSet";
+  $("#changeTitle").textContent = isAction ? `确认${preview.action?.name || "业务操作"}` : "确认本次变更";
+  const outcome = $("#businessOutcome");
+  outcome.classList.toggle("hidden", !isAction);
+  outcome.innerHTML = isAction
+    ? `<i data-lucide="${actionIcon(preview.action?.icon)}"></i><div><strong>${escapeHtml(preview.summary || preview.action?.name)}</strong>${preview.context ? `<span>当前对象：${escapeHtml(preview.context.name)} · ${escapeHtml(preview.context.id)}</span>` : ""}</div>`
+    : "";
   $("#changeSummary").innerHTML = (preview.changes || []).map((text) => `<div><i data-lucide="plus-circle"></i><span>${escapeHtml(text)}</span></div>`).join("");
   $("#changeCode").textContent = JSON.stringify(state.pendingOperations, null, 2);
   const box = $("#validationBox");
   box.classList.toggle("invalid", !preview.valid);
   box.innerHTML = preview.valid ? `<i data-lucide="shield-check"></i><span>结构与经营约束校验通过，将更新 ${preview.changed_files.join("、")}。</span>` : `<i data-lucide="circle-x"></i><span>${escapeHtml(preview.errors.join("\n"))}</span>`;
+  $("#actionReasonField").classList.toggle("hidden", !isAction);
+  if (!isAction) $("#actionReason").value = "";
   $("#applyChangesBtn").disabled = !preview.valid;
+  $("#applyChangesBtn").innerHTML = isAction ? '<i data-lucide="check"></i>确认执行' : '<i data-lucide="check"></i>应用变更';
   icons();
+}
+
+function returnFromChanges() {
+  $("#changeDialog").close();
+  if (state.previewMode === "action" && state.currentAction) {
+    $("#actionDialog").showModal();
+    openActionForm(state.currentAction);
+  }
 }
 
 async function applyPendingChanges() {
   if (!state.pendingOperations.length || !state.preview?.valid) return;
   const button = $("#applyChangesBtn"); button.disabled = true;
   try {
-    const result = await api("/api/changes/apply", { method: "POST", body: JSON.stringify({ operations: state.pendingOperations }) });
+    const isAction = state.previewMode === "action";
+    const result = isAction
+      ? await api("/api/actions/apply", {
+          method: "POST",
+          body: JSON.stringify({
+            preview_token: state.preview.preview_token,
+            reason: $("#actionReason").value.trim(),
+            actor: "web_user",
+          }),
+        })
+      : await api("/api/changes/apply", { method: "POST", body: JSON.stringify({ operations: state.pendingOperations }) });
     $("#changeDialog").close();
-    state.pendingOperations = []; state.preview = null; $("#changeCount").textContent = "0";
-    toast(result.changes.join("；"));
+    state.pendingOperations = []; state.preview = null; state.previewMode = "changeset"; $("#changeCount").textContent = "0";
+    toast(result.summary || result.changes.join("；"));
     await loadData();
   } catch (error) { toast(error.message, true); button.disabled = false; }
 }
@@ -625,7 +915,7 @@ function contextualMessage(message) {
 
 async function streamAgent(path, payload) {
   state.agentBusy = true; $(".send-button").disabled = true;
-  let assistantBody = null;
+  let assistantBody = null; let assistantMarkdown = ""; let toolGroup = null; let waitingForConfirmation = false;
   try {
     const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     if (!response.ok) throw new Error(await response.text());
@@ -638,13 +928,23 @@ async function streamAgent(path, payload) {
         if (!line.trim()) continue;
         const event = JSON.parse(line);
         if (event.type === "text") {
+          const shouldFollow = isAgentNearBottom();
           if (!assistantBody) assistantBody = appendMessage("assistant", "");
-          assistantBody.querySelector("p").textContent += event.content || "";
-          scrollAgent();
+          assistantMarkdown += event.content || "";
+          renderAssistantMarkdown(assistantBody, assistantMarkdown);
+          scrollAgent(shouldFollow);
         } else if (event.type === "confirmation_required" || event.type === "question") {
+          waitingForConfirmation = true;
           appendConfirmation(event);
         } else if (event.type === "tool_call" || event.type === "tool_result") {
-          appendToolEvent(event);
+          toolGroup = appendToolEvent(event, toolGroup);
+        } else if (event.type === "presentation" && event.name === "ui_open_action_form") {
+          if (assistantBody) {
+            assistantBody.closest(".message")?.remove();
+            assistantBody = null;
+            assistantMarkdown = "";
+          }
+          openPresentedActionForm(event.payload);
         } else if (event.type === "error") {
           appendMessage("assistant", event.message || "Agent 暂不可用。");
         }
@@ -653,26 +953,69 @@ async function streamAgent(path, payload) {
     }
     if (path.includes("confirm") && payload.approved) await loadData();
   } catch (error) { appendMessage("assistant", `无法完成请求：${error.message}`); }
-  finally { state.agentBusy = false; $(".send-button").disabled = false; }
+  finally {
+    if (!waitingForConfirmation) collapseToolEvents();
+    state.agentBusy = false;
+    $(".send-button").disabled = false;
+  }
 }
 
 function appendMessage(role, text) {
   const wrapper = document.createElement("div"); wrapper.className = `message ${role}`;
-  wrapper.innerHTML = role === "assistant" ? `<div class="message-avatar"><i data-lucide="sparkles"></i></div><div class="message-body"><p>${escapeHtml(text)}</p></div>` : `<div class="message-body"><p>${escapeHtml(text)}</p></div>`;
-  $("#agentMessages").append(wrapper); icons(); scrollAgent(); return wrapper.querySelector(".message-body");
+  wrapper.innerHTML = role === "assistant" ? '<div class="message-avatar"><i data-lucide="sparkles"></i></div><div class="message-body markdown-content"></div>' : `<div class="message-body"><p>${escapeHtml(text)}</p></div>`;
+  const body = wrapper.querySelector(".message-body");
+  if (role === "assistant") renderAssistantMarkdown(body, text);
+  $("#agentMessages").append(wrapper); icons(); scrollAgent(true); return body;
 }
 
-function appendToolEvent(event) {
-  const element = document.createElement("div"); element.className = "tool-event";
-  element.textContent = event.type === "tool_call" ? `调用 ${event.name}` : `${event.name} 已返回${event.blocked ? "（已阻止）" : ""}`;
-  $("#agentMessages").append(element); scrollAgent();
+function renderAssistantMarkdown(container, markdown) {
+  if (!window.marked || !window.DOMPurify) {
+    container.innerHTML = `<p>${escapeHtml(markdown).replace(/\n/g, "<br>")}</p>`;
+    return;
+  }
+  const parsed = window.marked.parse(markdown, { gfm: true, breaks: true });
+  container.innerHTML = window.DOMPurify.sanitize(parsed, { USE_PROFILES: { html: true } });
+  container.querySelectorAll("a[href]").forEach((link) => {
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+  });
+}
+
+function appendToolEvent(event, group = null) {
+  if (!group || !group.isConnected) {
+    group = document.createElement("details");
+    group.className = "tool-events";
+    group.open = true;
+    group.innerHTML = '<summary><i data-lucide="wrench"></i><span class="tool-event-summary-label">正在调用工具</span><b class="tool-event-count">0</b></summary><div class="tool-event-list"></div>';
+    $("#agentMessages").append(group);
+  }
+  const name = event.name || event.tool_name || "工具";
+  const element = document.createElement("div");
+  element.className = `tool-event ${event.type === "tool_result" ? "result" : "call"}`;
+  element.innerHTML = event.type === "tool_call"
+    ? `<i data-lucide="play"></i><span>调用 ${escapeHtml(name)}</span>`
+    : `<i data-lucide="${event.blocked ? "circle-x" : "check"}"></i><span>${escapeHtml(name)} 已返回${event.blocked ? "（已阻止）" : ""}</span>`;
+  $(".tool-event-list", group).append(element);
+  const count = $$(".tool-event", group).length;
+  $(".tool-event-count", group).textContent = count;
+  $(".tool-event-summary-label", group).textContent = "正在调用工具";
+  icons();
+  scrollAgent(true);
+  return group;
+}
+
+function collapseToolEvents() {
+  $$(".tool-events[open]", $("#agentMessages")).forEach((group) => {
+    group.open = false;
+    $(".tool-event-summary-label", group).textContent = "工具调用已完成";
+  });
 }
 
 function appendConfirmation(event) {
   const wrapper = document.createElement("div"); wrapper.className = "message assistant";
   const question = event.type === "question" ? event.question : `Agent 请求执行 ${event.tool_name}`;
   wrapper.innerHTML = `<div class="message-avatar"><i data-lucide="shield-check"></i></div><div class="message-body confirmation-card"><strong>${escapeHtml(question)}</strong><pre>${escapeHtml(JSON.stringify(event.args || event.options || {}, null, 2))}</pre><div class="confirmation-actions"><button class="confirm-deny" data-agent-confirm="false">取消</button><button class="confirm-approve" data-agent-confirm="true">确认执行</button></div></div>`;
-  $("#agentMessages").append(wrapper); icons(); scrollAgent();
+  $("#agentMessages").append(wrapper); icons(); scrollAgent(true);
 }
 
 async function handleAgentClick(event) {
@@ -686,10 +1029,12 @@ function askAboutSelection() { if (!state.selected) return; closeDetail(); openA
 function clearAgentContext() { state.selected = null; updateAgentContext(); }
 function updateAgentContext() { $("#agentContext span").textContent = state.selected ? `当前上下文：${state.selected.id}` : "当前上下文：全部经营对象"; }
 function autoGrowTextarea(event) { const input = event.target; input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 160)}px`; }
-function scrollAgent() { const messages = $("#agentMessages"); messages.scrollTop = messages.scrollHeight; }
+function isAgentNearBottom() { const messages = $("#agentMessages"); return messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80; }
+function scrollAgent(force = false) { const messages = $("#agentMessages"); if (force || isAgentNearBottom()) messages.scrollTop = messages.scrollHeight; }
 
 function endpoint(item) { return `<div class="endpoint"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.id)} · ${escapeHtml(typeNames()[item.type]?.name || item.type)}</span></div>`; }
-function typeIcon(type) { if (["revenue", "cash_receipt"].includes(type)) return "trending-up"; if (["cost", "cash_payment"].includes(type)) return "trending-down"; if (["contract", "receivable", "payable"].includes(type)) return "file-text"; if (type === "enterprise") return "building-2"; if (["customer", "supplier", "employee"].includes(type)) return "user-round"; if (type === "project") return "briefcase-business"; return "box"; }
+function actionIcon(icon) { return String(icon || "play").replaceAll("_", "-"); }
+function typeIcon(type) { if (["revenue", "cash_receipt"].includes(type)) return "trending-up"; if (["cost", "cash_payment"].includes(type)) return "trending-down"; if (["contract", "receivable", "payable", "evidence"].includes(type)) return "file-text"; if (["party", "department"].includes(type)) return "building-2"; if (type === "resource") return "user-round"; if (["project", "opportunity"].includes(type)) return "briefcase-business"; return "box"; }
 function statusPill(status) { return status ? `<span class="status-pill ${escapeAttr(status)}">${escapeHtml(status)}</span>` : '<span class="muted-text">-</span>'; }
 function money(amount, currency = "CNY") { if (amount === null || amount === undefined || Number.isNaN(Number(amount))) return "-"; return new Intl.NumberFormat("zh-CN", { style: "currency", currency, maximumFractionDigits: 0 }).format(Number(amount)); }
 function formatValue(value) { return typeof value === "object" ? JSON.stringify(value, null, 2) : String(value ?? "-"); }

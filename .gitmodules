@@ -1,3 +1,6 @@
 [submodule "oag-agent"]
 	path = oag-agent
 	url = git@github.com:caochun/oag-agent.git
+[submodule "oag-domains"]
+	path = oag-domains
+	url = git@github.com:caochun/oag-domains.git
