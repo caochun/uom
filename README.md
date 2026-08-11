@@ -1,6 +1,6 @@
 # OMS
 
-OMS 是面向 OAG Agent 的高速联网收费对象关系工作台。它把路网、车辆与通行介质、通行交易、拆分清分、
+OMS 是面向 OAG Agent 的高速联网收费对象关系工作台。它把路网、车辆与 ETC 设备、临时通行介质、通行交易、拆分清分、
 客服资金、费率和运行控制放在同一张可追溯业务图中。
 
 系统只有两个固定本体概念：
@@ -25,6 +25,21 @@ PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --env-file .env -- p
 ```
 
 打开 <http://127.0.0.1:8765>。LLM 配置写在根目录 `.env` 中；没有 LLM 配置时，图数据、模型和表单仍可使用。
+
+## 用户级 systemd 服务
+
+部署目录为 `~/Develop/highway-oms` 时，可安装仓库中的用户服务：
+
+```bash
+install -Dm644 deploy/highway-oms.service ~/.config/systemd/user/highway-oms.service
+systemctl --user daemon-reload
+systemctl --user enable --now highway-oms.service
+systemctl --user status highway-oms.service
+journalctl --user -u highway-oms.service -f
+```
+
+服务监听 `0.0.0.0:5678`。要在用户未登录时随系统启动，还需确保 `loginctl show-user "$USER" -p Linger`
+返回 `Linger=yes`。
 
 ## 目录
 

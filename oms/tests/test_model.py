@@ -10,6 +10,7 @@ OMS_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(OMS_ROOT / "scripts"))
 
 from validate_model import ModelValidator, load_data, load_yaml, validate_model  # noqa: E402
+from seed_shandong import build_graph  # noqa: E402
 
 
 class OmsModelTest(unittest.TestCase):
@@ -80,6 +81,7 @@ class OmsModelTest(unittest.TestCase):
                     "name": "PASS-001",
                     "properties": {
                         "reference_no": "PASS-001",
+                        "mode": "etc",
                         "occurred_on": "2026-08-01",
                     },
                 },
@@ -232,9 +234,9 @@ class OmsModelTest(unittest.TestCase):
         self.assertFalse((OMS_ROOT / "metamodel.yaml").exists())
 
     def test_v3_model_keeps_the_core_domains(self) -> None:
-        self.assertEqual(35, len(self.business_model["object_types"]))
+        self.assertEqual(41, len(self.business_model["object_types"]))
         self.assertEqual(4, len(self.business_model["relation_types"]))
-        self.assertEqual(27, len(self.business_model["actions"]))
+        self.assertEqual(37, len(self.business_model["actions"]))
         self.assertEqual(
             {"contains", "references", "associates", "derives"},
             set(self.business_model["relation_types"]),
@@ -242,6 +244,32 @@ class OmsModelTest(unittest.TestCase):
         self.assertIn("passage", self.business_model["object_types"])
         self.assertIn("clearing_result", self.business_model["object_types"])
         self.assertIn("account_transaction", self.business_model["object_types"])
+        self.assertNotIn("passage_medium", self.business_model["object_types"])
+        self.assertNotIn("account", self.business_model["object_types"])
+        self.assertNotIn("control_entry", self.business_model["object_types"])
+        for type_id in ("obu", "etc_card", "cpc_card", "user_account", "card_account"):
+            self.assertIn(type_id, self.business_model["object_types"])
+
+    def test_shandong_seed_is_valid_and_reuses_cpc_by_passage(self) -> None:
+        objects, relations = build_graph()
+        result = self.validate(
+            objects={"schema": "oms.data.objects.v2", "objects": objects},
+            relations={"schema": "oms.data.relations.v2", "relations": relations},
+        )
+        self.assertEqual([], result.errors)
+        cpc_roles = [
+            item.get("properties", {}).get("role")
+            for item in relations
+            if item.get("to") == "cpc_card:sd_001"
+        ]
+        self.assertEqual(2, cpc_roles.count("used_cpc_card"))
+        self.assertEqual(2, cpc_roles.count("issued_cpc_card"))
+        self.assertEqual(2, cpc_roles.count("recovered_cpc_card"))
+        self.assertFalse(any(
+            item.get("from", "").startswith("vehicle:")
+            and item.get("to") == "cpc_card:sd_001"
+            for item in relations
+        ))
 
     def test_business_model_and_property_types_are_validated(self) -> None:
         self.assertEqual("money", self.business_model["property_definitions"]["amount"]["type"])
@@ -253,8 +281,21 @@ class OmsModelTest(unittest.TestCase):
     def test_action_definitions_compile_only_changeset_effects(self) -> None:
         actions = self.business_model["actions"]
         self.assertEqual(["toll_road"], actions["register_section"]["available_on"])
-        self.assertEqual(["vehicle"], actions["record_passage"]["available_on"])
+        self.assertEqual(["vehicle"], actions["record_etc_passage"]["available_on"])
+        self.assertEqual(["vehicle"], actions["record_cpc_passage"]["available_on"])
         self.assertEqual(["split_record"], actions["produce_clearing_result"]["available_on"])
+        self.assertEqual(
+            ["cpc_card"],
+            actions["record_cpc_passage"]["inputs"]["cpc_card_id"]["object_types"],
+        )
+        self.assertEqual(
+            ["etc_card"],
+            actions["record_consumption"]["inputs"]["card_id"]["object_types"],
+        )
+        self.assertEqual(
+            ["card_account"],
+            actions["record_consumption"]["inputs"]["account_id"]["object_types"],
+        )
         invalid_model = copy.deepcopy(self.business_model)
         invalid_model["actions"]["register_party"]["effects"].append({"send_email": {}})
         result = self.validate(model=invalid_model)

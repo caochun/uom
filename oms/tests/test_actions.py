@@ -41,7 +41,8 @@ class OmsActionServiceTest(unittest.TestCase):
         self.assertEqual(
             {
                 "register_party", "register_user", "register_toll_road",
-                "publish_fee_module", "add_control_entry",
+                "register_cpc_card", "register_paper_ticket",
+                "publish_fee_module", "register_operating_parameter",
             },
             global_ids,
         )
@@ -57,7 +58,7 @@ class OmsActionServiceTest(unittest.TestCase):
             for item in self.actions.get_available_actions("road:test")["actions"]
         }
         self.assertIn("register_section", context_ids)
-        self.assertNotIn("record_passage", context_ids)
+        self.assertNotIn("record_etc_passage", context_ids)
 
     def test_action_form_accepts_partial_prefill_without_required_inputs(self) -> None:
         prepared = self.actions.prepare_action_form(
@@ -95,7 +96,7 @@ class OmsActionServiceTest(unittest.TestCase):
         self.assertEqual((road_id, section["operations"][0]["record"]["id"]), (relation["from"], relation["to"]))
         self.assertEqual("contains", relation["type"])
 
-    def test_passage_action_creates_transactions_and_station_references(self) -> None:
+    def test_cpc_passage_records_temporary_issue_use_and_recovery(self) -> None:
         self.insert_object({
             "id": "vehicle:test",
             "type": "vehicle",
@@ -109,11 +110,18 @@ class OmsActionServiceTest(unittest.TestCase):
                 "name": name,
                 "properties": {"code": station_id},
             })
+        self.insert_object({
+            "id": "cpc:test",
+            "type": "cpc_card",
+            "name": "测试 CPC 卡",
+            "properties": {"code": "CPC-001", "status": "available"},
+        })
 
         preview = self.actions.preview_action(
-            "record_passage",
+            "record_cpc_passage",
             {
                 "reference_no": "PASS-001",
+                "cpc_card_id": "cpc:test",
                 "entry_station_id": "station:entry",
                 "exit_station_id": "station:exit",
                 "entry_on": "2026-08-10",
@@ -123,7 +131,7 @@ class OmsActionServiceTest(unittest.TestCase):
             "vehicle:test",
         )
         self.assertTrue(preview["valid"])
-        self.assertEqual(8, len(preview["operations"]))
+        self.assertEqual(11, len(preview["operations"]))
         self.assertEqual(
             {"entry", "exit"},
             {
@@ -133,11 +141,81 @@ class OmsActionServiceTest(unittest.TestCase):
                 and operation["record"]["type"] == "toll_transaction"
             },
         )
+        passage = next(
+            operation["record"]
+            for operation in preview["operations"]
+            if operation["action"] == "create_object"
+            and operation["record"]["type"] == "passage"
+        )
+        self.assertEqual("mtc", passage["properties"]["mode"])
+        roles = {
+            operation["record"].get("properties", {}).get("role")
+            for operation in preview["operations"]
+            if operation["action"] == "create_relation"
+        }
+        self.assertTrue(
+            {"used_cpc_card", "issued_cpc_card", "recovered_cpc_card"}.issubset(roles)
+        )
+        cpc_relations = [
+            operation["record"]
+            for operation in preview["operations"]
+            if operation["action"] == "create_relation"
+            and operation["record"]["to"] == "cpc:test"
+        ]
+        self.assertEqual(3, len(cpc_relations))
+        self.assertNotIn("vehicle:test", {item["from"] for item in cpc_relations})
         self.actions.apply_action(preview["preview_token"])
         self.assertEqual(
             1,
             len([item for item in self.workspace.list_objects() if item["type"] == "passage"]),
         )
+
+    def test_etc_consumption_rejects_cpc_card_and_user_account(self) -> None:
+        for record in (
+            {
+                "id": "passage:test",
+                "type": "passage",
+                "name": "测试通行",
+                "properties": {
+                    "reference_no": "PASS-001",
+                    "mode": "etc",
+                    "occurred_on": "2026-08-10",
+                },
+            },
+            {
+                "id": "cpc:test",
+                "type": "cpc_card",
+                "name": "测试 CPC 卡",
+                "properties": {"code": "CPC-001"},
+            },
+            {
+                "id": "account:user",
+                "type": "user_account",
+                "name": "用户资金账户",
+                "properties": {"reference_no": "UA-001"},
+            },
+        ):
+            self.insert_object(record)
+
+        inputs = {
+            "reference_no": "CONSUME-001",
+            "card_id": "cpc:test",
+            "account_id": "account:user",
+            "amount": {"amount": 35, "currency": "CNY"},
+            "occurred_on": "2026-08-10",
+        }
+        with self.assertRaisesRegex(ChangeValidationError, "对象类型必须是 etc_card"):
+            self.actions.preview_action("record_consumption", inputs, "passage:test")
+
+        self.insert_object({
+            "id": "card:test",
+            "type": "etc_card",
+            "name": "测试 ETC 卡",
+            "properties": {"code": "ETC-001"},
+        })
+        inputs["card_id"] = "card:test"
+        with self.assertRaisesRegex(ChangeValidationError, "对象类型必须是 card_account"):
+            self.actions.preview_action("record_consumption", inputs, "passage:test")
 
 
 if __name__ == "__main__":

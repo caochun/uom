@@ -1039,12 +1039,16 @@ function actionIcon(icon) { return String(icon || "play").replaceAll("_", "-"); 
 function typeIcon(type) {
   if (["toll_road", "section", "toll_interval", "toll_station", "toll_plaza", "toll_lane", "toll_gantry"].includes(type)) return "route";
   if (["vehicle", "passage"].includes(type)) return "car-front";
-  if (type === "passage_medium") return "credit-card";
+  if (type === "obu") return "radio-tower";
+  if (type === "etc_card") return "credit-card";
+  if (type === "cpc_card") return "contact";
+  if (type === "paper_ticket") return "ticket";
   if (["toll_transaction", "vehicle_id_record", "consumption_detail"].includes(type)) return "scan-line";
   if (["split_record", "clearing_result", "invoice_basis_data"].includes(type)) return "waypoints";
-  if (["account", "account_transaction", "bill", "bill_settlement"].includes(type)) return "wallet-cards";
+  if (["user_account", "card_account", "account_transaction", "bill", "bill_settlement"].includes(type)) return "wallet-cards";
+  if (["stock_account", "stock_movement"].includes(type)) return "warehouse";
   if (type === "party") return "building-2";
-  if (["fee_module", "fee_rule", "control_entry"].includes(type)) return "shield-check";
+  if (["fee_module", "fee_rule", "control_record", "operating_parameter"].includes(type)) return "shield-check";
   return "box";
 }
 function statusPill(status) { return status ? `<span class="status-pill ${escapeAttr(status)}">${escapeHtml(status)}</span>` : '<span class="muted-text">-</span>'; }

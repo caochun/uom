@@ -1,0 +1,20 @@
+[Unit]
+Description=Highway OMS object-relation workbench
+ConditionPathExists=%h/Develop/highway-oms/app/server.py
+ConditionPathExists=%h/Develop/highway-oms/.env
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Develop/highway-oms
+Environment="PYTHONPATH=%h/Develop/highway-oms/oag-agent:%h/Develop/highway-oms"
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+ExecStartPre=%h/.local/bin/uv run --project %h/Develop/highway-oms/oag-agent -- python %h/Develop/highway-oms/oms/scripts/validate_model.py --root %h/Develop/highway-oms/oms
+ExecStart=%h/.local/bin/uv run --project %h/Develop/highway-oms/oag-agent --env-file %h/Develop/highway-oms/.env -- python -m app.server --host 0.0.0.0 --port 5678
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+SyslogIdentifier=highway-oms
+
+[Install]
+WantedBy=default.target
