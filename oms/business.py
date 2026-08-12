@@ -15,12 +15,16 @@ def get_business_overview(repository: ObjectRepository) -> dict[str, Any]:
     relation_counts = Counter(str(item.get("type", "unknown")) for item in relations)
     amount_totals: dict[str, dict[str, float]] = {}
     for item in objects:
-        money = item.get("properties", {}).get("amount", {})
-        amount, currency = money.get("amount"), money.get("currency")
-        if isinstance(amount, (int, float)) and isinstance(currency, str):
-            object_type = str(item.get("type", "unknown"))
-            totals = amount_totals.setdefault(object_type, {})
-            totals[currency] = totals.get(currency, 0.0) + float(amount)
+        properties = item.get("properties", {})
+        for property_name in ("amount", "paid_amount"):
+            money = properties.get(property_name, {})
+            if not isinstance(money, dict):
+                continue
+            amount, currency = money.get("amount"), money.get("currency")
+            if isinstance(amount, (int, float)) and isinstance(currency, str):
+                object_type = str(item.get("type", "unknown"))
+                totals = amount_totals.setdefault(object_type, {})
+                totals[currency] = totals.get(currency, 0.0) + float(amount)
 
     incomplete = find_incomplete_passages(repository)
     return {

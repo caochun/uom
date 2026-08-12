@@ -1,3 +1,12 @@
+function createSessionId() {
+  if (globalThis.crypto?.randomUUID) return `oms-${globalThis.crypto.randomUUID()}`;
+  if (globalThis.crypto?.getRandomValues) {
+    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+    return `oms-${[...bytes].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+  }
+  return `oms-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 const state = {
   data: null,
   view: "objects",
@@ -12,7 +21,9 @@ const state = {
   actionContextId: "",
   availableActions: [],
   currentAction: null,
-  sessionId: `oms-${crypto.randomUUID()}`,
+  spatialRequest: 0,
+  detailMap: null,
+  sessionId: createSessionId(),
   agentBusy: false,
 };
 
@@ -26,7 +37,7 @@ const propertyDefinitions = () => state.data?.model?.property_definitions || {};
 const objectIndex = () => Object.fromEntries((state.data?.objects || []).map((item) => [item.id, item]));
 const relationCount = (id) => (state.data?.relations || []).filter((rel) => rel.from === id || rel.to === id).length;
 const propertyTypeOptions = [
-  ["string", "文本"], ["number", "数值"], ["money", "金额"], ["date", "日期"],
+  ["string", "文本"], ["number", "数值"], ["money", "金额"], ["date", "日期"], ["datetime", "日期时间"],
   ["period", "期间"], ["boolean", "是 / 否"], ["json", "JSON"],
 ];
 
@@ -205,8 +216,9 @@ function renderMetrics() {
 
 function sumObjectMoney(items) {
   return items.reduce((result, item) => {
-    result.amount += Number(item.properties?.amount?.amount || 0);
-    result.currency ||= item.properties?.amount?.currency;
+    const value = item.properties?.paid_amount || item.properties?.amount;
+    result.amount += Number(value?.amount || 0);
+    result.currency ||= value?.currency;
     return result;
   }, { amount: 0, currency: null });
 }
@@ -321,11 +333,13 @@ function showDetail(kind, id) {
   $("#detailEyebrow").textContent = kind === "model" ? ({ object: "对象类型", relation: "关系类型", action: "业务操作" }[state.modelKind]) : `${kind === "object" ? "对象" : "关系"}详情`;
   $("#detailTitle").textContent = title;
   $("#detailBody").innerHTML = detailMarkup(kind, id, item);
+  $("#detailDrawer").classList.remove("spatial");
   $("#contextActionBtn").classList.toggle("hidden", kind !== "object");
   $("#detailDrawer").classList.add("open");
   $("#scrim").classList.remove("hidden");
   updateAgentContext();
   icons();
+  if (kind === "object" && isSpatialCandidate(item)) loadSpatialView(id);
 }
 
 function detailMarkup(kind, id, item) {
@@ -340,11 +354,177 @@ function detailMarkup(kind, id, item) {
     const other = index[outbound ? rel.to : rel.from];
     return `<div class="relation-link"><i data-lucide="${outbound ? "arrow-right" : "arrow-left"}"></i><div><strong>${escapeHtml(relationNames()[rel.type]?.name || rel.type)} · ${escapeHtml(other?.name || (outbound ? rel.to : rel.from))}</strong><span>${escapeHtml(rel.id)}</span></div></div>`;
   }).join("") : `<span class="muted-text">暂无关系</span>`;
-  return detailSection("基本信息", Object.fromEntries(Object.entries(item).filter(([key]) => !["properties", "tags", "source_refs"].includes(key))))
+  return spatialPlaceholder(item)
+    + detailSection("基本信息", Object.fromEntries(Object.entries(item).filter(([key]) => !["properties", "tags", "source_refs"].includes(key))))
     + detailSection("Properties", item.properties || {})
     + (item.tags?.length ? detailSection("Tags", { tags: item.tags }) : "")
     + (item.source_refs?.length ? detailSection("来源引用", { source_refs: item.source_refs }) : "")
     + `<div class="detail-section"><h3>相邻关系 · ${links.length}</h3><div>${linkMarkup}</div></div>`;
+}
+
+function isSpatialCandidate(item) {
+  const props = item?.properties || {};
+  return (Number.isFinite(props.longitude) && Number.isFinite(props.latitude))
+    || ["toll_road", "section", "toll_interval", "passage"].includes(item?.type);
+}
+
+function spatialPlaceholder(item) {
+  if (!isSpatialCandidate(item)) return "";
+  return `<div class="detail-section spatial-section" id="spatialSection">
+    <div class="spatial-heading"><h3>空间视图</h3><span>正在推导位置...</span></div>
+    <div class="spatial-loading"><i data-lucide="loader-circle"></i><span>正在加载地图</span></div>
+  </div>`;
+}
+
+async function loadSpatialView(objectId) {
+  const request = ++state.spatialRequest;
+  try {
+    const view = await api(`/api/spatial/objects/${encodeURIComponent(objectId)}`);
+    if (request !== state.spatialRequest || state.selected?.id !== objectId) return;
+    if (!view.available) {
+      $("#spatialSection")?.remove();
+      return;
+    }
+    const section = $("#spatialSection");
+    if (!section) return;
+    $("#detailDrawer").classList.add("spatial");
+    section.innerHTML = spatialMarkup(view);
+    bindSpatialEvents(view);
+    icons();
+    await renderDetailMap(view, request);
+  } catch (error) {
+    if (request !== state.spatialRequest) return;
+    $("#spatialSection")?.remove();
+    console.warn("Unable to load spatial view", error);
+  }
+}
+
+function spatialMarkup(view) {
+  const sourceLabel = view.route_source === "amap_route_planning"
+    ? "高德规划推导"
+    : view.derived ? "按业务节点推导" : "对象位置";
+  const events = (view.events || []).map((event, index) => `<button class="passage-event" type="button" data-spatial-point="${index}">
+    <span class="event-node ${escapeAttr(event.stage)}"><i data-lucide="${passageEventIcon(event.stage)}"></i></span>
+    <span class="event-main"><strong>${escapeHtml(event.stage_label)} · ${escapeHtml(event.facility_name)}</strong><small>${escapeHtml(formatEventTime(event.occurred_at))}${event.amount ? ` · ${escapeHtml(money(event.amount.amount, event.amount.currency))}` : ""}</small></span>
+    <i data-lucide="locate-fixed"></i>
+  </button>`).join("");
+  return `<div class="spatial-heading"><h3>${view.mode === "passage" ? "通行路线" : "空间视图"}</h3><span>${escapeHtml(sourceLabel)}</span></div>
+    <div class="detail-map" id="detailMap" aria-label="${view.mode === "passage" ? "通行路线地图" : "对象位置地图"}"><div class="map-loading">正在加载地图...</div></div>
+    ${view.derived ? '<p class="spatial-note"><i data-lucide="info"></i><span>线路是根据收费节点推导的展示结果，不代表车辆 GPS 轨迹或权威路网边界。</span></p>' : ""}
+    ${events ? `<div class="passage-timeline"><h3>通行过程 · ${view.events.length}</h3>${events}</div>` : ""}`;
+}
+
+function bindSpatialEvents(view) {
+  $$("[data-spatial-point]", $("#spatialSection")).forEach((button) => button.addEventListener("click", () => {
+    const point = view.points[Number(button.dataset.spatialPoint)];
+    if (!point || !state.detailMap) return;
+    state.detailMap.setZoomAndCenter(15, [point.longitude, point.latitude], false, 280);
+    $$(".passage-event", $("#spatialSection")).forEach((item) => item.classList.toggle("active", item === button));
+  }));
+}
+
+async function renderDetailMap(view, request) {
+  destroyDetailMap();
+  const container = $("#detailMap");
+  if (!container) return;
+  try {
+    const AMap = await loadAmap();
+    if (request !== state.spatialRequest || !container.isConnected) return;
+    container.innerHTML = "";
+    const map = new AMap.Map(container, {
+      viewMode: "2D",
+      zoom: 11,
+      resizeEnable: true,
+      showLabel: true,
+      mapStyle: "amap://styles/normal",
+    });
+    state.detailMap = map;
+    const overlays = [];
+    (view.lines || []).forEach((line) => {
+      const polyline = new AMap.Polyline({
+        path: line.coordinates,
+        strokeColor: "#156b4a",
+        strokeWeight: view.mode === "passage" ? 7 : 6,
+        strokeOpacity: .88,
+        lineJoin: "round",
+        lineCap: "round",
+        showDir: view.mode === "passage",
+        zIndex: 40,
+      });
+      map.add(polyline);
+      overlays.push(polyline);
+    });
+    (view.points || []).forEach((point, index) => {
+      const marker = new AMap.Marker({
+        position: [point.longitude, point.latitude],
+        anchor: "center",
+        content: mapMarkerMarkup(point, index, view.mode),
+        zIndex: 60 + index,
+        title: point.name,
+      });
+      marker.on("click", () => {
+        map.setZoomAndCenter(15, [point.longitude, point.latitude], false, 250);
+        const eventButton = $(`[data-spatial-point="${index}"]`, $("#spatialSection"));
+        if (eventButton) {
+          $$(".passage-event", $("#spatialSection")).forEach((item) => item.classList.toggle("active", item === eventButton));
+          eventButton.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      });
+      map.add(marker);
+      overlays.push(marker);
+    });
+    if (overlays.length) map.setFitView(overlays, false, [34, 34, 34, 34], view.mode === "point" ? 16 : 14);
+    setTimeout(() => state.detailMap?.resize(), 230);
+  } catch (error) {
+    container.innerHTML = fallbackMapMarkup(view);
+    console.warn("Unable to initialize AMap", error);
+  }
+}
+
+let amapPromise;
+async function loadAmap() {
+  if (window.AMap) return window.AMap;
+  if (amapPromise) return amapPromise;
+  amapPromise = (async () => {
+    const config = await api("/api/map/config");
+    if (!config.enabled || !config.api_key) throw new Error("未配置高德地图 JS API Key");
+    if (config.security_key) window._AMapSecurityConfig = { securityJsCode: config.security_key };
+    await new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(config.api_key)}`;
+      script.onload = resolve;
+      script.onerror = () => reject(new Error("高德地图脚本加载失败"));
+      document.head.appendChild(script);
+    });
+    return window.AMap;
+  })();
+  return amapPromise;
+}
+
+function mapMarkerMarkup(point, index, mode) {
+  const label = mode === "passage" ? (point.label || index + 1) : (point.name || index + 1);
+  return `<div class="oms-map-marker ${escapeAttr(point.role || "location")}"><span>${escapeHtml(String(index + 1))}</span><b>${escapeHtml(label)}</b></div>`;
+}
+
+function fallbackMapMarkup(view) {
+  const points = (view.points || []).map((point, index) => `<span><b>${index + 1}</b>${escapeHtml(point.name)}</span>`).join('<i data-lucide="arrow-right"></i>');
+  return `<div class="map-fallback"><i data-lucide="map-off"></i><strong>底图暂不可用</strong><div>${points}</div></div>`;
+}
+
+function passageEventIcon(stage) {
+  return ({ entry: "log-in", gantry: "scan-line", exit: "log-out" })[stage] || "map-pin";
+}
+
+function formatEventTime(value) {
+  if (!value) return "时间未知";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+}
+
+function destroyDetailMap() {
+  if (state.detailMap) state.detailMap.destroy();
+  state.detailMap = null;
 }
 
 function detailSection(title, values) {
@@ -352,7 +532,12 @@ function detailSection(title, values) {
   return `<div class="detail-section"><h3>${escapeHtml(title)}</h3><div class="detail-list">${rows || '<div class="detail-row"><span>-</span><code>无</code></div>'}</div></div>`;
 }
 
-function closeDetail() { $("#detailDrawer").classList.remove("open"); $("#scrim").classList.add("hidden"); }
+function closeDetail() {
+  state.spatialRequest += 1;
+  destroyDetailMap();
+  $("#detailDrawer").classList.remove("open", "spatial");
+  $("#scrim").classList.add("hidden");
+}
 function closeOverlays() { closeDetail(); closeAgent(); }
 function openAgent() { $(".app-shell").classList.remove("agent-collapsed"); $("#agentPanel").classList.add("open"); if (window.innerWidth <= 1180) $("#scrim").classList.remove("hidden"); }
 function closeAgent() { $("#agentPanel").classList.remove("open"); if (window.innerWidth > 1180) $(".app-shell").classList.add("agent-collapsed"); if (!$("#detailDrawer").classList.contains("open")) $("#scrim").classList.add("hidden"); }
@@ -444,7 +629,7 @@ function actionInputField(inputId, definition, initialValue = undefined) {
     return `<div ${attrs}><label class="boolean-action-input"><input data-action-value type="checkbox" ${value === true ? "checked" : ""}><span>${escapeHtml(label)}${requiredLabel}</span></label>${hint}</div>`;
   }
   const defaultValue = value ?? "";
-  const inputType = { number: "number", date: "date", period: "month" }[valueType] || "text";
+  const inputType = { number: "number", date: "date", datetime: "datetime-local", period: "month" }[valueType] || "text";
   const control = valueType === "json"
     ? `<textarea data-action-value placeholder='["customer"]' ${requiredAttr}>${defaultValue === "" ? "" : escapeHtml(JSON.stringify(defaultValue, null, 2))}</textarea>`
     : `<input data-action-value type="${inputType}" value="${escapeAttr(defaultValue)}" ${valueType === "number" ? 'step="any"' : ""} ${requiredAttr}>`;
@@ -683,7 +868,7 @@ function instancePropertyField(propertyId, usage) {
   if (definition.type === "boolean") {
     return `<div class="field instance-property" ${attrs}><label>${label}</label><select data-property-value ${requiredAttr}><option value="">未设置</option><option value="true">是</option><option value="false">否</option></select>${hint}</div>`;
   }
-  const inputType = { number: "number", date: "date", period: "month" }[definition.type] || "text";
+  const inputType = { number: "number", date: "date", datetime: "datetime-local", period: "month" }[definition.type] || "text";
   const control = definition.type === "json"
     ? `<textarea data-property-value placeholder='{\n  "key": "value"\n}' ${requiredAttr}></textarea>`
     : `<input data-property-value type="${inputType}" ${definition.type === "number" ? 'step="any"' : ""} ${requiredAttr}>`;

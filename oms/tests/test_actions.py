@@ -103,12 +103,19 @@ class OmsActionServiceTest(unittest.TestCase):
             "name": "测试车辆",
             "properties": {"plate_no": "川A00001", "vehicle_type": "客车一类"},
         })
-        for station_id, name in (("station:entry", "入口"), ("station:exit", "出口")):
+        for lane_id, name, direction in (
+            ("lane:entry", "入口车道", "entry"),
+            ("lane:exit", "出口车道", "exit"),
+        ):
             self.insert_object({
-                "id": station_id,
-                "type": "toll_station",
+                "id": lane_id,
+                "type": "toll_lane",
                 "name": name,
-                "properties": {"code": station_id},
+                "properties": {
+                    "code": lane_id,
+                    "category": "mixed",
+                    "direction": direction,
+                },
             })
         self.insert_object({
             "id": "cpc:test",
@@ -121,12 +128,15 @@ class OmsActionServiceTest(unittest.TestCase):
             "record_cpc_passage",
             {
                 "reference_no": "PASS-001",
+                "entry_transaction_no": "ENTRY-001",
+                "exit_transaction_no": "EXIT-001",
                 "cpc_card_id": "cpc:test",
-                "entry_station_id": "station:entry",
-                "exit_station_id": "station:exit",
-                "entry_on": "2026-08-10",
-                "exit_on": "2026-08-10",
-                "amount": {"amount": 35, "currency": "CNY"},
+                "entry_lane_id": "lane:entry",
+                "exit_lane_id": "lane:exit",
+                "entry_at": "2026-08-10T08:00:00+08:00",
+                "exit_at": "2026-08-10T09:00:00+08:00",
+                "receivable_amount": {"amount": 35, "currency": "CNY"},
+                "paid_amount": {"amount": 35, "currency": "CNY"},
             },
             "vehicle:test",
         )
@@ -148,6 +158,7 @@ class OmsActionServiceTest(unittest.TestCase):
             and operation["record"]["type"] == "passage"
         )
         self.assertEqual("mtc", passage["properties"]["mode"])
+        self.assertNotIn("occurred_on", passage["properties"])
         roles = {
             operation["record"].get("properties", {}).get("role")
             for operation in preview["operations"]
@@ -170,7 +181,7 @@ class OmsActionServiceTest(unittest.TestCase):
             len([item for item in self.workspace.list_objects() if item["type"] == "passage"]),
         )
 
-    def test_etc_consumption_rejects_cpc_card_and_user_account(self) -> None:
+    def test_etc_consumption_uses_passage_medium_and_rejects_user_account(self) -> None:
         for record in (
             {
                 "id": "passage:test",
@@ -179,14 +190,7 @@ class OmsActionServiceTest(unittest.TestCase):
                 "properties": {
                     "reference_no": "PASS-001",
                     "mode": "etc",
-                    "occurred_on": "2026-08-10",
                 },
-            },
-            {
-                "id": "cpc:test",
-                "type": "cpc_card",
-                "name": "测试 CPC 卡",
-                "properties": {"code": "CPC-001"},
             },
             {
                 "id": "account:user",
@@ -199,21 +203,10 @@ class OmsActionServiceTest(unittest.TestCase):
 
         inputs = {
             "reference_no": "CONSUME-001",
-            "card_id": "cpc:test",
             "account_id": "account:user",
             "amount": {"amount": 35, "currency": "CNY"},
             "occurred_on": "2026-08-10",
         }
-        with self.assertRaisesRegex(ChangeValidationError, "对象类型必须是 etc_card"):
-            self.actions.preview_action("record_consumption", inputs, "passage:test")
-
-        self.insert_object({
-            "id": "card:test",
-            "type": "etc_card",
-            "name": "测试 ETC 卡",
-            "properties": {"code": "ETC-001"},
-        })
-        inputs["card_id"] = "card:test"
         with self.assertRaisesRegex(ChangeValidationError, "对象类型必须是 card_account"):
             self.actions.preview_action("record_consumption", inputs, "passage:test")
 

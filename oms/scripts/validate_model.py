@@ -8,7 +8,7 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +17,7 @@ import yaml
 
 TYPE_ID = re.compile(r"^[a-z][a-z0-9_]*$")
 INSTANCE_ID = re.compile(r"^[a-z][a-z0-9_:/.-]*$")
-VALUE_TYPES = {"string", "number", "date", "period", "money", "boolean", "json"}
+VALUE_TYPES = {"string", "number", "date", "datetime", "period", "money", "boolean", "json"}
 
 
 @dataclass
@@ -564,6 +564,20 @@ class ModelValidator:
             value_type = definition.get("type")
             if value_type in VALUE_TYPES:
                 self._validate_value(value, value_type, f"{path}.{property_name}")
+        longitude = properties.get("longitude")
+        latitude = properties.get("latitude")
+        coordinate_system = properties.get("coordinate_system")
+        coordinate_fields = (longitude, latitude, coordinate_system)
+        if any(value is not None for value in coordinate_fields):
+            if longitude is None or latitude is None or coordinate_system is None:
+                self.result.error(
+                    path,
+                    "longitude, latitude and coordinate_system must be provided together",
+                )
+            if self._is_number(longitude) and not -180 <= longitude <= 180:
+                self.result.error(f"{path}.longitude", "must be between -180 and 180")
+            if self._is_number(latitude) and not -90 <= latitude <= 90:
+                self.result.error(f"{path}.latitude", "must be between -90 and 90")
 
     def _validate_tags(self, value: Any, path: str) -> None:
         if value is None:
@@ -603,6 +617,14 @@ class ModelValidator:
                     date.fromisoformat(value)
                 except ValueError:
                     self.result.error(path, "must be an ISO date")
+        elif value_type == "datetime":
+            if not isinstance(value, str):
+                self.result.error(path, "must be an ISO datetime")
+            else:
+                try:
+                    datetime.fromisoformat(value.replace("Z", "+00:00"))
+                except ValueError:
+                    self.result.error(path, "must be an ISO datetime")
         elif value_type == "period" and (
             not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", value)
         ):

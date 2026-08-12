@@ -76,13 +76,24 @@ class OmsModelTest(unittest.TestCase):
                     "properties": {"code": "G99-EXIT"},
                 },
                 {
+                    "id": "lane:entry",
+                    "type": "toll_lane",
+                    "name": "东入口车道",
+                    "properties": {"code": "G99-ENTRY-01", "category": "etc"},
+                },
+                {
+                    "id": "lane:exit",
+                    "type": "toll_lane",
+                    "name": "西出口车道",
+                    "properties": {"code": "G99-EXIT-01", "category": "mixed"},
+                },
+                {
                     "id": "passage:001",
                     "type": "passage",
                     "name": "PASS-001",
                     "properties": {
                         "reference_no": "PASS-001",
                         "mode": "etc",
-                        "occurred_on": "2026-08-01",
                     },
                 },
                 {
@@ -92,7 +103,7 @@ class OmsModelTest(unittest.TestCase):
                     "properties": {
                         "reference_no": "ENTRY-001",
                         "stage": "entry",
-                        "occurred_on": "2026-08-01",
+                        "occurred_at": "2026-08-01T08:00:00+08:00",
                     },
                 },
                 {
@@ -102,8 +113,8 @@ class OmsModelTest(unittest.TestCase):
                     "properties": {
                         "reference_no": "EXIT-001",
                         "stage": "exit",
-                        "amount": {"amount": 35, "currency": "CNY"},
-                        "occurred_on": "2026-08-01",
+                        "paid_amount": {"amount": 35, "currency": "CNY"},
+                        "occurred_at": "2026-08-01T09:00:00+08:00",
                     },
                 },
                 {
@@ -157,6 +168,18 @@ class OmsModelTest(unittest.TestCase):
                     "to": "station:exit",
                 },
                 {
+                    "id": "rel:station-entry-lane",
+                    "type": "contains",
+                    "from": "station:entry",
+                    "to": "lane:entry",
+                },
+                {
+                    "id": "rel:station-exit-lane",
+                    "type": "contains",
+                    "from": "station:exit",
+                    "to": "lane:exit",
+                },
+                {
                     "id": "rel:user-vehicle",
                     "type": "associates",
                     "from": "user:001",
@@ -185,18 +208,18 @@ class OmsModelTest(unittest.TestCase):
                     "properties": {"role": "exit_transaction"},
                 },
                 {
-                    "id": "rel:entry-station",
+                    "id": "rel:entry-lane",
                     "type": "references",
                     "from": "transaction:entry",
-                    "to": "station:entry",
-                    "properties": {"role": "toll_station"},
+                    "to": "lane:entry",
+                    "properties": {"role": "toll_lane"},
                 },
                 {
-                    "id": "rel:exit-station",
+                    "id": "rel:exit-lane",
                     "type": "references",
                     "from": "transaction:exit",
-                    "to": "station:exit",
-                    "properties": {"role": "toll_station"},
+                    "to": "lane:exit",
+                    "properties": {"role": "toll_lane"},
                 },
                 {
                     "id": "rel:passage-split",
@@ -234,11 +257,11 @@ class OmsModelTest(unittest.TestCase):
         self.assertFalse((OMS_ROOT / "metamodel.yaml").exists())
 
     def test_v3_model_keeps_the_core_domains(self) -> None:
-        self.assertEqual(41, len(self.business_model["object_types"]))
-        self.assertEqual(4, len(self.business_model["relation_types"]))
-        self.assertEqual(37, len(self.business_model["actions"]))
+        self.assertEqual(42, len(self.business_model["object_types"]))
+        self.assertEqual(5, len(self.business_model["relation_types"]))
+        self.assertEqual(51, len(self.business_model["actions"]))
         self.assertEqual(
-            {"contains", "references", "associates", "derives"},
+            {"route_next", "contains", "references", "associates", "derives"},
             set(self.business_model["relation_types"]),
         )
         self.assertIn("passage", self.business_model["object_types"])
@@ -247,7 +270,13 @@ class OmsModelTest(unittest.TestCase):
         self.assertNotIn("passage_medium", self.business_model["object_types"])
         self.assertNotIn("account", self.business_model["object_types"])
         self.assertNotIn("control_entry", self.business_model["object_types"])
+        self.assertNotIn("road_node", self.business_model["object_types"])
         for type_id in ("obu", "etc_card", "cpc_card", "user_account", "card_account"):
+            self.assertIn(type_id, self.business_model["object_types"])
+        for type_id in (
+            "account_entry", "business_device", "customer_service_record",
+            "fee_rule", "control_record", "operating_parameter",
+        ):
             self.assertIn(type_id, self.business_model["object_types"])
 
     def test_shandong_seed_is_valid_and_reuses_cpc_by_passage(self) -> None:
@@ -270,6 +299,127 @@ class OmsModelTest(unittest.TestCase):
             and item.get("to") == "cpc_card:sd_001"
             for item in relations
         ))
+        object_types = {item["id"]: item["type"] for item in objects}
+        self.assertFalse(any(
+            object_types.get(item["from"]) == "toll_transaction"
+            and object_types.get(item["to"]) in {"vehicle", "obu", "etc_card", "toll_station"}
+            for item in relations
+        ))
+        transaction_lanes = [
+            item for item in relations
+            if object_types.get(item["from"]) == "toll_transaction"
+            and object_types.get(item["to"]) == "toll_lane"
+        ]
+        self.assertEqual(8, len(transaction_lanes))
+        container_by_child = {
+            item["to"]: item["from"]
+            for item in relations
+            if item["type"] == "contains"
+        }
+        for item in transaction_lanes:
+            parent = container_by_child[item["to"]]
+            if object_types[parent] == "toll_plaza":
+                parent = container_by_child[parent]
+            self.assertEqual("toll_station", object_types[parent])
+        self.assertFalse(any(
+            item.get("from") == "consumption:sd_etc_001"
+            and object_types.get(item.get("to")) == "etc_card"
+            for item in relations
+        ))
+        passages_with_splits = {
+            item["from"]
+            for item in relations
+            if item["type"] == "derives"
+            and object_types.get(item["from"]) == "passage"
+            and object_types.get(item["to"]) == "split_record"
+        }
+        self.assertEqual(
+            {item["id"] for item in objects if item["type"] == "passage"},
+            passages_with_splits,
+        )
+
+    def test_shandong_seed_has_v31_traceability_chains(self) -> None:
+        objects, relations = build_graph()
+        object_types = {item["id"]: item["type"] for item in objects}
+        edges = {
+            (item["from"], item["type"], item["to"], item.get("properties", {}).get("role"))
+            for item in relations
+        }
+        self.assertIn(
+            ("passage:sd_cpc_001", "references", "check:sd_cpc_001", "vehicle_check"),
+            edges,
+        )
+        self.assertIn(
+            ("check:sd_cpc_001", "derives", "second_charge:sd_cpc_001", "check_basis"),
+            edges,
+        )
+        self.assertIn(
+            ("account_tx:sd_recharge_001", "derives", "account_entry:sd_recharge_001", "bookkeeping_entry"),
+            edges,
+        )
+        self.assertIn(
+            ("user_account:qilu", "contains", "account_entry:sd_recharge_001", "account_entry"),
+            edges,
+        )
+        route_edges = [item for item in relations if item["type"] == "route_next"]
+        self.assertEqual(6, len(route_edges))
+        self.assertTrue(all(
+            object_types[item["from"]] in {"toll_station", "toll_gantry"}
+            and object_types[item["to"]] in {"toll_station", "toll_gantry"}
+            for item in route_edges
+        ))
+        interval_node_roles = {
+            item.get("properties", {}).get("role")
+            for item in relations
+            if object_types.get(item["from"]) == "toll_interval"
+            and object_types.get(item["to"]) in {"toll_station", "toll_gantry"}
+        }
+        self.assertEqual({"start_node", "end_node"}, interval_node_roles)
+
+    def test_shandong_seed_covers_all_model_types_and_spatial_objects(self) -> None:
+        objects, relations = build_graph()
+        self.assertEqual(
+            set(self.business_model["object_types"]),
+            {item["type"] for item in objects},
+        )
+        self.assertEqual(
+            set(self.business_model["relation_types"]),
+            {item["type"] for item in relations},
+        )
+        spatial_types = {
+            "toll_road", "section", "toll_interval", "toll_station", "toll_plaza",
+            "toll_lane", "toll_gantry", "service_facility", "business_device",
+        }
+        spatial_objects = [item for item in objects if item["type"] in spatial_types]
+        self.assertTrue(spatial_objects)
+        for item in spatial_objects:
+            properties = item["properties"]
+            self.assertEqual("GCJ-02", properties.get("coordinate_system"), item["id"])
+            self.assertLessEqual(-180, properties["longitude"])
+            self.assertLessEqual(properties["longitude"], 180)
+            self.assertLessEqual(-90, properties["latitude"])
+            self.assertLessEqual(properties["latitude"], 90)
+
+    def test_spatial_coordinates_must_be_complete_and_in_range(self) -> None:
+        object_data = copy.deepcopy(self.objects)
+        station = next(item for item in object_data["objects"] if item["id"] == "station:entry")
+        station["properties"]["longitude"] = 181
+        result = self.validate(objects=object_data)
+        self.assertTrue(any("longitude, latitude and coordinate_system" in error for error in result.errors))
+        self.assertTrue(any("longitude" in error and "between -180 and 180" in error for error in result.errors))
+
+    def test_shandong_adjusted_charge_flows_to_split_and_clearing(self) -> None:
+        objects, relations = build_graph()
+        amounts = {item["id"]: item.get("properties", {}).get("amount") for item in objects}
+        self.assertEqual({"amount": 42, "currency": "CNY"}, amounts["second_charge:sd_cpc_001"])
+        self.assertEqual(amounts["second_charge:sd_cpc_001"], amounts["split:sd_cpc_001"])
+        self.assertEqual(amounts["split:sd_cpc_001"], amounts["clearing:sd_cpc_001"])
+        self.assertTrue(any(
+            item["from"] == "passage:sd_ticket_001"
+            and item["type"] == "derives"
+            and item["to"] == "split:sd_ticket_001"
+            for item in relations
+        ))
 
     def test_business_model_and_property_types_are_validated(self) -> None:
         self.assertEqual("money", self.business_model["property_definitions"]["amount"]["type"])
@@ -281,17 +431,22 @@ class OmsModelTest(unittest.TestCase):
     def test_action_definitions_compile_only_changeset_effects(self) -> None:
         actions = self.business_model["actions"]
         self.assertEqual(["toll_road"], actions["register_section"]["available_on"])
+        self.assertEqual(["toll_station", "toll_plaza"], actions["register_toll_lane"]["available_on"])
+        self.assertEqual(["passage"], actions["record_vehicle_check"]["available_on"])
+        self.assertEqual(["passage"], actions["record_second_charge"]["available_on"])
+        self.assertEqual(["account_transaction"], actions["record_account_entry"]["available_on"])
+        self.assertEqual(["toll_station", "toll_gantry"], actions["connect_route_node"]["available_on"])
+        self.assertEqual(["toll_interval"], actions["bind_interval_nodes"]["available_on"])
         self.assertEqual(["vehicle"], actions["record_etc_passage"]["available_on"])
         self.assertEqual(["vehicle"], actions["record_cpc_passage"]["available_on"])
+        self.assertEqual(["toll_transaction"], actions["record_vehicle_id"]["available_on"])
+        self.assertNotIn("facility_id", actions["record_vehicle_id"]["inputs"])
         self.assertEqual(["split_record"], actions["produce_clearing_result"]["available_on"])
         self.assertEqual(
             ["cpc_card"],
             actions["record_cpc_passage"]["inputs"]["cpc_card_id"]["object_types"],
         )
-        self.assertEqual(
-            ["etc_card"],
-            actions["record_consumption"]["inputs"]["card_id"]["object_types"],
-        )
+        self.assertNotIn("card_id", actions["record_consumption"]["inputs"])
         self.assertEqual(
             ["card_account"],
             actions["record_consumption"]["inputs"]["account_id"]["object_types"],
@@ -304,9 +459,16 @@ class OmsModelTest(unittest.TestCase):
     def test_business_property_type_is_enforced(self) -> None:
         object_data = copy.deepcopy(self.objects)
         transaction = next(item for item in object_data["objects"] if item["id"] == "transaction:exit")
-        transaction["properties"]["amount"] = "not-money"
+        transaction["properties"]["paid_amount"] = "not-money"
         result = self.validate(objects=object_data)
-        self.assertTrue(any("properties.amount" in error and "currency" in error for error in result.errors))
+        self.assertTrue(any("properties.paid_amount" in error and "currency" in error for error in result.errors))
+
+    def test_transaction_datetime_is_enforced(self) -> None:
+        object_data = copy.deepcopy(self.objects)
+        transaction = next(item for item in object_data["objects"] if item["id"] == "transaction:entry")
+        transaction["properties"]["occurred_at"] = "not-a-datetime"
+        result = self.validate(objects=object_data)
+        self.assertTrue(any("properties.occurred_at" in error and "datetime" in error for error in result.errors))
 
     def test_type_vocabularies_remain_extensible(self) -> None:
         object_data = copy.deepcopy(self.objects)

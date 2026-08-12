@@ -2,10 +2,11 @@ schema: oms.business_model.v2
 
 model:
   name: OMS 高速联网收费领域模型
-  version: 3.1.0
+  version: 3.4.0
   description: >-
     面向高速联网收费业务追溯的精简对象关系模型。模型保留路网、车辆与通行介质、
-    通行交易、拆分清分、客服资金、费率和运行控制的核心语义，不复刻业务系统表结构。
+    通行交易、拆分清分、客服资金、费率和运行控制的核心语义。来源数据中的业务对象标识
+    通过关系表达，可沿关系推导的对象联系不重复保存，模型不复刻业务系统表结构。
 
 property_definitions:
   status:
@@ -36,6 +37,10 @@ property_definitions:
     name: 发生日期
     type: date
     description: 业务事实实际发生的日期。
+  occurred_at:
+    name: 发生时间
+    type: datetime
+    description: 交易、识别等时序事实实际发生的 ISO 日期时间。
   valid_from:
     name: 生效日期
     type: date
@@ -51,7 +56,15 @@ property_definitions:
   vehicle_type:
     name: 车型
     type: string
-    description: 联网收费口径下的车辆类型。
+    description: 车辆档案或识别事实中的车辆类型。
+  charged_vehicle_type:
+    name: 计费车型
+    type: string
+    description: 某笔通行交易实际采用的联网收费车型，不由车辆档案值替代。
+  axle_count:
+    name: 计费轴数
+    type: number
+    description: 某笔通行交易实际采用的车辆轴数。
   plate_no:
     name: 车牌号
     type: string
@@ -64,6 +77,18 @@ property_definitions:
     name: 里程
     type: number
     description: 路段、收费单元或路径的里程。
+  longitude:
+    name: 经度
+    type: number
+    description: 空间对象在所声明坐标系中的经度，取值范围为 -180 至 180。
+  latitude:
+    name: 纬度
+    type: number
+    description: 空间对象在所声明坐标系中的纬度，取值范围为 -90 至 90。
+  coordinate_system:
+    name: 坐标系
+    type: string
+    description: 经纬度采用的坐标系；高德地图坐标使用 GCJ-02。
   version:
     name: 版本
     type: string
@@ -72,6 +97,10 @@ property_definitions:
     name: 通行阶段
     type: string
     description: 入口、门架或出口等通行交易和牌识阶段。
+  transaction_type:
+    name: 交易类型
+    type: string
+    description: 正常、车队、闯关或其他交易业务类型。
   mode:
     name: 通行方式
     type: string
@@ -80,10 +109,46 @@ property_definitions:
     name: 办理渠道
     type: string
     description: 网点、终端、线上或其他业务办理渠道。
+  operation_channel:
+    name: 作业渠道
+    type: string
+    description: 车道终端、手持终端或其他完成交易的现场作业渠道。
   result:
     name: 处理结果
     type: string
     description: 查验、计费、结算或对账形成的业务结论。
+  receivable_amount:
+    name: 应收金额
+    type: money
+    description: 按计费规则计算的应收通行费。
+  discount_amount:
+    name: 优惠金额
+    type: money
+    description: 本次交易相对应收金额减免的金额。
+  paid_amount:
+    name: 实收金额
+    type: money
+    description: 本次交易实际收取或记账的金额。
+  payment_type:
+    name: 支付类型
+    type: string
+    description: ETC 记账、储值、现金、移动支付或其他支付方式。
+  fee_type:
+    name: 计费类型
+    type: string
+    description: 本次出口交易采用的计费业务口径。
+  multi_province:
+    name: 跨省交易
+    type: boolean
+    description: 本次通行交易是否涉及多个省份。
+  balance:
+    name: 余额
+    type: money
+    description: 资金账户或记账完成后的业务余额。
+  original_amount:
+    name: 原金额
+    type: money
+    description: 调整、退补或二次计费前的原始金额。
   reason:
     name: 原因
     type: string
@@ -166,6 +231,9 @@ object_types:
     description: 聚合收费路段并承载全路基本信息的顶层道路资源。
     properties:
       code: {required: true}
+      longitude: {required: false}
+      latitude: {required: false}
+      coordinate_system: {required: false}
       status: {required: false}
       details: {required: false}
   section:
@@ -174,6 +242,9 @@ object_types:
     properties:
       code: {required: true}
       mileage: {required: false}
+      longitude: {required: false}
+      latitude: {required: false}
+      coordinate_system: {required: false}
       status: {required: false}
       details: {required: false}
   toll_interval:
@@ -183,6 +254,9 @@ object_types:
       code: {required: true}
       direction: {required: false}
       mileage: {required: false}
+      longitude: {required: false}
+      latitude: {required: false}
+      coordinate_system: {required: false}
       status: {required: false}
       details: {required: false}
   toll_station:
@@ -190,6 +264,9 @@ object_types:
     description: 车辆进出收费公路并完成介质处理、交易和查验的服务节点。
     properties:
       code: {required: true}
+      longitude: {required: false}
+      latitude: {required: false}
+      coordinate_system: {required: false}
       status: {required: false}
       details: {required: false}
   toll_plaza:
@@ -198,6 +275,9 @@ object_types:
     properties:
       code: {required: true}
       direction: {required: false}
+      longitude: {required: false}
+      latitude: {required: false}
+      coordinate_system: {required: false}
       status: {required: false}
       details: {required: false}
   toll_lane:
@@ -207,6 +287,9 @@ object_types:
       code: {required: true}
       category: {required: true}
       direction: {required: false}
+      longitude: {required: false}
+      latitude: {required: false}
+      coordinate_system: {required: false}
       status: {required: false}
       details: {required: false}
   toll_gantry:
@@ -215,6 +298,9 @@ object_types:
     properties:
       code: {required: true}
       direction: {required: false}
+      longitude: {required: false}
+      latitude: {required: false}
+      coordinate_system: {required: false}
       status: {required: false}
       details: {required: false}
   service_facility:
@@ -226,6 +312,9 @@ object_types:
       category: {required: true}
       code: {required: false}
       channel: {required: false}
+      longitude: {required: false}
+      latitude: {required: false}
+      coordinate_system: {required: false}
       status: {required: false}
       details: {required: false}
   business_device:
@@ -236,37 +325,54 @@ object_types:
     properties:
       category: {required: true}
       code: {required: true}
+      longitude: {required: false}
+      latitude: {required: false}
+      coordinate_system: {required: false}
       status: {required: false}
       details: {required: false}
   passage:
     name: 通行记录
-    description: 聚合一次完整通行中的车辆、所用介质、入口、门架、出口交易和牌识事实。
+    description: >-
+      一次车辆通行过程的追溯起点，关联车辆、实际使用的介质以及入口、门架和出口事实；
+      通行时间、位置、车型和金额从所关联的事实中取得，不在此重复保存。
     properties:
       reference_no: {required: true}
       mode: {required: true}
-      occurred_on: {required: true}
       status: {required: false}
-      vehicle_type: {required: false}
       details: {required: false}
   toll_transaction:
     name: 通行交易记录
     description: >-
-      入口、门架或出口产生的交易事实；通过 stage 区分阶段，金额只在实际产生计费时记录。
+      入口、门架或出口产生的交易事实。交易通过关系归属于一次通行并指向实际车道或门架；
+      车辆、介质、收费站等可由该关系链推导，不作为交易属性或重复关系保存。
     properties:
       reference_no: {required: true}
       stage: {required: true}
-      occurred_on: {required: true}
-      amount: {required: false}
+      occurred_at: {required: true}
+      transaction_type: {required: false}
+      charged_vehicle_type: {required: false}
+      axle_count: {required: false}
+      result: {required: false}
+      operation_channel: {required: false}
+      receivable_amount: {required: false}
+      discount_amount: {required: false}
+      paid_amount: {required: false}
+      payment_type: {required: false}
+      fee_type: {required: false}
+      multi_province: {required: false}
       status: {required: false}
       details: {required: false}
   vehicle_id_record:
     name: 车辆识别记录
-    description: 入口、门架或出口形成的车牌和车辆识别事实。
+    description: >-
+      某笔通行交易在特定时点观察到的车辆识别事实。识别车牌和车型保留原始观察值，
+      即使它们与通行所关联车辆的档案值不同；识别位置由所属交易关联的车道或门架推导。
     properties:
       reference_no: {required: true}
-      stage: {required: true}
-      occurred_on: {required: true}
+      occurred_at: {required: true}
       plate_no: {required: false}
+      vehicle_type: {required: false}
+      direction: {required: false}
       result: {required: false}
       details: {required: false}
   vehicle_check_result:
@@ -282,6 +388,7 @@ object_types:
     description: 特殊通行在查验或省级优惠处理后重新计算形成的费额结果。
     properties:
       reference_no: {required: true}
+      original_amount: {required: false}
       amount: {required: true}
       occurred_on: {required: true}
       result: {required: true}
@@ -342,6 +449,7 @@ object_types:
     description: 客户级资金账户，不依赖具体 ETC 卡，用于充值资金挂账和向卡账户划转。
     properties:
       reference_no: {required: true}
+      balance: {required: false}
       status: {required: false}
       details: {required: false}
   card_account:
@@ -349,7 +457,21 @@ object_types:
     description: ETC 卡对应的资金账户，用于记录充值、圈存、消费扣款、冲正和退款。
     properties:
       reference_no: {required: true}
+      balance: {required: false}
       status: {required: false}
+      details: {required: false}
+  account_entry:
+    name: 账户记账明细
+    description: >-
+      用户账户或卡账户的一笔余额变动，是充值、圈存、冲正、消费、退款或缴费等来源事实
+      实际记入账户后的结果；通过 category 区分记账类型。
+    properties:
+      category: {required: true}
+      reference_no: {required: true}
+      amount: {required: true}
+      occurred_on: {required: true}
+      balance: {required: false}
+      status: {required: true}
       details: {required: false}
   stock_account:
     name: 库存账户
@@ -472,16 +594,28 @@ object_types:
       details: {required: true}
 
 relation_types:
+  route_next:
+    name: 路网后继
+    description: >-
+      from 和 to 是计费路径上相邻的收费站或收费门架，方向表示车辆行驶方向；
+      用设施对象自身表达 V3.1 的 RoadNode/NodeRelation，避免重复节点身份。
+    from_types: [toll_station, toll_gantry]
+    to_types: [toll_station, toll_gantry]
+    properties:
+      direction: {required: false}
+      mileage: {required: false}
+      status: {required: false}
   contains:
     name: 包含
     description: >-
       from 是整体，to 是依附于整体的组成部分；用于路网层级、设施设备、拆分明细和费率包。
     from_types:
       [party, toll_road, section, toll_station, toll_plaza, toll_lane, toll_gantry,
-       service_facility, split_record, fee_module]
+       service_facility, passage, user_account, card_account, split_record, fee_module]
     to_types:
       [section, toll_interval, toll_station, toll_plaza, toll_lane, toll_gantry,
-       service_facility, business_device, split_basis, split_detail, fee_rule]
+       service_facility, business_device, account_entry,
+       split_basis, split_detail, second_charge_result, fee_rule]
     properties:
       role: {required: false}
   references:
@@ -489,9 +623,9 @@ relation_types:
     description: >-
       from 业务记录使用 to 独立对象提供的信息；被引用对象不依附于引用者存在。
     from_types:
-      [passage, toll_transaction, vehicle_id_record, vehicle_check_result, split_detail,
-       account_transaction, consumption_detail, bill_settlement, stock_movement,
-       reconciliation_result, fee_rule, control_record, operating_parameter]
+      [toll_interval, passage, toll_transaction, vehicle_id_record, vehicle_check_result, split_detail,
+       customer_service_record, account_transaction, consumption_detail, bill_settlement,
+       stock_movement, reconciliation_result, fee_rule, control_record, operating_parameter]
     properties:
       role: {required: true}
       amount: {required: false}
@@ -506,11 +640,12 @@ relation_types:
     description: >-
       from 是来源事实，to 是由其计算、汇总或处理生成的结果；方向统一为“来源到结果”。
     from_types:
-      [passage, vehicle_check_result, split_record, account_transaction,
-       consumption_detail, bill, bill_settlement]
+      [toll_interval, toll_station, toll_gantry, passage, vehicle_check_result, split_record,
+       account_transaction, consumption_detail, bill, bill_settlement, fee_rule, control_record]
     to_types:
       [second_charge_result, split_record, clearing_result, invoice_basis_data,
-       bill, bill_settlement, business_day_summary, reconciliation_result]
+       account_entry, bill, bill_settlement, business_day_summary,
+       reconciliation_result, fee_rule, control_record]
     acyclic: true
     properties:
       role: {required: false}
@@ -673,6 +808,44 @@ actions:
           to: $input.card_id
           properties: {role: paired_etc_card, status: active}
 
+  record_customer_service:
+    name: 登记客服业务
+    description: 为当前客户、车辆、ETC 卡或 OBU 登记开户、变更、发行、激活、挂失或注销结果。
+    icon: clipboard_list
+    handler: changeset
+    available_on: [user, vehicle, etc_card, obu]
+    confirmation: 登记客服业务结果并关联当前业务对象和办理主体。
+    inputs:
+      reference_no: {name: 业务流水号, property: reference_no, required: true}
+      category: {name: 业务类型, property: category, required: true}
+      occurred_on: {name: 办理日期, property: occurred_on, required: true}
+      result: {name: 办理结果, property: result, required: true}
+      channel: {name: 办理渠道, property: channel, required: false}
+      handler_id: {name: 办理机构或操作员, object_types: [party], required: true}
+      details: {name: 业务详情, property: details, required: false}
+    effects:
+      - create_object:
+          ref: service_record
+          type: customer_service_record
+          name: $input.reference_no
+          properties:
+            category: $input.category
+            reference_no: $input.reference_no
+            occurred_on: $input.occurred_on
+            result: $input.result
+            channel: $input.channel
+            details: $input.details
+      - create_relation:
+          type: references
+          from: $service_record
+          to: $context
+          properties: {role: business_subject}
+      - create_relation:
+          type: associates
+          from: $service_record
+          to: $input.handler_id
+          properties: {role: handled_by, status: confirmed}
+
   register_cpc_card:
     name: 登记 CPC 卡
     description: 登记可在不同车辆通行之间循环发放和回收的 CPC 卡。
@@ -732,6 +905,9 @@ actions:
     inputs:
       name: {name: 公路名称, type: string, required: true}
       code: {name: 公路编码, property: code, required: true}
+      longitude: {name: 代表点经度, property: longitude, required: false}
+      latitude: {name: 代表点纬度, property: latitude, required: false}
+      coordinate_system: {name: 坐标系, property: coordinate_system, required: false}
       status: {name: 状态, property: status, required: false, default: operating}
       details: {name: 补充信息, property: details, required: false}
     effects:
@@ -741,6 +917,9 @@ actions:
           name: $input.name
           properties:
             code: $input.code
+            longitude: $input.longitude
+            latitude: $input.latitude
+            coordinate_system: $input.coordinate_system
             status: $input.status
             details: $input.details
 
@@ -755,6 +934,9 @@ actions:
       name: {name: 路段名称, type: string, required: true}
       code: {name: 路段编码, property: code, required: true}
       mileage: {name: 路段里程, property: mileage, required: false}
+      longitude: {name: 代表点经度, property: longitude, required: false}
+      latitude: {name: 代表点纬度, property: latitude, required: false}
+      coordinate_system: {name: 坐标系, property: coordinate_system, required: false}
       status: {name: 状态, property: status, required: false, default: operating}
       details: {name: 补充信息, property: details, required: false}
     effects:
@@ -765,6 +947,9 @@ actions:
           properties:
             code: $input.code
             mileage: $input.mileage
+            longitude: $input.longitude
+            latitude: $input.latitude
+            coordinate_system: $input.coordinate_system
             status: $input.status
             details: $input.details
       - create_relation:
@@ -785,6 +970,9 @@ actions:
       code: {name: 单元编码, property: code, required: true}
       direction: {name: 方向, property: direction, required: false}
       mileage: {name: 里程, property: mileage, required: false}
+      longitude: {name: 代表点经度, property: longitude, required: false}
+      latitude: {name: 代表点纬度, property: latitude, required: false}
+      coordinate_system: {name: 坐标系, property: coordinate_system, required: false}
       status: {name: 状态, property: status, required: false, default: active}
       details: {name: 补充信息, property: details, required: false}
     effects:
@@ -796,6 +984,9 @@ actions:
             code: $input.code
             direction: $input.direction
             mileage: $input.mileage
+            longitude: $input.longitude
+            latitude: $input.latitude
+            coordinate_system: $input.coordinate_system
             status: $input.status
             details: $input.details
       - create_relation:
@@ -814,6 +1005,9 @@ actions:
     inputs:
       name: {name: 收费站名称, type: string, required: true}
       code: {name: 收费站编码, property: code, required: true}
+      longitude: {name: 经度, property: longitude, required: false}
+      latitude: {name: 纬度, property: latitude, required: false}
+      coordinate_system: {name: 坐标系, property: coordinate_system, required: false}
       status: {name: 状态, property: status, required: false, default: operating}
       details: {name: 补充信息, property: details, required: false}
     effects:
@@ -823,6 +1017,9 @@ actions:
           name: $input.name
           properties:
             code: $input.code
+            longitude: $input.longitude
+            latitude: $input.latitude
+            coordinate_system: $input.coordinate_system
             status: $input.status
             details: $input.details
       - create_relation:
@@ -830,6 +1027,78 @@ actions:
           from: $context
           to: $station
           properties: {role: toll_station}
+
+  register_toll_plaza:
+    name: 登记收费广场
+    description: 在当前收费站登记组织收费车道和虚拟门架的收费广场。
+    icon: panels_top_left
+    handler: changeset
+    available_on: [toll_station]
+    confirmation: 登记收费广场并纳入当前收费站。
+    inputs:
+      name: {name: 广场名称, type: string, required: true}
+      code: {name: 广场编码, property: code, required: true}
+      direction: {name: 方向, property: direction, required: false}
+      longitude: {name: 经度, property: longitude, required: false}
+      latitude: {name: 纬度, property: latitude, required: false}
+      coordinate_system: {name: 坐标系, property: coordinate_system, required: false}
+      status: {name: 状态, property: status, required: false, default: operating}
+      details: {name: 广场详情, property: details, required: false}
+    effects:
+      - create_object:
+          ref: plaza
+          type: toll_plaza
+          name: $input.name
+          properties:
+            code: $input.code
+            direction: $input.direction
+            longitude: $input.longitude
+            latitude: $input.latitude
+            coordinate_system: $input.coordinate_system
+            status: $input.status
+            details: $input.details
+      - create_relation:
+          type: contains
+          from: $context
+          to: $plaza
+          properties: {role: toll_plaza}
+
+  register_toll_lane:
+    name: 登记收费车道
+    description: 在当前收费站下登记实际执行入口或出口交易的收费车道。
+    icon: rows_3
+    handler: changeset
+    available_on: [toll_station, toll_plaza]
+    confirmation: 登记收费车道并纳入当前收费站或广场。
+    inputs:
+      name: {name: 车道名称, type: string, required: true}
+      code: {name: 车道编码, property: code, required: true}
+      category: {name: 车道类型, property: category, required: true}
+      direction: {name: 方向, property: direction, required: false}
+      longitude: {name: 经度, property: longitude, required: false}
+      latitude: {name: 纬度, property: latitude, required: false}
+      coordinate_system: {name: 坐标系, property: coordinate_system, required: false}
+      status: {name: 状态, property: status, required: false, default: operating}
+      details: {name: 补充信息, property: details, required: false}
+    effects:
+      - create_object:
+          ref: lane
+          type: toll_lane
+          name: $input.name
+          properties:
+            code: $input.code
+            category: $input.category
+            direction: $input.direction
+            longitude: $input.longitude
+            latitude: $input.latitude
+            coordinate_system: $input.coordinate_system
+            status: $input.status
+            details: $input.details
+      - create_relation:
+          type: contains
+          from: $context
+          to: $lane
+          properties: {role: toll_lane}
 
   register_toll_gantry:
     name: 登记收费门架
@@ -842,6 +1111,9 @@ actions:
       name: {name: 门架名称, type: string, required: true}
       code: {name: 门架编码, property: code, required: true}
       direction: {name: 方向, property: direction, required: false}
+      longitude: {name: 经度, property: longitude, required: false}
+      latitude: {name: 纬度, property: latitude, required: false}
+      coordinate_system: {name: 坐标系, property: coordinate_system, required: false}
       status: {name: 状态, property: status, required: false, default: operating}
       details: {name: 补充信息, property: details, required: false}
     effects:
@@ -852,6 +1124,9 @@ actions:
           properties:
             code: $input.code
             direction: $input.direction
+            longitude: $input.longitude
+            latitude: $input.latitude
+            coordinate_system: $input.coordinate_system
             status: $input.status
             details: $input.details
       - create_relation:
@@ -860,41 +1135,183 @@ actions:
           to: $gantry
           properties: {role: toll_gantry}
 
+  connect_route_node:
+    name: 连接路网节点
+    description: 将当前收费站或收费门架连接到行驶方向上的下一收费站或门架。
+    icon: git_branch
+    handler: changeset
+    available_on: [toll_station, toll_gantry]
+    confirmation: 建立有向路网拓扑关系。
+    inputs:
+      next_id: {name: 下一节点, object_types: [toll_station, toll_gantry], required: true}
+      direction: {name: 行驶方向, property: direction, required: false}
+      mileage: {name: 节点间里程, property: mileage, required: false}
+      status: {name: 状态, property: status, required: false, default: active}
+    effects:
+      - create_relation:
+          type: route_next
+          from: $context
+          to: $input.next_id
+          properties:
+            direction: $input.direction
+            mileage: $input.mileage
+            status: $input.status
+
+  bind_interval_nodes:
+    name: 配置收费单元边界
+    description: 为当前收费单元关联计费方向上的起点和终点设施。
+    icon: move_horizontal
+    handler: changeset
+    available_on: [toll_interval]
+    confirmation: 配置收费单元的起止路网节点。
+    inputs:
+      start_id: {name: 起点节点, object_types: [toll_station, toll_gantry], required: true}
+      end_id: {name: 终点节点, object_types: [toll_station, toll_gantry], required: true}
+    effects:
+      - create_relation:
+          type: references
+          from: $context
+          to: $input.start_id
+          properties: {role: start_node}
+      - create_relation:
+          type: references
+          from: $context
+          to: $input.end_id
+          properties: {role: end_node}
+
+  register_service_facility:
+    name: 登记服务设施
+    description: 在当前路段、收费站或发行机构登记服务区、拓展支付或客服渠道设施。
+    icon: store
+    handler: changeset
+    available_on: [section, toll_station, party]
+    confirmation: 登记服务设施并建立归属关系。
+    inputs:
+      name: {name: 设施名称, type: string, required: true}
+      category: {name: 设施类别, property: category, required: true}
+      code: {name: 设施编码, property: code, required: false}
+      channel: {name: 服务渠道, property: channel, required: false}
+      longitude: {name: 经度, property: longitude, required: false}
+      latitude: {name: 纬度, property: latitude, required: false}
+      coordinate_system: {name: 坐标系, property: coordinate_system, required: false}
+      status: {name: 状态, property: status, required: false, default: operating}
+      details: {name: 设施详情, property: details, required: false}
+    effects:
+      - create_object:
+          ref: facility
+          type: service_facility
+          name: $input.name
+          properties:
+            category: $input.category
+            code: $input.code
+            channel: $input.channel
+            longitude: $input.longitude
+            latitude: $input.latitude
+            coordinate_system: $input.coordinate_system
+            status: $input.status
+            details: $input.details
+      - create_relation:
+          type: contains
+          from: $context
+          to: $facility
+          properties: {role: service_facility}
+
+  register_business_device:
+    name: 登记业务设备
+    description: 在收费站、收费车道或收费门架登记一个业务设备，并用 category 区分设备种类。
+    icon: cpu
+    handler: changeset
+    available_on: [toll_station, toll_lane, toll_gantry, party]
+    confirmation: 登记业务设备并建立部署关系。
+    inputs:
+      name: {name: 设备名称, type: string, required: true}
+      category: {name: 设备类别, property: category, required: true}
+      code: {name: 设备编码, property: code, required: true}
+      longitude: {name: 经度, property: longitude, required: false}
+      latitude: {name: 纬度, property: latitude, required: false}
+      coordinate_system: {name: 坐标系, property: coordinate_system, required: false}
+      status: {name: 状态, property: status, required: false, default: active}
+      details: {name: 设备详情, property: details, required: false}
+    effects:
+      - create_object:
+          ref: device
+          type: business_device
+          name: $input.name
+          properties:
+            category: $input.category
+            code: $input.code
+            longitude: $input.longitude
+            latitude: $input.latitude
+            coordinate_system: $input.coordinate_system
+            status: $input.status
+            details: $input.details
+      - create_relation:
+          type: contains
+          from: $context
+          to: $device
+          properties: {role: business_device}
+
   record_etc_passage:
     name: 登记 ETC 通行
     description: 为当前车辆登记一次使用 OBU 的完整 ETC 通行。
     icon: car_taxi_front
     handler: changeset
     available_on: [vehicle]
-    confirmation: 登记 ETC 通行并关联车辆、OBU 及出入口收费站。
+    confirmation: 登记 ETC 通行并关联车辆、OBU、出入口交易及实际收费车道。
     inputs:
       reference_no: {name: 通行流水号, property: reference_no, required: true}
+      entry_transaction_no: {name: 入口交易流水号, type: string, required: true}
+      exit_transaction_no: {name: 出口交易流水号, type: string, required: true}
       obu_id: {name: 本次使用的 OBU, object_types: [obu], required: true}
-      entry_station_id: {name: 入口收费站, object_types: [toll_station], required: true}
-      exit_station_id: {name: 出口收费站, object_types: [toll_station], required: true}
-      entry_on: {name: 入口日期, property: occurred_on, required: true}
-      exit_on: {name: 出口日期, property: occurred_on, required: true}
-      amount: {name: 出口应收金额, property: amount, required: false}
+      entry_lane_id: {name: 入口车道, object_types: [toll_lane], required: true}
+      exit_lane_id: {name: 出口车道, object_types: [toll_lane], required: true}
+      entry_at: {name: 入口时间, property: occurred_at, required: true}
+      exit_at: {name: 出口时间, property: occurred_at, required: true}
+      transaction_type: {name: 交易类型, property: transaction_type, required: false, default: normal}
+      charged_vehicle_type: {name: 计费车型, property: charged_vehicle_type, required: false}
+      axle_count: {name: 计费轴数, property: axle_count, required: false}
+      operation_channel: {name: 作业渠道, property: operation_channel, required: false}
+      receivable_amount: {name: 应收金额, property: receivable_amount, required: false}
+      discount_amount: {name: 优惠金额, property: discount_amount, required: false}
+      paid_amount: {name: 实收金额, property: paid_amount, required: false}
+      payment_type: {name: 支付类型, property: payment_type, required: false}
+      fee_type: {name: 计费类型, property: fee_type, required: false}
+      multi_province: {name: 是否跨省, property: multi_province, required: false, default: false}
       details: {name: 通行详情, property: details, required: false}
     effects:
       - create_object:
           ref: entry_transaction
           type: toll_transaction
-          name: $input.reference_no
+          name: $input.entry_transaction_no
           properties:
-            reference_no: $input.reference_no
+            reference_no: $input.entry_transaction_no
             stage: entry
-            occurred_on: $input.entry_on
+            occurred_at: $input.entry_at
+            transaction_type: $input.transaction_type
+            charged_vehicle_type: $input.charged_vehicle_type
+            axle_count: $input.axle_count
+            result: success
+            operation_channel: $input.operation_channel
             status: recorded
       - create_object:
           ref: exit_transaction
           type: toll_transaction
-          name: $input.reference_no
+          name: $input.exit_transaction_no
           properties:
-            reference_no: $input.reference_no
+            reference_no: $input.exit_transaction_no
             stage: exit
-            occurred_on: $input.exit_on
-            amount: $input.amount
+            occurred_at: $input.exit_at
+            transaction_type: $input.transaction_type
+            charged_vehicle_type: $input.charged_vehicle_type
+            axle_count: $input.axle_count
+            result: success
+            operation_channel: $input.operation_channel
+            receivable_amount: $input.receivable_amount
+            discount_amount: $input.discount_amount
+            paid_amount: $input.paid_amount
+            payment_type: $input.payment_type
+            fee_type: $input.fee_type
+            multi_province: $input.multi_province
             status: recorded
       - create_object:
           ref: passage
@@ -903,7 +1320,6 @@ actions:
           properties:
             reference_no: $input.reference_no
             mode: etc
-            occurred_on: $input.entry_on
             status: completed
             details: $input.details
       - create_relation:
@@ -929,13 +1345,13 @@ actions:
       - create_relation:
           type: references
           from: $entry_transaction
-          to: $input.entry_station_id
-          properties: {role: toll_station}
+          to: $input.entry_lane_id
+          properties: {role: toll_lane}
       - create_relation:
           type: references
           from: $exit_transaction
-          to: $input.exit_station_id
-          properties: {role: toll_station}
+          to: $input.exit_lane_id
+          properties: {role: toll_lane}
 
   record_cpc_passage:
     name: 登记 CPC 通行
@@ -946,32 +1362,58 @@ actions:
     confirmation: 登记 CPC 通行及本次 CPC 卡发放、使用和回收事实。
     inputs:
       reference_no: {name: 通行流水号, property: reference_no, required: true}
+      entry_transaction_no: {name: 入口交易流水号, type: string, required: true}
+      exit_transaction_no: {name: 出口交易流水号, type: string, required: true}
       cpc_card_id: {name: 本次使用的 CPC 卡, object_types: [cpc_card], required: true}
-      entry_station_id: {name: 入口收费站, object_types: [toll_station], required: true}
-      exit_station_id: {name: 出口收费站, object_types: [toll_station], required: true}
-      entry_on: {name: 入口日期, property: occurred_on, required: true}
-      exit_on: {name: 出口日期, property: occurred_on, required: true}
-      amount: {name: 出口应收金额, property: amount, required: false}
+      entry_lane_id: {name: 入口车道, object_types: [toll_lane], required: true}
+      exit_lane_id: {name: 出口车道, object_types: [toll_lane], required: true}
+      entry_at: {name: 入口时间, property: occurred_at, required: true}
+      exit_at: {name: 出口时间, property: occurred_at, required: true}
+      transaction_type: {name: 交易类型, property: transaction_type, required: false, default: normal}
+      charged_vehicle_type: {name: 计费车型, property: charged_vehicle_type, required: false}
+      axle_count: {name: 计费轴数, property: axle_count, required: false}
+      operation_channel: {name: 作业渠道, property: operation_channel, required: false}
+      receivable_amount: {name: 应收金额, property: receivable_amount, required: false}
+      discount_amount: {name: 优惠金额, property: discount_amount, required: false}
+      paid_amount: {name: 实收金额, property: paid_amount, required: false}
+      payment_type: {name: 支付类型, property: payment_type, required: false}
+      fee_type: {name: 计费类型, property: fee_type, required: false}
+      multi_province: {name: 是否跨省, property: multi_province, required: false, default: false}
       details: {name: 通行详情, property: details, required: false}
     effects:
       - create_object:
           ref: entry_transaction
           type: toll_transaction
-          name: $input.reference_no
+          name: $input.entry_transaction_no
           properties:
-            reference_no: $input.reference_no
+            reference_no: $input.entry_transaction_no
             stage: entry
-            occurred_on: $input.entry_on
+            occurred_at: $input.entry_at
+            transaction_type: $input.transaction_type
+            charged_vehicle_type: $input.charged_vehicle_type
+            axle_count: $input.axle_count
+            result: success
+            operation_channel: $input.operation_channel
             status: recorded
       - create_object:
           ref: exit_transaction
           type: toll_transaction
-          name: $input.reference_no
+          name: $input.exit_transaction_no
           properties:
-            reference_no: $input.reference_no
+            reference_no: $input.exit_transaction_no
             stage: exit
-            occurred_on: $input.exit_on
-            amount: $input.amount
+            occurred_at: $input.exit_at
+            transaction_type: $input.transaction_type
+            charged_vehicle_type: $input.charged_vehicle_type
+            axle_count: $input.axle_count
+            result: success
+            operation_channel: $input.operation_channel
+            receivable_amount: $input.receivable_amount
+            discount_amount: $input.discount_amount
+            paid_amount: $input.paid_amount
+            payment_type: $input.payment_type
+            fee_type: $input.fee_type
+            multi_province: $input.multi_province
             status: recorded
       - create_object:
           ref: passage
@@ -980,7 +1422,6 @@ actions:
           properties:
             reference_no: $input.reference_no
             mode: mtc
-            occurred_on: $input.entry_on
             status: completed
             details: $input.details
       - create_relation:
@@ -1006,13 +1447,13 @@ actions:
       - create_relation:
           type: references
           from: $entry_transaction
-          to: $input.entry_station_id
-          properties: {role: toll_station}
+          to: $input.entry_lane_id
+          properties: {role: toll_lane}
       - create_relation:
           type: references
           from: $exit_transaction
-          to: $input.exit_station_id
-          properties: {role: toll_station}
+          to: $input.exit_lane_id
+          properties: {role: toll_lane}
       - create_relation:
           type: references
           from: $entry_transaction
@@ -1033,32 +1474,58 @@ actions:
     confirmation: 登记纸券通行及本次纸券发放、使用和出口出示事实。
     inputs:
       reference_no: {name: 通行流水号, property: reference_no, required: true}
+      entry_transaction_no: {name: 入口交易流水号, type: string, required: true}
+      exit_transaction_no: {name: 出口交易流水号, type: string, required: true}
       ticket_id: {name: 本次使用的纸券, object_types: [paper_ticket], required: true}
-      entry_station_id: {name: 入口收费站, object_types: [toll_station], required: true}
-      exit_station_id: {name: 出口收费站, object_types: [toll_station], required: true}
-      entry_on: {name: 入口日期, property: occurred_on, required: true}
-      exit_on: {name: 出口日期, property: occurred_on, required: true}
-      amount: {name: 出口应收金额, property: amount, required: false}
+      entry_lane_id: {name: 入口车道, object_types: [toll_lane], required: true}
+      exit_lane_id: {name: 出口车道, object_types: [toll_lane], required: true}
+      entry_at: {name: 入口时间, property: occurred_at, required: true}
+      exit_at: {name: 出口时间, property: occurred_at, required: true}
+      transaction_type: {name: 交易类型, property: transaction_type, required: false, default: normal}
+      charged_vehicle_type: {name: 计费车型, property: charged_vehicle_type, required: false}
+      axle_count: {name: 计费轴数, property: axle_count, required: false}
+      operation_channel: {name: 作业渠道, property: operation_channel, required: false}
+      receivable_amount: {name: 应收金额, property: receivable_amount, required: false}
+      discount_amount: {name: 优惠金额, property: discount_amount, required: false}
+      paid_amount: {name: 实收金额, property: paid_amount, required: false}
+      payment_type: {name: 支付类型, property: payment_type, required: false}
+      fee_type: {name: 计费类型, property: fee_type, required: false}
+      multi_province: {name: 是否跨省, property: multi_province, required: false, default: false}
       details: {name: 通行详情, property: details, required: false}
     effects:
       - create_object:
           ref: entry_transaction
           type: toll_transaction
-          name: $input.reference_no
+          name: $input.entry_transaction_no
           properties:
-            reference_no: $input.reference_no
+            reference_no: $input.entry_transaction_no
             stage: entry
-            occurred_on: $input.entry_on
+            occurred_at: $input.entry_at
+            transaction_type: $input.transaction_type
+            charged_vehicle_type: $input.charged_vehicle_type
+            axle_count: $input.axle_count
+            result: success
+            operation_channel: $input.operation_channel
             status: recorded
       - create_object:
           ref: exit_transaction
           type: toll_transaction
-          name: $input.reference_no
+          name: $input.exit_transaction_no
           properties:
-            reference_no: $input.reference_no
+            reference_no: $input.exit_transaction_no
             stage: exit
-            occurred_on: $input.exit_on
-            amount: $input.amount
+            occurred_at: $input.exit_at
+            transaction_type: $input.transaction_type
+            charged_vehicle_type: $input.charged_vehicle_type
+            axle_count: $input.axle_count
+            result: success
+            operation_channel: $input.operation_channel
+            receivable_amount: $input.receivable_amount
+            discount_amount: $input.discount_amount
+            paid_amount: $input.paid_amount
+            payment_type: $input.payment_type
+            fee_type: $input.fee_type
+            multi_province: $input.multi_province
             status: recorded
       - create_object:
           ref: passage
@@ -1067,7 +1534,6 @@ actions:
           properties:
             reference_no: $input.reference_no
             mode: mtc
-            occurred_on: $input.entry_on
             status: completed
             details: $input.details
       - create_relation:
@@ -1093,13 +1559,13 @@ actions:
       - create_relation:
           type: references
           from: $entry_transaction
-          to: $input.entry_station_id
-          properties: {role: toll_station}
+          to: $input.entry_lane_id
+          properties: {role: toll_lane}
       - create_relation:
           type: references
           from: $exit_transaction
-          to: $input.exit_station_id
-          properties: {role: toll_station}
+          to: $input.exit_lane_id
+          properties: {role: toll_lane}
       - create_relation:
           type: references
           from: $entry_transaction
@@ -1121,8 +1587,14 @@ actions:
     inputs:
       reference_no: {name: 交易流水号, property: reference_no, required: true}
       gantry_id: {name: 收费门架, object_types: [toll_gantry], required: true}
-      occurred_on: {name: 交易日期, property: occurred_on, required: true}
-      amount: {name: 计费金额, property: amount, required: true}
+      occurred_at: {name: 交易时间, property: occurred_at, required: true}
+      transaction_type: {name: 交易类型, property: transaction_type, required: false, default: normal}
+      charged_vehicle_type: {name: 计费车型, property: charged_vehicle_type, required: false}
+      axle_count: {name: 计费轴数, property: axle_count, required: false}
+      result: {name: 交易结果, property: result, required: false, default: success}
+      receivable_amount: {name: 应收金额, property: receivable_amount, required: false}
+      discount_amount: {name: 优惠金额, property: discount_amount, required: false}
+      paid_amount: {name: 实收金额, property: paid_amount, required: false}
       status: {name: 状态, property: status, required: false, default: recorded}
       details: {name: 交易详情, property: details, required: false}
     effects:
@@ -1133,8 +1605,14 @@ actions:
           properties:
             reference_no: $input.reference_no
             stage: gantry
-            occurred_on: $input.occurred_on
-            amount: $input.amount
+            occurred_at: $input.occurred_at
+            transaction_type: $input.transaction_type
+            charged_vehicle_type: $input.charged_vehicle_type
+            axle_count: $input.axle_count
+            result: $input.result
+            receivable_amount: $input.receivable_amount
+            discount_amount: $input.discount_amount
+            paid_amount: $input.paid_amount
             status: $input.status
             details: $input.details
       - create_relation:
@@ -1150,17 +1628,17 @@ actions:
 
   record_vehicle_id:
     name: 登记车辆识别
-    description: 在当前通行中补充入口、门架或出口牌识事实。
+    description: 为当前入口、门架或出口交易补充一项车辆识别事实。
     icon: scan_search
     handler: changeset
-    available_on: [passage]
-    confirmation: 登记车辆识别结果并关联当前通行和识别位置。
+    available_on: [toll_transaction]
+    confirmation: 登记车辆识别结果并关联当前交易，识别位置沿交易关系推导。
     inputs:
       reference_no: {name: 识别流水号, property: reference_no, required: true}
-      facility_id: {name: 识别位置, object_types: [toll_station, toll_gantry], required: true}
-      stage: {name: 通行阶段, property: stage, required: true}
-      occurred_on: {name: 识别日期, property: occurred_on, required: true}
+      occurred_at: {name: 识别时间, property: occurred_at, required: true}
       plate_no: {name: 识别车牌, property: plate_no, required: false}
+      vehicle_type: {name: 识别车型, property: vehicle_type, required: false}
+      direction: {name: 行驶方向, property: direction, required: false}
       result: {name: 识别结果, property: result, required: false}
       details: {name: 识别详情, property: details, required: false}
     effects:
@@ -1170,9 +1648,10 @@ actions:
           name: $input.reference_no
           properties:
             reference_no: $input.reference_no
-            stage: $input.stage
-            occurred_on: $input.occurred_on
+            occurred_at: $input.occurred_at
             plate_no: $input.plate_no
+            vehicle_type: $input.vehicle_type
+            direction: $input.direction
             result: $input.result
             details: $input.details
       - create_relation:
@@ -1180,11 +1659,72 @@ actions:
           from: $context
           to: $identification
           properties: {role: vehicle_identification}
+
+  record_vehicle_check:
+    name: 登记预约车辆查验
+    description: 在当前通行中登记绿通或大件运输预约车辆的出口查验结果。
+    icon: clipboard_check
+    handler: changeset
+    available_on: [passage]
+    confirmation: 登记预约车辆查验结果并关联当前通行。
+    inputs:
+      reference_no: {name: 查验流水号, property: reference_no, required: true}
+      occurred_on: {name: 查验日期, property: occurred_on, required: true}
+      result: {name: 查验结果, property: result, required: true}
+      details: {name: 查验详情, property: details, required: false}
+    effects:
+      - create_object:
+          ref: check
+          type: vehicle_check_result
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            occurred_on: $input.occurred_on
+            result: $input.result
+            details: $input.details
       - create_relation:
           type: references
-          from: $identification
-          to: $input.facility_id
-          properties: {role: identification_facility}
+          from: $context
+          to: $check
+          properties: {role: vehicle_check}
+
+  record_second_charge:
+    name: 登记二次计费
+    description: 根据当前通行的查验或优惠结果登记一次重新计费结果。
+    icon: calculator
+    handler: changeset
+    available_on: [passage]
+    confirmation: 登记二次计费结果并追溯原始查验与通行。
+    inputs:
+      reference_no: {name: 二次计费流水号, property: reference_no, required: true}
+      original_amount: {name: 原计费金额, property: original_amount, required: false}
+      amount: {name: 二次计费金额, property: amount, required: true}
+      occurred_on: {name: 计费日期, property: occurred_on, required: true}
+      result: {name: 处理结果, property: result, required: true}
+      check_id: {name: 查验结果, object_types: [vehicle_check_result], required: true}
+      details: {name: 计费详情, property: details, required: false}
+    effects:
+      - create_object:
+          ref: charge
+          type: second_charge_result
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            original_amount: $input.original_amount
+            amount: $input.amount
+            occurred_on: $input.occurred_on
+            result: $input.result
+            details: $input.details
+      - create_relation:
+          type: contains
+          from: $context
+          to: $charge
+          properties: {role: second_charge_result}
+      - create_relation:
+          type: derives
+          from: $input.check_id
+          to: $charge
+          properties: {role: check_basis}
 
   create_split_record:
     name: 生成拆分记录
@@ -1452,6 +1992,47 @@ actions:
           to: $context
           properties: {role: affected_account, status: confirmed}
 
+  record_account_entry:
+    name: 登记账户记账
+    description: 将当前资金交易实际记入用户账户或卡账户，并保留记账后的余额事实。
+    icon: notebook_pen
+    handler: changeset
+    available_on: [account_transaction]
+    confirmation: 登记账户记账明细并关联资金账户和来源交易。
+    inputs:
+      name: {name: 记账名称, type: string, required: true}
+      account_id: {name: 记账账户, object_types: [user_account, card_account], required: true}
+      reference_no: {name: 记账流水号, property: reference_no, required: true}
+      category: {name: 记账类型, property: category, required: true}
+      amount: {name: 变动金额, property: amount, required: true}
+      occurred_on: {name: 记账日期, property: occurred_on, required: true}
+      balance: {name: 记账后余额, property: balance, required: false}
+      status: {name: 状态, property: status, required: false, default: booked}
+      details: {name: 记账详情, property: details, required: false}
+    effects:
+      - create_object:
+          ref: entry
+          type: account_entry
+          name: $input.name
+          properties:
+            category: $input.category
+            reference_no: $input.reference_no
+            amount: $input.amount
+            occurred_on: $input.occurred_on
+            balance: $input.balance
+            status: $input.status
+            details: $input.details
+      - create_relation:
+          type: derives
+          from: $context
+          to: $entry
+          properties: {role: bookkeeping_entry}
+      - create_relation:
+          type: contains
+          from: $input.account_id
+          to: $entry
+          properties: {role: account_entry}
+
   record_stock_movement:
     name: 登记库存变化
     description: 在当前库存账户登记 ETC 卡、OBU、CPC 卡或纸券的入库、领用、上缴或调整。
@@ -1492,14 +2073,13 @@ actions:
 
   record_consumption:
     name: 登记 ETC 消费
-    description: 根据当前 ETC 通行登记消费明细，并关联实际 ETC 卡和卡资金账户。
+    description: 根据当前 ETC 通行登记消费明细，并关联实际扣款的卡资金账户。
     icon: circle_dollar_sign
     handler: changeset
     available_on: [passage]
-    confirmation: 登记 ETC 消费并建立通行、ETC 卡和卡资金账户追溯关系。
+    confirmation: 登记 ETC 消费并建立通行和卡资金账户追溯关系。
     inputs:
       reference_no: {name: 消费流水号, property: reference_no, required: true}
-      card_id: {name: ETC 卡, object_types: [etc_card], required: true}
       account_id: {name: 卡资金账户, object_types: [card_account], required: true}
       amount: {name: 实收金额, property: amount, required: true}
       occurred_on: {name: 消费日期, property: occurred_on, required: true}
@@ -1521,11 +2101,6 @@ actions:
           from: $consumption
           to: $context
           properties: {role: passage, amount: $input.amount}
-      - create_relation:
-          type: references
-          from: $consumption
-          to: $input.card_id
-          properties: {role: payment_card}
       - create_relation:
           type: associates
           from: $consumption
@@ -1693,6 +2268,59 @@ actions:
           to: $rule
           properties: {role: fee_rule}
 
+  add_fee_rule_basis:
+    name: 关联计费依据
+    description: 为当前费率或路径规则关联收费单元、收费站、门架或其他规则作为计算依据。
+    icon: network
+    handler: changeset
+    available_on: [fee_rule]
+    confirmation: 为当前计费规则建立依据关系。
+    inputs:
+      basis_id:
+        name: 计费依据
+        object_types: [toll_interval, toll_station, toll_gantry, fee_rule]
+        required: true
+      role: {name: 依据角色, property: role, required: false, default: calculation_basis}
+    effects:
+      - create_relation:
+          type: references
+          from: $context
+          to: $input.basis_id
+          properties: {role: $input.role}
+
+  derive_fee_rule:
+    name: 生成计费结果规则
+    description: 根据当前收费单元、收费站、门架或费率规则生成省级费率、路径或代收结果规则。
+    icon: route
+    handler: changeset
+    available_on: [toll_interval, toll_station, toll_gantry, fee_rule]
+    confirmation: 生成计费结果规则并保留来源关系。
+    inputs:
+      name: {name: 规则名称, type: string, required: true}
+      category: {name: 规则类别, property: category, required: true}
+      code: {name: 规则编码, property: code, required: false}
+      version: {name: 规则版本, property: version, required: false}
+      valid_from: {name: 生效日期, property: valid_from, required: false}
+      valid_to: {name: 失效日期, property: valid_to, required: false}
+      details: {name: 规则内容, property: details, required: true}
+    effects:
+      - create_object:
+          ref: result_rule
+          type: fee_rule
+          name: $input.name
+          properties:
+            category: $input.category
+            code: $input.code
+            version: $input.version
+            valid_from: $input.valid_from
+            valid_to: $input.valid_to
+            details: $input.details
+      - create_relation:
+          type: derives
+          from: $context
+          to: $result_rule
+          properties: {role: calculation_source}
+
   add_control_record:
     name: 纳入业务控制
     description: 将当前车辆、OBU、ETC 卡、CPC 卡或业务设备纳入状态、追缴、预约或白名单控制。
@@ -1730,6 +2358,42 @@ actions:
           to: $context
           properties: {role: controlled_object}
 
+  promote_control_record:
+    name: 确认追缴名单
+    description: 根据当前预追缴记录生成正式追缴记录，保留稽核确认来源。
+    icon: shield_alert
+    handler: changeset
+    available_on: [control_record]
+    confirmation: 生成正式追缴记录并保留预追缴来源。
+    inputs:
+      name: {name: 追缴记录名称, type: string, required: true}
+      code: {name: 追缴记录编码, property: code, required: false}
+      status: {name: 状态, property: status, required: false, default: active}
+      version: {name: 版本, property: version, required: false}
+      valid_from: {name: 生效日期, property: valid_from, required: false}
+      valid_to: {name: 失效日期, property: valid_to, required: false}
+      reason: {name: 确认原因, property: reason, required: true}
+      details: {name: 追缴详情, property: details, required: false}
+    effects:
+      - create_object:
+          ref: recovery
+          type: control_record
+          name: $input.name
+          properties:
+            category: recovery
+            code: $input.code
+            status: $input.status
+            version: $input.version
+            valid_from: $input.valid_from
+            valid_to: $input.valid_to
+            reason: $input.reason
+            details: $input.details
+      - create_relation:
+          type: derives
+          from: $context
+          to: $recovery
+          properties: {role: confirmed_recovery, reason: $input.reason}
+
   register_operating_parameter:
     name: 登记运行参数
     description: 登记收费站、车道、门架或联网中心使用的版本化运行配置。
@@ -1758,3 +2422,23 @@ actions:
             valid_from: $input.valid_from
             valid_to: $input.valid_to
             details: $input.details
+
+  apply_operating_parameter:
+    name: 应用运行参数
+    description: 将当前运行参数应用到收费站、收费车道、收费门架、车辆或业务设备。
+    icon: settings
+    handler: changeset
+    available_on: [operating_parameter]
+    confirmation: 将运行参数关联到所选业务对象。
+    inputs:
+      target_id:
+        name: 应用对象
+        object_types: [toll_station, toll_lane, toll_gantry, toll_interval, vehicle, business_device]
+        required: true
+      role: {name: 参数作用, property: role, required: false, default: configured_object}
+    effects:
+      - create_relation:
+          type: references
+          from: $context
+          to: $input.target_id
+          properties: {role: $input.role}

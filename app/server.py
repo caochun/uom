@@ -11,12 +11,14 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from app.agent_runtime import OagAgentRuntime
+from oms.spatial import SpatialViewService
 from oms.store import ChangeValidationError
 
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_ROOT = ROOT / "app" / "static"
 AGENT = OagAgentRuntime(ROOT)
+SPATIAL = SpatialViewService(AGENT.repository) if AGENT.repository is not None else None
 
 
 class OmsHandler(BaseHTTPRequestHandler):
@@ -28,6 +30,19 @@ class OmsHandler(BaseHTTPRequestHandler):
             self._json(AGENT.bootstrap())
         elif path == "/api/agent/status":
             self._json(AGENT.status())
+        elif path == "/api/map/config":
+            self._json(SpatialViewService.map_config())
+        elif path.startswith("/api/spatial/objects/"):
+            if SPATIAL is None:
+                raise RuntimeError("OMS spatial service is unavailable")
+            object_id = unquote(path.removeprefix("/api/spatial/objects/"))
+            if not object_id:
+                self._json({"error": "Object ID is required"}, HTTPStatus.BAD_REQUEST)
+            else:
+                try:
+                    self._json(SPATIAL.get_view(object_id))
+                except KeyError as exc:
+                    self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
         elif path.startswith("/api/"):
             self._json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
         else:

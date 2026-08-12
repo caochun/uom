@@ -287,6 +287,13 @@ class OmsActionService:
                 date.fromisoformat(value)
             except ValueError:
                 return "必须是 ISO 日期"
+        if value_type == "datetime":
+            try:
+                if not isinstance(value, str):
+                    raise ValueError
+                datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return "必须是 ISO 日期时间"
         if value_type == "period" and (not isinstance(value, str) or not _PERIOD.fullmatch(value)):
             return "必须是 YYYY-MM"
         if value_type == "money":
