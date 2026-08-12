@@ -1,4 +1,4 @@
-"""Model-driven business actions compiled to validated OMS ChangeSets."""
+"""Compile model-driven business actions to validated UOM ChangeSets."""
 
 from __future__ import annotations
 
@@ -9,17 +9,17 @@ from datetime import date, datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from oms.store import ChangeValidationError, OmsWorkspaceService
+from uom.workspace import ChangeValidationError, UomWorkspaceService
 
 
 _MISSING = object()
 _PERIOD = re.compile(r"[0-9]{4}-(0[1-9]|1[0-2])")
 
 
-class OmsActionService:
+class ModelActionService:
     """Resolve the small action DSL in model.yaml into ordinary ChangeSets."""
 
-    def __init__(self, workspace: OmsWorkspaceService):
+    def __init__(self, workspace: UomWorkspaceService):
         self.workspace = workspace
         self._previews: dict[str, dict[str, Any]] = {}
         self._lock = threading.RLock()

@@ -1,4 +1,4 @@
-schema: oms.business_model.v2
+schema: uom.domain_model.v1
 
 model:
   name: OMS 高速联网收费领域模型
@@ -7,6 +7,36 @@ model:
     面向高速联网收费业务追溯的精简对象关系模型。模型保留路网、车辆与通行介质、
     通行交易、拆分清分、客服资金、费率和运行控制的核心语义。来源数据中的业务对象标识
     通过关系表达，可沿关系推导的对象联系不重复保存，模型不复刻业务系统表结构。
+
+runtime:
+  functions:
+    get_business_overview:
+      summary: 获取路网、通行、交易、拆分清分和客服资金概览
+      function_type: get
+      involves_objects: [Object, Relation]
+      implementation: highway.business:get_business_overview
+    get_passage_trace:
+      summary: 获取一次通行的车辆、交易、牌识、拆分和清分追溯链
+      function_type: get
+      involves_objects: [Object, Relation]
+      implementation: highway.business:get_passage_trace
+      params:
+        passage_id: {type: str, description: 通行记录对象 ID}
+        depth: {type: int, description: 追溯深度, default: 4}
+    find_incomplete_passages:
+      summary: 查找缺少入口、出口或拆分事实的通行记录
+      function_type: get
+      involves_objects: [Object, Relation]
+      implementation: highway.business:find_incomplete_passages
+  interaction_policies:
+    user_chat:
+      include_in_system_prompt: true
+      instructions:
+        - 通行、收费和清分结论优先使用确定性函数，不自行猜测金额或关系。
+        - 用户明确说出“登记收费公路”“登记车辆通行”“生成清分结果”等业务操作时，首轮直接调用 ui_open_action_form；只有无法确定 action_id 时才调用 get_available_actions。
+        - 不要为了补齐 Action 的必填输入在对话中逐项追问；将已明确且格式可靠的值放入 initial_inputs，其余由用户在表单中填写。
+        - derives 的方向固定为来源事实指向生成结果；例如 passage -> split_record -> clearing_result。
+        - 同类设备、名单和运行参数已经过领域抽象，具体种类优先写入 category，不要自行创建大量细粒度类型。
 
 property_definitions:
   status:

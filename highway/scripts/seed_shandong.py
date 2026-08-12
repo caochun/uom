@@ -16,10 +16,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "oag-agent"))
 
 from oag.ontology.loader import load_domain  # noqa: E402
-from oms.scripts.validate_model import ModelValidator, load_yaml  # noqa: E402
+from uom.validation import ModelValidator, load_yaml  # noqa: E402
 
 
-OMS_ROOT = Path(__file__).resolve().parents[1]
+DOMAIN_ROOT = Path(__file__).resolve().parents[1]
+CORE_ONTOLOGY = PROJECT_ROOT / "uom" / "ontology.yaml"
 COORDINATE_SYSTEM = "GCJ-02"
 
 
@@ -614,23 +615,23 @@ def build_graph() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
 
 
 def validate_graph(
-    oms_root: Path,
+    domain_root: Path,
     objects: list[dict[str, Any]],
     relations: list[dict[str, Any]],
 ) -> None:
-    business_model = load_yaml(oms_root / "model.yaml")
+    domain_model = load_yaml(domain_root / "model.yaml")
     result = ModelValidator(
-        load_yaml(oms_root / "ontology.yaml"),
-        {"schema": "oms.data.objects.v2", "objects": objects},
-        {"schema": "oms.data.relations.v2", "relations": relations},
-        business_model,
+        load_yaml(CORE_ONTOLOGY),
+        {"schema": "uom.data.objects.v1", "objects": objects},
+        {"schema": "uom.data.relations.v1", "relations": relations},
+        domain_model,
     ).validate()
     if result.errors:
         raise ValueError("\n".join(result.errors))
     object_types = {item["type"] for item in objects}
-    missing_object_types = set(business_model.get("object_types", {})) - object_types
+    missing_object_types = set(domain_model.get("object_types", {})) - object_types
     relation_types = {item["type"] for item in relations}
-    missing_relation_types = set(business_model.get("relation_types", {})) - relation_types
+    missing_relation_types = set(domain_model.get("relation_types", {})) - relation_types
     if missing_object_types or missing_relation_types:
         messages = []
         if missing_object_types:
@@ -642,16 +643,16 @@ def validate_graph(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=OMS_ROOT)
+    parser.add_argument("--root", type=Path, default=DOMAIN_ROOT)
     parser.add_argument(
         "--confirm-clear",
         action="store_true",
         help="replace all Object/Relation records and clear the action log",
     )
     args = parser.parse_args()
-    oms_root = args.root.resolve()
+    domain_root = args.root.resolve()
     objects, relations = build_graph()
-    validate_graph(oms_root, objects, relations)
+    validate_graph(domain_root, objects, relations)
 
     type_counts = Counter(item["type"] for item in objects)
     print(f"Validated {len(objects)} objects and {len(relations)} relations")
@@ -660,7 +661,7 @@ def main() -> int:
         print("Dry run only; pass --confirm-clear to replace the database")
         return 0
 
-    _, repository, _ = load_domain(oms_root)
+    _, repository, _ = load_domain(domain_root)
     try:
         adapter = repository.adapter_for("Object")
         adapter.replace_graph(objects, relations)
@@ -669,7 +670,10 @@ def main() -> int:
             connection.commit()
     finally:
         repository.close()
-    print(f"Seeded {len(objects)} objects and {len(relations)} relations into {oms_root / 'data' / 'oms.db'}")
+    print(
+        f"Seeded {len(objects)} objects and {len(relations)} relations into "
+        f"{domain_root / 'data' / 'graph.db'}"
+    )
     return 0
 
 

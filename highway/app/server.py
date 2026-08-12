@@ -1,4 +1,4 @@
-"""Serve the OMS workspace and its OAG Agent API."""
+"""Serve the Highway OMS workbench and its OAG Agent API."""
 
 from __future__ import annotations
 
@@ -10,19 +10,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from app.agent_runtime import OagAgentRuntime
-from oms.spatial import SpatialViewService
-from oms.store import ChangeValidationError
+from highway.app.agent_runtime import OagAgentRuntime
+from uom.workspace import ChangeValidationError
 
 
-ROOT = Path(__file__).resolve().parents[1]
-STATIC_ROOT = ROOT / "app" / "static"
+ROOT = Path(__file__).resolve().parents[2]
+STATIC_ROOT = Path(__file__).resolve().parent / "static"
 AGENT = OagAgentRuntime(ROOT)
-SPATIAL = SpatialViewService(AGENT.repository) if AGENT.repository is not None else None
+SPATIAL = AGENT.get_resolver("spatial_view")
 
 
-class OmsHandler(BaseHTTPRequestHandler):
-    server_version = "OMS/0.1"
+class UomHandler(BaseHTTPRequestHandler):
+    server_version = "HighwayOMS/0.1"
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
@@ -31,10 +30,14 @@ class OmsHandler(BaseHTTPRequestHandler):
         elif path == "/api/agent/status":
             self._json(AGENT.status())
         elif path == "/api/map/config":
-            self._json(SpatialViewService.map_config())
+            self._json(
+                SPATIAL.map_config()
+                if SPATIAL is not None
+                else {"provider": "none", "enabled": False}
+            )
         elif path.startswith("/api/spatial/objects/"):
             if SPATIAL is None:
-                raise RuntimeError("OMS spatial service is unavailable")
+                raise RuntimeError("This domain does not provide a spatial view")
             object_id = unquote(path.removeprefix("/api/spatial/objects/"))
             if not object_id:
                 self._json({"error": "Object ID is required"}, HTTPStatus.BAD_REQUEST)
@@ -164,8 +167,8 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
-    server = ThreadingHTTPServer((args.host, args.port), OmsHandler)
-    print(f"OMS running at http://{args.host}:{args.port}")
+    server = ThreadingHTTPServer((args.host, args.port), UomHandler)
+    print(f"Highway OMS running at http://{args.host}:{args.port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

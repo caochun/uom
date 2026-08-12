@@ -1,1 +1,0 @@
-"""OMS web application."""

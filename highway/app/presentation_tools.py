@@ -1,4 +1,4 @@
-"""Bind OMS presentation tools to the OAG frontend surface."""
+"""Bind UOM presentation tools to the Highway frontend surface."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ from typing import Any
 
 from oag.tools.registry import ToolDef, ToolPolicy
 
-from oms.store import ChangeValidationError
+from uom.workspace import ChangeValidationError
 
 
 def register_presentation_tools(harness, ontology, workspace, actions) -> None:
-    """Register frontend-only tools using the current OMS Action catalog."""
+    """Register frontend-only tools using the current UOM Action catalog."""
     definition = ontology.presentation_tools.get("ui_open_action_form")
     if definition is None:
         return

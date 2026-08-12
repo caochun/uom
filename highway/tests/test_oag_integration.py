@@ -15,20 +15,20 @@ sys.path.insert(0, str(ROOT))
 
 from oag.ontology.loader import load_domain  # noqa: E402
 from oag.tools.registry import ToolRegistry  # noqa: E402
-from app.presentation_tools import register_presentation_tools  # noqa: E402
-from oms.store import OmsWorkspaceService  # noqa: E402
+from highway.app.presentation_tools import register_presentation_tools  # noqa: E402
+from uom.workspace import UomWorkspaceService  # noqa: E402
 
 
 class OagIntegrationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.oms_root = Path(self.temp_dir.name) / "oms"
+        self.domain_root = Path(self.temp_dir.name) / "highway"
         shutil.copytree(
-            ROOT / "oms",
-            self.oms_root,
+            ROOT / "highway",
+            self.domain_root,
             ignore=shutil.ignore_patterns("__pycache__", "*.db", "*.db-*"),
         )
-        self.ontology, self.repository, self.registry = load_domain(self.oms_root)
+        self.ontology, self.repository, self.registry = load_domain(self.domain_root)
 
     def tearDown(self) -> None:
         self.repository.close()
@@ -93,12 +93,28 @@ class OagIntegrationTest(unittest.TestCase):
     def test_empty_sqlite_data_is_exposed_through_repository_adapters(self) -> None:
         self.assertEqual([], self.repository.query("Object"))
         self.assertEqual([], self.repository.query("Relation"))
-        self.assertEqual("oms_sqlite", self.ontology.objects["Object"].source.type)
-        self.assertEqual("oms_sqlite", self.ontology.objects["Relation"].source.type)
+        self.assertEqual("uom_sqlite", self.ontology.objects["Object"].source.type)
+        self.assertEqual("uom_sqlite", self.ontology.objects["Relation"].source.type)
         self.assertEqual(
-            "OmsSqliteAdapter",
+            "UomSqliteAdapter",
             type(self.repository.adapter_for("Object")).__name__,
         )
+
+    def test_provider_builds_one_effective_ontology_for_the_runtime(self) -> None:
+        self.assertEqual("OMS 高速联网收费领域模型", self.ontology.name)
+        self.assertIs(self.ontology, self.repository.ontology)
+        self.assertIn("trace_object", self.ontology.functions)
+        self.assertIn("get_passage_trace", self.ontology.functions)
+        instructions = self.ontology.interaction_policies["user_chat"].instructions
+        self.assertTrue(any("properties" in item for item in instructions))
+        self.assertTrue(any("通行、收费和清分" in item for item in instructions))
+        self.assertIsNotNone(self.registry.get_resolver("uom_workspace"))
+        self.assertIsNotNone(self.registry.get_resolver("uom_actions"))
+        self.assertEqual(
+            "SpatialViewService",
+            type(self.registry.get_resolver("spatial_view")).__name__,
+        )
+        self.assertIsNone(self.registry.get_resolver("oms_actions"))
 
     def test_domain_functions_keep_graph_queries_outside_the_llm(self) -> None:
         self.seed_passage_example()
@@ -185,8 +201,8 @@ class OagIntegrationTest(unittest.TestCase):
         self.assertTrue(any(item["name"] == "测试客户" for item in self.repository.query("Object")))
 
     def test_action_form_is_a_bound_presentation_tool(self) -> None:
-        workspace = OmsWorkspaceService(self.oms_root, self.repository)
-        actions = self.registry.get_resolver("oms_actions")
+        workspace = UomWorkspaceService(self.domain_root, self.repository)
+        actions = self.registry.get_resolver("uom_actions")
         harness = SimpleNamespace(tools=ToolRegistry())
 
         register_presentation_tools(harness, self.ontology, workspace, actions)

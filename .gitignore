@@ -1,6 +1,7 @@
 # Python bytecode and caches
 __pycache__/
 *.py[cod]
+*$py.class
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -35,7 +36,7 @@ chat_*.db
 *.db-shm
 *.db-wal
 *.db-*
-!oms/data/oms.db
+!highway/data/graph.db
 
 # Frontend tooling and browser tests
 node_modules/

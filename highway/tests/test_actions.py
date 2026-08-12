@@ -12,22 +12,22 @@ sys.path.insert(0, str(ROOT / "oag-agent"))
 sys.path.insert(0, str(ROOT))
 
 from oag.ontology.loader import load_domain  # noqa: E402
-from oms.actions import OmsActionService  # noqa: E402
-from oms.store import ChangeValidationError, OmsWorkspaceService  # noqa: E402
+from uom.actions import ModelActionService  # noqa: E402
+from uom.workspace import ChangeValidationError, UomWorkspaceService  # noqa: E402
 
 
-class OmsActionServiceTest(unittest.TestCase):
+class ModelActionServiceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.oms_root = Path(self.temp_dir.name) / "oms"
+        self.domain_root = Path(self.temp_dir.name) / "highway"
         shutil.copytree(
-            ROOT / "oms",
-            self.oms_root,
+            ROOT / "highway",
+            self.domain_root,
             ignore=shutil.ignore_patterns("__pycache__", "*.db", "*.db-*"),
         )
-        self.ontology, self.repository, _ = load_domain(self.oms_root)
-        self.workspace = OmsWorkspaceService(self.oms_root, self.repository)
-        self.actions = OmsActionService(self.workspace)
+        self.ontology, self.repository, _ = load_domain(self.domain_root)
+        self.workspace = UomWorkspaceService(self.domain_root, self.repository)
+        self.actions = ModelActionService(self.workspace)
 
     def tearDown(self) -> None:
         self.repository.close()

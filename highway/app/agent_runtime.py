@@ -9,8 +9,14 @@ from typing import Any, Iterator
 
 
 class OagAgentRuntime:
-    def __init__(self, root: str | Path):
+    def __init__(self, root: str | Path, domain_dir: str | Path | None = None):
         self.root = Path(root).resolve()
+        configured_domain = domain_dir or os.environ.get("UOM_DOMAIN_DIR", "highway")
+        configured_path = Path(configured_domain)
+        self.domain_dir = (
+            configured_path if configured_path.is_absolute()
+            else self.root / configured_path
+        ).resolve()
         self._agent = None
         self._error = ""
         self._lock = threading.RLock()
@@ -26,14 +32,14 @@ class OagAgentRuntime:
             from oag.ontology.loader import load_domain
 
             self.ontology, self.repository, self.registry = load_domain(
-                self.root / "oms"
+                self.domain_dir
             )
-            self.actions = self.registry.get_resolver("oms_actions")
+            self.actions = self.registry.get_resolver("uom_actions")
             if self.actions is None:
-                raise RuntimeError("OMS Action service 未注册")
+                raise RuntimeError("UOM Action service 未注册")
             self.workspace = self.actions.workspace
         except Exception as exc:
-            self._error = f"OMS domain 初始化失败: {exc}"
+            self._error = f"UOM domain 初始化失败: {exc}"
             return
 
         model = (
@@ -60,7 +66,7 @@ class OagAgentRuntime:
             from oag.agent import Agent
             from oag.harness import Harness
             from oag.runtime import HarnessConfig
-            from app.presentation_tools import register_presentation_tools
+            from highway.app.presentation_tools import register_presentation_tools
 
             client_args: dict[str, Any] = {"api_key": api_key}
             if base_url:
@@ -76,7 +82,7 @@ class OagAgentRuntime:
                     enable_write_confirmation=True,
                     enable_analysis_tools=False,
                     max_turns=8,
-                    runtime_context={"surface": "OMS Web"},
+                    runtime_context={"surface": "Highway OMS"},
                     llm_extra_body=(
                         {"chat_template_kwargs": {"enable_thinking": False}}
                         if disable_reasoning
@@ -102,12 +108,12 @@ class OagAgentRuntime:
 
     def bootstrap(self) -> dict[str, Any]:
         if self.workspace is None:
-            raise RuntimeError(self._error or "OMS domain 未初始化")
+            raise RuntimeError(self._error or "UOM domain 未初始化")
         return self.workspace.bootstrap()
 
     def call_domain(self, name: str, **kwargs: Any) -> Any:
         if self.registry is None:
-            raise RuntimeError(self._error or "OMS domain 未初始化")
+            raise RuntimeError(self._error or "UOM domain 未初始化")
         return self.registry.call(name, **kwargs)
 
     def status(self) -> dict[str, Any]:
@@ -116,6 +122,9 @@ class OagAgentRuntime:
             "runtime": "oag-agent",
             "message": "已连接" if self._agent is not None else self._error,
         }
+
+    def get_resolver(self, name: str) -> Any:
+        return self.registry.get_resolver(name) if self.registry is not None else None
 
     def chat(self, message: str, session_id: str) -> Iterator[dict[str, Any]]:
         if self._agent is None:

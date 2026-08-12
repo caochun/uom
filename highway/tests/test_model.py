@@ -6,23 +6,25 @@ import unittest
 from pathlib import Path
 
 
-OMS_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(OMS_ROOT / "scripts"))
+DOMAIN_ROOT = Path(__file__).resolve().parents[1]
+CORE_ONTOLOGY = DOMAIN_ROOT.parent / "uom" / "ontology.yaml"
+sys.path.insert(0, str(DOMAIN_ROOT / "scripts"))
 
-from validate_model import ModelValidator, load_data, load_yaml, validate_model  # noqa: E402
+from uom.validation import ModelValidator, load_data, load_yaml, validate_model  # noqa: E402
+from uom.composition import compose_ontology_payload  # noqa: E402
 from seed_shandong import build_graph  # noqa: E402
 
 
-class OmsModelTest(unittest.TestCase):
+class UomDomainModelTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.ontology = load_yaml(OMS_ROOT / "ontology.yaml")
-        cls.business_model = load_yaml(OMS_ROOT / "model.yaml")
-        cls.current_objects, cls.current_relations = load_data(OMS_ROOT)
+        cls.ontology = load_yaml(CORE_ONTOLOGY)
+        cls.domain_model = load_yaml(DOMAIN_ROOT / "model.yaml")
+        cls.current_objects, cls.current_relations = load_data(DOMAIN_ROOT)
 
     def setUp(self) -> None:
         self.objects = {
-            "schema": "oms.data.objects.v2",
+            "schema": "uom.data.objects.v1",
             "objects": [
                 {
                     "id": "party:operator",
@@ -141,7 +143,7 @@ class OmsModelTest(unittest.TestCase):
             ],
         }
         self.relations = {
-            "schema": "oms.data.relations.v2",
+            "schema": "uom.data.relations.v1",
             "relations": [
                 {
                     "id": "rel:road-section",
@@ -243,47 +245,49 @@ class OmsModelTest(unittest.TestCase):
             self.ontology,
             self.objects if objects is None else objects,
             self.relations if relations is None else relations,
-            self.business_model if model is None else model,
+            self.domain_model if model is None else model,
         ).validate()
 
     def test_model_and_current_database_are_valid(self) -> None:
-        self.assertEqual([], validate_model(OMS_ROOT).errors)
+        self.assertEqual([], validate_model(DOMAIN_ROOT).errors)
         self.assertIsInstance(self.current_objects["objects"], list)
         self.assertIsInstance(self.current_relations["relations"], list)
 
     def test_ontology_defines_only_object_and_relation(self) -> None:
         self.assertEqual({"Object", "Relation"}, set(self.ontology["objects"]))
         self.assertEqual("open", self.ontology["objects"]["Object"]["type_policy"])
-        self.assertFalse((OMS_ROOT / "metamodel.yaml").exists())
+        self.assertNotIn("get_passage_trace", self.ontology["functions"])
+        self.assertNotIn("高速", CORE_ONTOLOGY.read_text(encoding="utf-8"))
+        self.assertFalse((DOMAIN_ROOT / "metamodel.yaml").exists())
 
     def test_v3_model_keeps_the_core_domains(self) -> None:
-        self.assertEqual(42, len(self.business_model["object_types"]))
-        self.assertEqual(5, len(self.business_model["relation_types"]))
-        self.assertEqual(51, len(self.business_model["actions"]))
+        self.assertEqual(42, len(self.domain_model["object_types"]))
+        self.assertEqual(5, len(self.domain_model["relation_types"]))
+        self.assertEqual(51, len(self.domain_model["actions"]))
         self.assertEqual(
             {"route_next", "contains", "references", "associates", "derives"},
-            set(self.business_model["relation_types"]),
+            set(self.domain_model["relation_types"]),
         )
-        self.assertIn("passage", self.business_model["object_types"])
-        self.assertIn("clearing_result", self.business_model["object_types"])
-        self.assertIn("account_transaction", self.business_model["object_types"])
-        self.assertNotIn("passage_medium", self.business_model["object_types"])
-        self.assertNotIn("account", self.business_model["object_types"])
-        self.assertNotIn("control_entry", self.business_model["object_types"])
-        self.assertNotIn("road_node", self.business_model["object_types"])
+        self.assertIn("passage", self.domain_model["object_types"])
+        self.assertIn("clearing_result", self.domain_model["object_types"])
+        self.assertIn("account_transaction", self.domain_model["object_types"])
+        self.assertNotIn("passage_medium", self.domain_model["object_types"])
+        self.assertNotIn("account", self.domain_model["object_types"])
+        self.assertNotIn("control_entry", self.domain_model["object_types"])
+        self.assertNotIn("road_node", self.domain_model["object_types"])
         for type_id in ("obu", "etc_card", "cpc_card", "user_account", "card_account"):
-            self.assertIn(type_id, self.business_model["object_types"])
+            self.assertIn(type_id, self.domain_model["object_types"])
         for type_id in (
             "account_entry", "business_device", "customer_service_record",
             "fee_rule", "control_record", "operating_parameter",
         ):
-            self.assertIn(type_id, self.business_model["object_types"])
+            self.assertIn(type_id, self.domain_model["object_types"])
 
     def test_shandong_seed_is_valid_and_reuses_cpc_by_passage(self) -> None:
         objects, relations = build_graph()
         result = self.validate(
-            objects={"schema": "oms.data.objects.v2", "objects": objects},
-            relations={"schema": "oms.data.relations.v2", "relations": relations},
+            objects={"schema": "uom.data.objects.v1", "objects": objects},
+            relations={"schema": "uom.data.relations.v1", "relations": relations},
         )
         self.assertEqual([], result.errors)
         cpc_roles = [
@@ -379,11 +383,11 @@ class OmsModelTest(unittest.TestCase):
     def test_shandong_seed_covers_all_model_types_and_spatial_objects(self) -> None:
         objects, relations = build_graph()
         self.assertEqual(
-            set(self.business_model["object_types"]),
+            set(self.domain_model["object_types"]),
             {item["type"] for item in objects},
         )
         self.assertEqual(
-            set(self.business_model["relation_types"]),
+            set(self.domain_model["relation_types"]),
             {item["type"] for item in relations},
         )
         spatial_types = {
@@ -421,15 +425,15 @@ class OmsModelTest(unittest.TestCase):
             for item in relations
         ))
 
-    def test_business_model_and_property_types_are_validated(self) -> None:
-        self.assertEqual("money", self.business_model["property_definitions"]["amount"]["type"])
-        invalid_model = copy.deepcopy(self.business_model)
+    def test_domain_model_and_property_types_are_validated(self) -> None:
+        self.assertEqual("money", self.domain_model["property_definitions"]["amount"]["type"])
+        invalid_model = copy.deepcopy(self.domain_model)
         invalid_model["relation_types"]["contains"]["from_types"] = ["TollRoad"]
         result = self.validate(model=invalid_model)
         self.assertTrue(any("ASCII snake_case" in error for error in result.errors))
 
     def test_action_definitions_compile_only_changeset_effects(self) -> None:
-        actions = self.business_model["actions"]
+        actions = self.domain_model["actions"]
         self.assertEqual(["toll_road"], actions["register_section"]["available_on"])
         self.assertEqual(["toll_station", "toll_plaza"], actions["register_toll_lane"]["available_on"])
         self.assertEqual(["passage"], actions["record_vehicle_check"]["available_on"])
@@ -451,10 +455,37 @@ class OmsModelTest(unittest.TestCase):
             ["card_account"],
             actions["record_consumption"]["inputs"]["account_id"]["object_types"],
         )
-        invalid_model = copy.deepcopy(self.business_model)
+        invalid_model = copy.deepcopy(self.domain_model)
         invalid_model["actions"]["register_party"]["effects"].append({"send_email": {}})
         result = self.validate(model=invalid_model)
         self.assertTrue(any("only create_object and create_relation" in error for error in result.errors))
+
+    def test_runtime_functions_require_implementations_and_cannot_override_core(self) -> None:
+        missing_implementation = copy.deepcopy(self.domain_model)
+        del missing_implementation["runtime"]["functions"]["get_passage_trace"]["implementation"]
+        result = self.validate(model=missing_implementation)
+        self.assertTrue(any("implementation must be module:function" in error for error in result.errors))
+
+        override = copy.deepcopy(self.domain_model)
+        override["runtime"]["functions"]["trace_object"] = {
+            "summary": "非法覆盖核心函数",
+            "implementation": "highway.business:get_passage_trace",
+        }
+        result = self.validate(model=override)
+        self.assertTrue(any("cannot override core definitions" in error for error in result.errors))
+
+    def test_domain_policy_extends_without_disabling_the_core_policy(self) -> None:
+        domain_model = copy.deepcopy(self.domain_model)
+        domain_model["runtime"]["interaction_policies"]["user_chat"][
+            "include_in_system_prompt"
+        ] = False
+        effective = compose_ontology_payload(self.ontology, domain_model)
+        policy = effective["interaction_policies"]["user_chat"]
+        self.assertTrue(policy["include_in_system_prompt"])
+        self.assertGreater(
+            len(policy["instructions"]),
+            len(self.ontology["interaction_policies"]["user_chat"]["instructions"]),
+        )
 
     def test_business_property_type_is_enforced(self) -> None:
         object_data = copy.deepcopy(self.objects)
@@ -507,7 +538,7 @@ class OmsModelTest(unittest.TestCase):
             "to": "vehicle:001",
         })
         result = self.validate(relations=relation_data)
-        self.assertTrue(any("object type does not match business model" in error for error in result.errors))
+        self.assertTrue(any("object type does not match domain model" in error for error in result.errors))
 
     def test_derives_is_acyclic(self) -> None:
         relation_data = copy.deepcopy(self.relations)

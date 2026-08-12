@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the two-concept OMS ontology and its object-relation data."""
+"""Validate a UOM core ontology, domain model and object-relation data."""
 
 from __future__ import annotations
 
@@ -14,10 +14,19 @@ from typing import Any
 
 import yaml
 
+from oag.ontology.schema import FunctionDef, Ontology
+from pydantic import ValidationError
+
+from uom.composition import (
+    compose_ontology_payload,
+    domain_function_implementations,
+)
+
 
 TYPE_ID = re.compile(r"^[a-z][a-z0-9_]*$")
 INSTANCE_ID = re.compile(r"^[a-z][a-z0-9_:/.-]*$")
 VALUE_TYPES = {"string", "number", "date", "datetime", "period", "money", "boolean", "json"}
+CORE_ONTOLOGY_PATH = Path(__file__).with_name("ontology.yaml")
 
 
 @dataclass
@@ -41,10 +50,10 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 
 def load_data(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    database_path = root / "data" / "oms.db"
+    database_path = root / "data" / "graph.db"
     if not database_path.exists():
         raise FileNotFoundError(
-            f"OMS database not found: {database_path}"
+            f"UOM database not found: {database_path}"
         )
 
     connection = sqlite3.connect(database_path)
@@ -60,8 +69,8 @@ def load_data(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     finally:
         connection.close()
     return (
-        {"schema": "oms.data.objects.v2", "objects": objects},
-        {"schema": "oms.data.relations.v2", "relations": relations},
+        {"schema": "uom.data.objects.v1", "objects": objects},
+        {"schema": "uom.data.relations.v1", "relations": relations},
     )
 
 
@@ -71,15 +80,15 @@ class ModelValidator:
         ontology: dict[str, Any],
         object_data: dict[str, Any],
         relation_data: dict[str, Any],
-        business_model: dict[str, Any] | None = None,
+        domain_model: dict[str, Any] | None = None,
     ) -> None:
         self.ontology = ontology
         self.object_data = object_data
         self.relation_data = relation_data
-        self.business_model = business_model
+        self.domain_model = domain_model
         self.result = ValidationResult()
         self.object_definitions = self._mapping(ontology.get("objects"))
-        model = self._mapping(business_model)
+        model = self._mapping(domain_model)
         self.property_definitions = self._mapping(model.get("property_definitions"))
         self.object_type_definitions = self._mapping(model.get("object_types"))
         self.relation_type_definitions = self._mapping(model.get("relation_types"))
@@ -94,16 +103,16 @@ class ModelValidator:
     def validate(self) -> ValidationResult:
         self._validate_ontology()
         self._validate_data()
-        if self.business_model is not None:
-            self._validate_business_model()
-            self._validate_data_against_business_model()
+        if self.domain_model is not None:
+            self._validate_domain_model()
+            self._validate_data_against_domain_model()
         self._validate_semantics()
         return self.result
 
-    def _validate_business_model(self) -> None:
-        model = self.business_model or {}
-        if model.get("schema") != "oms.business_model.v2":
-            self.result.error("model.schema", "must be oms.business_model.v2")
+    def _validate_domain_model(self) -> None:
+        model = self.domain_model or {}
+        if model.get("schema") != "uom.domain_model.v1":
+            self.result.error("model.schema", "must be uom.domain_model.v1")
         metadata = self._mapping(model.get("model"))
         if not metadata.get("name") or not metadata.get("version"):
             self.result.error("model.model", "must contain name and version")
@@ -163,7 +172,36 @@ class ModelValidator:
                 if kind == "relation" and "acyclic" in definition and not isinstance(definition["acyclic"], bool):
                     self.result.error(f"{path}.acyclic", "must be a boolean")
 
+        self._validate_runtime(model)
         self._validate_actions(model.get("actions"))
+
+    def _validate_runtime(self, model: dict[str, Any]) -> None:
+        try:
+            effective = compose_ontology_payload(self.ontology, model)
+            implementations = domain_function_implementations(model)
+            Ontology.model_validate(effective)
+        except (TypeError, ValueError, ValidationError) as exc:
+            self.result.error("model.runtime", str(exc))
+            return
+
+        functions = self._mapping(self._mapping(model.get("runtime")).get("functions"))
+        allowed = set(FunctionDef.model_fields) | {"implementation"}
+        for name, definition in functions.items():
+            path = f"model.runtime.functions.{name}"
+            self._validate_type_id(name, path)
+            if not isinstance(definition, dict):
+                continue
+            unknown = set(definition) - allowed
+            if unknown:
+                self.result.error(
+                    path,
+                    f"contains unknown fields: {', '.join(sorted(unknown))}",
+                )
+            if name not in implementations:
+                self.result.error(
+                    f"{path}.implementation",
+                    "must be module:function",
+                )
 
     def _validate_actions(self, actions: Any) -> None:
         if not isinstance(actions, dict):
@@ -363,7 +401,7 @@ class ModelValidator:
             for index, item in enumerate(value):
                 self._validate_action_value(item, inputs, created_refs, has_context, f"{path}[{index}]")
 
-    def _validate_data_against_business_model(self) -> None:
+    def _validate_data_against_domain_model(self) -> None:
         for index, item in enumerate(self.object_index.values()):
             definition = self._mapping(self.object_type_definitions.get(item.get("type")))
             self._validate_typed_properties(
@@ -380,9 +418,9 @@ class ModelValidator:
             from_types = definition.get("from_types", [])
             to_types = definition.get("to_types", [])
             if from_types and source.get("type") not in from_types:
-                self.result.error(f"{path}.from", "object type does not match business model")
+                self.result.error(f"{path}.from", "object type does not match domain model")
             if to_types and target.get("type") not in to_types:
-                self.result.error(f"{path}.to", "object type does not match business model")
+                self.result.error(f"{path}.to", "object type does not match domain model")
             self._validate_typed_properties(
                 relation.get("properties", {}),
                 definition,
@@ -390,8 +428,8 @@ class ModelValidator:
             )
 
     def _validate_ontology(self) -> None:
-        if self.ontology.get("schema") != "oms.ontology.v2":
-            self.result.error("ontology.schema", "must be oms.ontology.v2")
+        if self.ontology.get("schema") != "uom.ontology.v1":
+            self.result.error("ontology.schema", "must be uom.ontology.v1")
         if not self.ontology.get("name") or not self.ontology.get("description"):
             self.result.error("ontology", "must contain OAG name and description")
 
@@ -427,20 +465,20 @@ class ModelValidator:
             source_config = self._mapping(source.get("config"))
             expected_kind = "object" if object_name == "Object" else "relation"
             if (
-                source.get("type") != "oms_sqlite"
+                source.get("type") != "uom_sqlite"
                 or source.get("id_field") != "id"
-                or source_config.get("database") != "data/oms.db"
+                or source_config.get("database") != "data/graph.db"
                 or source_config.get("kind") != expected_kind
             ):
                 self.result.error(
                     f"{path}.source",
-                    "must declare the matching OMS SQLite adapter source",
+                    "must declare the matching UOM SQLite adapter source",
                 )
             properties = self._mapping(definition.get("properties"))
             if set(properties) != set(expected_properties):
                 self.result.error(
                     f"{path}.properties",
-                    "does not match the OMS record contract",
+                    "does not match the UOM record contract",
                 )
             for property_name, (value_type, required) in expected_properties.items():
                 property_definition = self._mapping(properties.get(property_name))
@@ -451,10 +489,10 @@ class ModelValidator:
                     self.result.error(property_path, f"required must be {str(required).lower()}")
 
     def _validate_data(self) -> None:
-        if self.object_data.get("schema") != "oms.data.objects.v2":
-            self.result.error("data.objects.schema", "must be oms.data.objects.v2")
-        if self.relation_data.get("schema") != "oms.data.relations.v2":
-            self.result.error("data.relations.schema", "must be oms.data.relations.v2")
+        if self.object_data.get("schema") != "uom.data.objects.v1":
+            self.result.error("data.objects.schema", "must be uom.data.objects.v1")
+        if self.relation_data.get("schema") != "uom.data.relations.v1":
+            self.result.error("data.relations.schema", "must be uom.data.relations.v1")
 
         object_contract = self._record_contract("Object")
         objects = self.object_data.get("objects")
@@ -700,24 +738,24 @@ def validate_model(root: Path) -> ValidationResult:
     model_path = root / "model.yaml"
     object_data, relation_data = load_data(root)
     return ModelValidator(
-        load_yaml(root / "ontology.yaml"),
+        load_yaml(CORE_ONTOLOGY_PATH),
         object_data,
         relation_data,
         load_yaml(model_path) if model_path.exists() else None,
     ).validate()
 
 
-def main() -> int:
+def main(default_root: Path | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--root", type=Path, default=default_root or Path.cwd())
     args = parser.parse_args()
     result = validate_model(args.root.resolve())
     for error in result.errors:
         print(f"ERROR: {error}")
     if result.valid:
-        print("OMS model is valid")
+        print("UOM domain model is valid")
         return 0
-    print(f"OMS model validation failed with {len(result.errors)} error(s)")
+    print(f"UOM domain model validation failed with {len(result.errors)} error(s)")
     return 1
 
 

@@ -1,4 +1,4 @@
-"""SQLite data-source adapter for OMS ontology objects."""
+"""SQLite data-source adapter for UOM ontology objects."""
 
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ _DATABASE_SCHEMA_VERSION = "2"
 _DATABASE_LOCK = threading.RLock()
 
 
-class OmsSqliteAdapter:
-    """Expose the OMS Object/Relation graph through the OAG adapter contract."""
+class UomSqliteAdapter:
+    """Expose a UOM Object/Relation graph through the OAG adapter contract."""
 
     def __init__(
         self,
@@ -34,7 +34,7 @@ class OmsSqliteAdapter:
         self.kind = str(source.config.get("kind") or "").lower()
         expected_kind = {"Object": "object", "Relation": "relation"}.get(object_type)
         if self.kind not in {"object", "relation"} or self.kind != expected_kind:
-            raise ValueError(f"{object_type} 的 oms_sqlite source.config.kind 无效")
+            raise ValueError(f"{object_type} 的 uom_sqlite source.config.kind 无效")
         self.table = "objects" if self.kind == "object" else "relations"
         self.id_field = source.id_field or ontology.get_id_column(object_type)
         self.database_path = self._database_path()
@@ -49,7 +49,7 @@ class OmsSqliteAdapter:
             object_type: str,
             source: ObjectSourceDef,
             **_: Any,
-        ) -> "OmsSqliteAdapter":
+        ) -> "UomSqliteAdapter":
             return cls(ontology, object_type, source, base_dir)
 
         return build
@@ -212,7 +212,7 @@ class OmsSqliteAdapter:
             or self.source.config.get("path")
         )
         if not raw:
-            raise ValueError(f"{self.object_type} 的 oms_sqlite source 需要 config.database")
+            raise ValueError(f"{self.object_type} 的 uom_sqlite source 需要 config.database")
         path = Path(str(raw))
         return path.resolve() if path.is_absolute() else (self.domain_dir / path).resolve()
 
@@ -275,7 +275,7 @@ class OmsSqliteAdapter:
             schema_version = self._metadata(connection, "schema_version")
             if schema_version and schema_version not in {"1", _DATABASE_SCHEMA_VERSION}:
                 raise ValueError(
-                    f"unsupported OMS database schema {schema_version}; "
+                    f"unsupported UOM database schema {schema_version}; "
                     f"expected {_DATABASE_SCHEMA_VERSION}"
                 )
             self._set_metadata(connection, "schema_version", _DATABASE_SCHEMA_VERSION)
@@ -317,7 +317,7 @@ class OmsSqliteAdapter:
         kind: str,
         record: dict[str, Any],
     ) -> None:
-        payload = OmsSqliteAdapter._encode_record(record)
+        payload = UomSqliteAdapter._encode_record(record)
         if kind == "object":
             connection.execute(
                 "INSERT INTO objects(id, type, name, payload) VALUES (?, ?, ?, ?)",
@@ -337,7 +337,7 @@ class OmsSqliteAdapter:
         id_value: Any,
         record: dict[str, Any],
     ) -> None:
-        payload = OmsSqliteAdapter._encode_record(record)
+        payload = UomSqliteAdapter._encode_record(record)
         if kind == "object":
             connection.execute(
                 "UPDATE objects SET type = ?, name = ?, payload = ? WHERE id = ?",
@@ -368,7 +368,7 @@ class OmsSqliteAdapter:
                 entry["actor"],
                 entry["channel"],
                 entry["created_at"],
-                OmsSqliteAdapter._encode_record(entry["payload"]),
+                UomSqliteAdapter._encode_record(entry["payload"]),
             ),
         )
 

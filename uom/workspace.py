@@ -1,4 +1,4 @@
-"""OMS workspace service for model editing and validated ChangeSets."""
+"""UOM workspace service for model editing and validated ChangeSets."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from oms.scripts.validate_model import ModelValidator
+from uom.validation import ModelValidator
 
 if TYPE_CHECKING:
     from oag.ontology.repository import ObjectRepository
@@ -30,14 +30,23 @@ class ChangeValidationError(ValueError):
         self.errors = errors
 
 
-class OmsWorkspaceService:
+class UomWorkspaceService:
     """Manage user vocabulary and atomic, validated graph ChangeSets."""
 
-    def __init__(self, oms_root: str | Path, repository: ObjectRepository):
-        self.root = Path(oms_root).resolve()
-        self.ontology_path = self.root / "ontology.yaml"
+    def __init__(
+        self,
+        domain_root: str | Path,
+        repository: ObjectRepository,
+        core_ontology_path: str | Path | None = None,
+        runtime_ontology: dict[str, Any] | None = None,
+    ):
+        self.root = Path(domain_root).resolve()
+        self.ontology_path = Path(
+            core_ontology_path or Path(__file__).with_name("ontology.yaml")
+        ).resolve()
         self.model_path = self.root / "model.yaml"
         self.repository = repository
+        self.runtime_ontology = deepcopy(runtime_ontology)
         self._previews: dict[str, str] = {}
 
     @property
@@ -45,7 +54,7 @@ class OmsWorkspaceService:
         adapter = self.repository.adapter_for("Object")
         path = getattr(adapter, "database_path", None)
         if not isinstance(path, Path):
-            raise TypeError("Object 的数据源不是 OMS SQLite adapter")
+            raise TypeError("Object 的数据源不是 UOM SQLite adapter")
         return path
 
     @staticmethod
@@ -61,11 +70,11 @@ class OmsWorkspaceService:
             "ontology": self._load(self.ontology_path),
             "model": self._load(self.model_path),
             "objects": {
-                "schema": "oms.data.objects.v2",
+                "schema": "uom.data.objects.v1",
                 "objects": self.repository.query("Object"),
             },
             "relations": {
-                "schema": "oms.data.relations.v2",
+                "schema": "uom.data.relations.v1",
                 "relations": self.repository.query("Relation"),
             },
         }
@@ -78,7 +87,7 @@ class OmsWorkspaceService:
         adapter = self.repository.adapter_for("Object")
         list_action_log = getattr(adapter, "list_action_log", None)
         return {
-            "ontology": snapshot["ontology"],
+            "ontology": self.runtime_ontology or snapshot["ontology"],
             "model": model,
             "objects": objects,
             "relations": relations,
@@ -148,7 +157,7 @@ class OmsWorkspaceService:
                     adapter = self.repository.adapter_for("Object")
                     replace_graph = getattr(adapter, "replace_graph", None)
                     if not callable(replace_graph):
-                        raise TypeError("Object 数据源不支持 OMS 图事务")
+                        raise TypeError("Object 数据源不支持 UOM 图事务")
                     replace_graph(
                         snapshot["objects"].get("objects", []),
                         snapshot["relations"].get("relations", []),
@@ -418,7 +427,7 @@ class OmsWorkspaceService:
     def _changed_targets(changed_sections: set[str]) -> list[str]:
         targets = []
         if changed_sections & {"objects", "relations"}:
-            targets.append("data/oms.db")
+            targets.append("data/graph.db")
         if "model" in changed_sections:
             targets.append("model.yaml")
         return targets

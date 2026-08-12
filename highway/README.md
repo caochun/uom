@@ -1,16 +1,27 @@
-# OMS 高速联网收费领域模型
+# Highway 高速联网收费领域
 
-`oms` 是面向 OAG Agent 的高速联网收费领域。它用两个稳定的本体概念保存业务图：
+`highway` 是一个基于 UOM（Unified Ontology Modeling）的高速联网收费领域。它用两个稳定的
+本体概念保存业务图：
 
 - `Object`：可独立识别和追溯的主体、设施、业务事实或计算结果。
 - `Relation`：两个 Object 之间由业务行为建立或确认的有方向联系。
 
-`model.yaml` 是业务语义层，不是元模型。它定义业务类型、可计算属性、关系端点约束和模型驱动的操作；
-`ontology.yaml` 只定义 Object/Relation 的稳定记录契约和 OAG 工具。
+[`../uom/ontology.yaml`](../uom/ontology.yaml) 是可复用的 UOM 核心，定义 Object/Relation 记录契约、通用图函数、ChangeSet 和
+Action 运行语义；`model.yaml` 是高速领域语义层，定义业务词汇、关系约束、业务操作、确定性函数和
+Agent 策略。UOM provider 在内部读取并组合两者，向 OAG 提供最终的运行时 Ontology。
+
+```text
+../uom/ontology.yaml (UOM core) + model.yaml (highway domain)
+                             |
+                             v
+                    Effective Ontology
+                             |
+              Repository / Agent / Web application
+```
 
 ## V3.4 抽象
 
-V3.1 文档同时描述业务实体、设备、参数、名单和数据库属性。为便于 LLM 理解，OMS 保留业务主干，
+V3.1 文档同时描述业务实体、设备、参数、名单和数据库属性。为便于 LLM 理解，本领域保留业务主干，
 只把生命周期和业务行为相同的概念收敛到 `category` 或 `details`。OBU、ETC 卡、CPC 卡，以及资金账户、
 库存账户等角色不同的对象保持独立类型：
 
@@ -54,15 +65,22 @@ V3.1 的 `RoadNode` 不再复制收费站和门架的身份，`NodeRelation` 也
 ## 文件
 
 ```text
-ontology.yaml         Object / Relation 本体契约、函数和 Agent 交互策略
-model.yaml            业务类型、Property、关系和模型驱动 Action
-data/oms.db           Object / Relation 实例的唯一 SQLite 数据源
-functions/__init__.py OAG adapter 和领域函数注册入口
-business.py           通行概览、通行追溯和不完整通行查询
-actions.py            将 Action 编译为校验后的 ChangeSet
-store.py              模型扩展和数据 ChangeSet 的预览、提交服务
-scripts/              模型和实例数据校验
+domain.yaml           OAG 领域入口，只声明 UOM DomainProvider
+model.yaml            高速业务词汇、关系、Action、领域函数和 Agent 策略
+data/graph.db         Object / Relation 实例的唯一 SQLite 数据源
+provider.py           在 UOM 之上注册高速领域能力
+business.py           高速领域确定性查询
+spatial.py            高速空间视图派生服务
+app/                  高速 Web UI、HTTP API 和 OAG Agent 适配
+scripts/              seed 和兼容的模型校验入口
 ```
+
+UOM 组合、图查询、Action、ChangeSet、SQLite 和校验运行时位于仓库根目录 [`../uom`](../uom)。
+
+`oag-agent` 只识别 `domain.yaml` 和通用 `DomainProvider` 协议，不理解 `ontology.yaml` 与
+`model.yaml` 的分层、UOM Action DSL 或高速业务。UOM provider 自己产生最终 Ontology；OAG 用它创建
+Repository 后，再让 provider 注册 adapter、resolver 和函数实现。Repository、Agent prompt 和前端
+因此拿到的是同一个运行时本体。
 
 ## 业务主链
 
@@ -109,7 +127,7 @@ fee_rule ->references(applies_to)-> toll_interval
 
 ## 模型驱动操作
 
-`actions` 不是第三个本体概念，也不写入业务图。它描述用户意图如何生成 Object/Relation ChangeSet，
+`actions` 不是第三个图概念，也不写入业务图。它描述用户意图如何生成 Object/Relation ChangeSet，
 前端和 Agent 共用同一套定义。写入流程为：
 
 ```text
@@ -123,17 +141,17 @@ get_available_actions -> preview_action -> 用户确认 -> apply_action
 需要 PyYAML 的 Python 环境：
 
 ```bash
-python3 oms/scripts/validate_model.py --root oms
-python3 -m unittest discover -s oms/tests -v
-node --check app/static/app.js
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python highway/scripts/validate_model.py --root highway
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s highway/tests -v
+node --check highway/app/static/app.js
 ```
 
 山东 seed 覆盖 `model.yaml` 中全部对象类型和关系类型；如果新增类型却没有代表性实例，seed 校验会失败：
 
 ```bash
-python3 oms/scripts/seed_shandong.py
-python3 oms/scripts/seed_shandong.py --confirm-clear
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python highway/scripts/seed_shandong.py
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python highway/scripts/seed_shandong.py --confirm-clear
 ```
 
-`data/oms.db` 中已有实例不会被模型重建自动清空；未知 `type` 仍可作为开放词汇保留。新登记对象和关系应
+`data/graph.db` 中已有实例不会被模型重建自动清空；未知 `type` 仍可作为开放词汇保留。新登记对象和关系应
 优先使用 Action 或经过预览的 ChangeSet。

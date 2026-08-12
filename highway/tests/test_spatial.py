@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "oag-agent"))
 
-from oms.scripts.seed_shandong import build_graph  # noqa: E402
-from oms.spatial import AmapRoutePlanner, SpatialViewService  # noqa: E402
+from highway.scripts.seed_shandong import build_graph  # noqa: E402
+from highway.spatial import AmapRoutePlanner, SpatialViewService  # noqa: E402
 
 
 class MemoryRepository:

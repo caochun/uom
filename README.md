@@ -1,17 +1,28 @@
-# OMS
+# Highway OMS
 
-OMS 是面向 OAG Agent 的高速联网收费对象关系工作台。它把路网、车辆与 ETC 设备、临时通行介质、通行交易、拆分清分、
-客服资金、费率和运行控制放在同一张可追溯业务图中。
+本项目使用 UOM（Unified Ontology Modeling）实现高速联网收费对象关系模型。路网、车辆与通行介质、
+通行交易、拆分清分、客服资金、费率和运行控制被组织在同一张可追溯业务图中。
 
-系统只有两个固定本体概念：
+UOM 只有两个固定本体概念：
 
 ```text
 Object   可独立识别和追溯的业务对象
 Relation 两个 Object 之间有方向、可携带事实的业务关系
 ```
 
-具体业务语义由 [`oms/model.yaml`](oms/model.yaml) 中的 `type`、`properties` 和关系类型表达。当前模型基于
-[`docs/高速联网收费领域本体模型 V3.0.md`](docs/高速联网收费领域本体模型%20V3.0.md) 做了面向 LLM 的抽象，
+项目按职责分为三层：
+
+```text
+oag-agent/  通用 Agent 运行时和 DomainProvider 协议
+uom/        Object / Relation、Action、ChangeSet、SQLite 和模型校验运行时
+highway/    高速领域模型、数据、函数、空间能力和 Web 应用
+```
+
+核心图语义由 [`uom/ontology.yaml`](uom/ontology.yaml) 定义，具体高速业务语义由
+[`highway/model.yaml`](highway/model.yaml) 中的 `type`、`properties`、关系、Action 和领域函数表达。
+`highway/provider.py` 复用 UOM provider 形成最终运行时 Ontology，并通过 `oag-agent` 的
+`DomainProvider` 协议加载。OAG 不关心本体是否经过组合。当前模型基于
+[`docs/高速联网收费领域本体模型 V3.1.md`](docs/高速联网收费领域本体模型%20V3.1.md) 做了面向 LLM 的抽象，
 没有把设备、名单和运行参数逐表展开。
 
 ## 运行
@@ -21,7 +32,7 @@ Relation 两个 Object 之间有方向、可携带事实的业务关系
 ```bash
 git submodule update --init --recursive
 uv sync --project oag-agent
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --env-file .env -- python -m app.server
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --env-file .env -- python -m highway.app.server
 ```
 
 打开 <http://127.0.0.1:8765>。LLM 配置写在根目录 `.env` 中；没有 LLM 配置时，图数据、模型和表单仍可使用。
@@ -41,17 +52,7 @@ journalctl --user -u highway-oms.service -f
 服务监听 `0.0.0.0:5678`。要在用户未登录时随系统启动，还需确保 `loginctl show-user "$USER" -p Linger`
 返回 `Linger=yes`。
 
-## 目录
-
-```text
-app/                  OMS Web UI、HTTP API 和 OAG Agent 适配
-oms/                  领域本体、业务模型、SQLite 存储和确定性函数
-oag-agent/            OAG Agent Git 子模块
-oag-domains/          OAG 领域参考子模块
-docs/                 领域模型和规则资料
-```
-
-详细的对象分组、关系方向、Action 和校验规则见 [`oms/README.md`](oms/README.md)。
+详细的对象分组、关系方向、Action 和校验规则见 [`highway/README.md`](highway/README.md)。
 
 ## 数据写入
 
@@ -59,13 +60,13 @@ docs/                 领域模型和规则资料
 SQLite 事务中同时写入对象、关系和操作审计。模型扩展使用相同的预览/提交机制。
 
 ```text
-业务意图 -> Action 表单 -> preview -> 用户确认 -> apply -> oms/data/oms.db
+业务意图 -> Action 表单 -> preview -> 用户确认 -> apply -> highway/data/graph.db
 ```
 
 ## 校验
 
 ```bash
-python3 oms/scripts/validate_model.py --root oms
-python3 -m unittest discover -s oms/tests -v
-node --check app/static/app.js
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python highway/scripts/validate_model.py --root highway
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s highway/tests -v
+node --check highway/app/static/app.js
 ```

@@ -13,20 +13,20 @@ sys.path.insert(0, str(ROOT / "oag-agent"))
 sys.path.insert(0, str(ROOT))
 
 from oag.ontology.loader import load_domain  # noqa: E402
-from oms.store import OmsWorkspaceService  # noqa: E402
+from uom.workspace import UomWorkspaceService  # noqa: E402
 
 
-class OmsWorkspaceServiceTest(unittest.TestCase):
+class UomWorkspaceServiceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.oms_root = Path(self.temp_dir.name) / "oms"
+        self.domain_root = Path(self.temp_dir.name) / "highway"
         shutil.copytree(
-            ROOT / "oms",
-            self.oms_root,
+            ROOT / "highway",
+            self.domain_root,
             ignore=shutil.ignore_patterns("__pycache__", "*.db", "*.db-*"),
         )
-        self.ontology, self.repository, self.registry = load_domain(self.oms_root)
-        self.store = OmsWorkspaceService(self.oms_root, self.repository)
+        self.ontology, self.repository, self.registry = load_domain(self.domain_root)
+        self.store = UomWorkspaceService(self.domain_root, self.repository)
 
     def tearDown(self) -> None:
         self.repository.close()
@@ -57,12 +57,12 @@ class OmsWorkspaceServiceTest(unittest.TestCase):
         self.assertEqual(len(self.store.list_relations()), relation_count)
 
     def test_missing_database_is_initialized_empty(self) -> None:
-        empty_database = self.oms_root / "data" / "empty.db"
+        empty_database = self.domain_root / "data" / "empty.db"
         for object_name in ("Object", "Relation"):
             self.ontology.objects[object_name].source.config["database"] = "data/empty.db"
         self.repository.close()
         self.repository._adapters.clear()
-        empty_store = OmsWorkspaceService(self.oms_root, self.repository)
+        empty_store = UomWorkspaceService(self.domain_root, self.repository)
 
         self.assertEqual([], empty_store.list_objects())
         self.assertEqual([], empty_store.list_relations())
@@ -142,10 +142,10 @@ class OmsWorkspaceServiceTest(unittest.TestCase):
         )
         self.assertIn("channel_commission", self.store.snapshot()["model"]["object_types"])
         self.assertTrue(any(item["id"] == "commission:2026-08" for item in self.store.list_objects()))
-        self.assertEqual(["data/oms.db", "model.yaml"], result["changed_files"])
+        self.assertEqual(["data/graph.db", "model.yaml"], result["changed_files"])
 
-        reopened_ontology, reopened_repository, _ = load_domain(self.oms_root)
-        reopened = OmsWorkspaceService(self.oms_root, reopened_repository)
+        reopened_ontology, reopened_repository, _ = load_domain(self.domain_root)
+        reopened = UomWorkspaceService(self.domain_root, reopened_repository)
         self.assertTrue(any(item["id"] == "commission:2026-08" for item in reopened.list_objects()))
         self.assertEqual(self.ontology.name, reopened_ontology.name)
         reopened_repository.close()
@@ -173,7 +173,7 @@ class OmsWorkspaceServiceTest(unittest.TestCase):
         self.assertTrue(self.store.preview_changes(operations)["valid"])
         result = self.store.apply_changes(operations)
 
-        self.assertEqual(["data/oms.db"], result["changed_files"])
+        self.assertEqual(["data/graph.db"], result["changed_files"])
         with closing(sqlite3.connect(self.store.database_path)) as connection:
             object_row = connection.execute(
                 "SELECT type FROM objects WHERE id = 'note:sqlite'"
@@ -219,7 +219,7 @@ class OmsWorkspaceServiceTest(unittest.TestCase):
         ]
         result = self.store.preview_changes(operations)
         self.assertFalse(result["valid"])
-        self.assertTrue(any("business model" in error for error in result["errors"]))
+        self.assertTrue(any("domain model" in error for error in result["errors"]))
 
     def test_highway_overview_reports_incomplete_passages(self) -> None:
         self.repository.insert_record(

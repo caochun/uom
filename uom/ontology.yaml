@@ -1,10 +1,9 @@
-schema: oms.ontology.v2
-name: OMS 高速联网收费领域模型
-version: 3.0.0
+schema: uom.ontology.v1
+name: UOM 核心本体
+version: 1.0.0
 description: >-
-  面向 LLM 的高速联网收费对象关系与业务追溯语义。模型只定义 Object 和 Relation；
-  路网、通行、拆分清分、客服资金、费率和运行控制的具体含义由开放的 type、properties 和可选 tags 表达。
-  具体业务类型词汇通过 get_model_vocabulary 按需读取。
+  Unified Ontology Modeling 的最小运行时语义。Object 记录可独立识别的业务事实，
+  Relation 记录事实之间可追溯的联系；具体领域词汇、领域函数和业务操作由 model.yaml 提供。
 
 tool_preferences:
   generic_search: fallback_only
@@ -14,71 +13,52 @@ excluded_tools: [describe, mutate, summarize_progress, dispatch_workers]
 objects:
   Object:
     display_name: 业务对象
-    summary: 联网收费中可被独立识别和追溯的主体、资源、事实或结果。
+    summary: 可被独立识别和追溯的主体、资源、事件、事实或结果。
     description: >-
-      对象记录高速联网收费中可以独立追溯的事实，包括业务主体、通行介质、路网设施、
-      通行交易、拆分清分、客服资金、费率规则和运行控制项。
-      具体语义由开放的 type、properties 和可选 tags 表达；不使用额外 object_type。
+      对象记录业务世界中可独立识别的事实。具体语义由开放的 type、properties 和可选 tags 表达，
+      UOM 核心不预设领域对象类型。
     type_policy: open
     mutability: mutable
     data_source: human_confirmed
     source:
-      type: oms_sqlite
+      type: uom_sqlite
       id_field: id
       config:
-        database: data/oms.db
+        database: data/graph.db
         kind: object
     properties:
       id: {type: str, required: true, description: 稳定对象 ID}
       type: {type: str, required: true, description: 开放对象业务类型}
       name: {type: str, required: true, description: 对象名称}
-      properties: {type: dict, description: 金额、状态、期间等事实}
+      properties: {type: dict, description: 领域模型定义的结构化事实}
       tags: {type: list, description: 可选横向检索标签}
       source_refs: {type: list, description: 可选来源系统引用}
 
   Relation:
     display_name: 业务关系
-    summary: 业务行为建立或确认的、两个业务对象之间的可追溯断言。
+    summary: 业务行为建立或确认的两个业务对象之间的可追溯断言。
     description: >-
-      from 和 to 连接 Object，type 直接表达关系业务语义。领域模型优先使用 contains、
-      references、associates 和 derives；关系是可追溯业务事实，不是静态外键。
+      from 和 to 连接 Object，type 直接表达领域关系语义。关系是可追溯业务事实，
+      不是静态外键；UOM 核心不预设领域关系类型。
     type_policy: open
     mutability: mutable
     data_source: human_confirmed
     source:
-      type: oms_sqlite
+      type: uom_sqlite
       id_field: id
       config:
-        database: data/oms.db
+        database: data/graph.db
         kind: relation
     properties:
       id: {type: str, required: true, description: 稳定关系 ID}
       type: {type: str, required: true, description: 开放关系业务类型}
       from: {type: str, required: true, description: 起点对象 ID}
       to: {type: str, required: true, description: 终点对象 ID}
-      properties: {type: dict, description: 金额、依据、状态等事实}
+      properties: {type: dict, description: 领域模型定义的关系事实}
       tags: {type: list, description: 可选横向检索标签}
       source_refs: {type: list, description: 可选来源系统引用}
 
 functions:
-  get_business_overview:
-    summary: 获取路网、通行、交易、拆分清分和客服资金概览
-    function_type: get
-    involves_objects: [Object, Relation]
-
-  get_passage_trace:
-    summary: 获取一次通行的车辆、交易、牌识、拆分和清分追溯链
-    function_type: get
-    involves_objects: [Object, Relation]
-    params:
-      passage_id: {type: str, description: 通行记录对象 ID}
-      depth: {type: int, description: 追溯深度, default: 4}
-
-  find_incomplete_passages:
-    summary: 查找缺少入口、出口或拆分事实的通行记录
-    function_type: get
-    involves_objects: [Object, Relation]
-
   trace_object:
     summary: 双向追溯对象及其相邻关系
     function_type: get
@@ -88,7 +68,7 @@ functions:
       depth: {type: int, description: 追溯深度, default: 2}
 
   get_model_vocabulary:
-    summary: 查看用户已经定义的属性、对象和关系业务词汇
+    summary: 查看领域模型定义的属性、对象和关系业务词汇
     function_type: get
     involves_objects: [Object, Relation]
     params:
@@ -96,7 +76,7 @@ functions:
       type_id: {type: str, description: 可选的具体属性或 type ID, default: ""}
 
   preview_changes:
-    summary: 校验对象、关系或业务类型变更并返回预览，不写入数据
+    summary: 校验对象、关系或领域模型变更并返回预览，不写入数据
     description: >-
       operations 支持 create/update/delete_object、create/update/delete_relation、
       upsert_property_definition、upsert_object_type、upsert_relation_type。
@@ -106,8 +86,8 @@ functions:
       operations: {type: list, description: 结构化 ChangeSet 操作数组}
 
   apply_changes:
-    summary: 应用已经预览且由用户明确要求的 OMS 变更
-    description: 将结构化 ChangeSet 校验后写入 model.yaml 或 SQLite 业务数据。
+    summary: 应用已经预览且由用户明确要求的 UOM 变更
+    description: 将结构化 ChangeSet 校验后写入领域模型或图数据存储。
     usage_prompt: >-
       必须先用 preview_changes 校验完全相同的 operations。只有用户明确要求新增、修改、
       删除或扩展模型时才调用；执行前说明将变更哪些对象、关系或业务类型。
@@ -119,14 +99,14 @@ functions:
 
   get_available_actions:
     summary: 获取当前上下文允许执行的模型化业务操作
-    description: 不传 context_id 时返回全局业务操作；传入对象后同时返回全局和适用于该对象的操作。
+    description: 不传 context_id 时返回全局操作；传入对象后同时返回全局和适用于该对象的操作。
     function_type: get
     involves_objects: [Object, Relation]
     params:
       context_id: {type: str, description: 可选的当前业务对象 ID, default: ""}
 
   preview_action:
-    summary: 根据模型定义预览一项业务操作，不写入数据
+    summary: 根据领域模型预览一项业务操作，不写入数据
     description: 校验输入和上下文，将业务操作编译为 ChangeSet，并返回确认令牌。
     function_type: get
     user_visible: false
@@ -154,15 +134,13 @@ functions:
 
 presentation_tools:
   ui_open_action_form:
-    summary: 在 OMS 前端打开模型驱动的业务操作表单
+    summary: 在前端打开模型驱动的业务操作表单
     description: >-
       根据 action_id 打开 model.yaml 定义的 Action 表单；可以预填用户已经明确给出的输入，
       但不预览、不确认、不执行业务数据变更。
     usage_prompt: >-
-      用户表达登记主体、客户、车辆、通行介质、路网设施、车辆通行、门架交易、拆分清分、
-      客服资金、费率规则或运行控制项等业务操作意图时使用。
-      一旦确定 action_id 就立即调用；未知的业务输入留给表单，不要先在对话中逐项追问。
-      initial_inputs 只填写用户已经明确给出且符合模型格式的值，不得猜测。
+      用户表达明确业务操作意图时，一旦确定 action_id 就立即调用；未知输入留给表单，
+      不要先在对话中逐项追问。initial_inputs 只能填写用户已经明确给出的可靠值。
     category: ui
     side_effect_scope: frontend_editor
     mutates_domain: false
@@ -177,28 +155,9 @@ interaction_policies:
   user_chat:
     include_in_system_prompt: true
     instructions:
-      - 通行、收费和清分结论优先使用确定性函数，不自行猜测金额或关系。
       - Object 和 Relation 的 type 是开放词汇；遇到未知语义时先调用 get_model_vocabulary。
+      - properties 保存可计算或可判断的事实，tags 只用于非排他的横向检索。
       - 用户要求正式扩展模型时，提出简洁定义并用 upsert 类型操作提交。
-      - tags 只用于非排他检索，不得代替 type、金额、状态、期间、方向或依据。
-      - 用户明确说出“登记收费公路”“登记车辆通行”“生成清分结果”等业务操作时，首轮直接调用 ui_open_action_form 打开模型驱动表单；只有无法确定 action_id 时才先调用 get_available_actions，不要先查模型词汇。
-      - 不要为了补齐 Action 的必填输入在对话中逐项追问；将已明确且格式可靠的值放入 initial_inputs，其余由用户在表单中填写。
-      - ui_open_action_form 只负责交给前端采集信息；调用后不要继续调用 preview_action、apply_action 或自行构造业务数据变更。
-      - preview_changes 和 apply_changes 只用于模型扩展、修复或动作尚未覆盖的高级维护。
+      - ui_open_action_form 只负责交给前端采集信息；调用后不要继续执行数据变更。
+      - preview_changes 和 apply_changes 只用于模型扩展、修复或 Action 尚未覆盖的高级维护。
       - 所有写入都必须先预览；预览有错误时不得提交。
-      - derives 的方向固定为来源事实指向生成结果；例如 passage -> split_record -> clearing_result。
-      - V3.0 文档中的同类设备、名单和运行参数已被抽象，具体种类优先写入 category，不要自行创建大量细粒度类型。
-
-principles:
-  - 对象记录“有什么”，关系记录“为什么有关”。
-  - 对象和关系的 type 都是开放业务词汇，新增类型不要求修改本体。
-  - properties 保存可计算或可判断的事实，tags 只用于非排他的横向检索。
-  - tags 不得替代 type、金额、状态、期间、方向或业务依据。
-  - 原始对象不因后续归因而改写，认识变化通过新增或更新关系表达。
-  - contains 只表达整体与组成，references 表达信息引用，associates 表达独立对象间联系，derives 表达来源到结果。
-  - Passage 是通行追溯枢纽；收费交易、牌识、拆分和清分作为独立事实保留。
-
-tag_policy:
-  vocabulary: open
-  format: ascii_snake_case
-  purpose: 用于一个 type 无法表达的非排他检索维度，不参与金额计算和关系推理。
