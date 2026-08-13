@@ -53,6 +53,8 @@ def rel(
 def build_graph() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     objects = [
         obj("party:lessor", "party", "齐鲁融资租赁有限公司（示例）", category="lessor", code="QLFL", status="active"),
+        obj("party:business", "party", "齐鲁融资租赁业务部（示例）", category="business_department", code="QLFL-BIZ", status="active"),
+        obj("party:risk", "party", "齐鲁融资租赁风险部（示例）", category="risk_department", code="QLFL-RISK", status="active"),
         obj("customer:lessee", "customer", "济南智造有限公司（示例）", category="lessee", reference_no="CUST-001", status="active"),
         obj("customer:guarantor", "customer", "山东产业集团有限公司（示例）", category="guarantor", reference_no="CUST-002", status="active"),
         obj("credit:001", "credit", "综合授信 CR-2026-001", code="CR-2026-001", category="finance_lease", amount=money(12_000_000), valid_from="2026-01-01", valid_to="2027-12-31", status="active"),
@@ -80,7 +82,28 @@ def build_graph() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         obj("voucher:001", "voucher", "收款核销凭证", reference_no="V-2026-001", occurred_on="2026-04-01", period="2026-04", amount=money(1_000_000), status="posted"),
         obj("voucher_line:debit", "voucher_line", "银行存款借方", sequence=1, category="debit", amount=money(1_000_000), status="posted", details={"account": "银行存款"}),
         obj("voucher_line:credit", "voucher_line", "应收租赁款贷方", sequence=2, category="credit", amount=money(1_000_000), status="posted", details={"account": "应收融资租赁款"}),
-        obj("approval:contract", "approval", "合同审批申请", reference_no="APR-2026-001", category="contract_approval", occurred_on="2026-02-10", status="approved", details={"workflow": "FL-CONTRACT-V1"}),
+        obj(
+            "approval:contract",
+            "approval",
+            "合同审批申请",
+            reference_no="APR-2026-001",
+            category="contract_approval",
+            occurred_on="2026-02-08",
+            status="approved",
+            details={
+                "process": [
+                    {"sequence": 1, "mode": "single", "role": "business_manager"},
+                    {"sequence": 2, "mode": "all", "role": "risk_department"},
+                    {"sequence": 3, "mode": "single", "role": "lessor_representative"},
+                ],
+                "history": [
+                    {"sequence": 1, "decision": "approved", "occurred_on": "2026-02-08", "opinion": "业务方案完整"},
+                    {"sequence": 2, "decision": "approved", "occurred_on": "2026-02-09", "opinion": "风险条件满足"},
+                    {"sequence": 3, "decision": "approved", "occurred_on": "2026-02-10", "opinion": "同意签约"},
+                ],
+                "result": {"decision": "approved", "occurred_on": "2026-02-10", "summary": "同意签订融资租赁合同"},
+            },
+        ),
     ]
     relations = [
         rel("rel:credit-customer", "references", "credit:001", "customer:lessee", "granted_customer"),
@@ -119,7 +142,9 @@ def build_graph() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         rel("rel:voucher-debit", "contains", "voucher:001", "voucher_line:debit", "entry"),
         rel("rel:voucher-credit", "contains", "voucher:001", "voucher_line:credit", "entry"),
         rel("rel:approval-contract", "references", "approval:contract", "contract:001", "reviewed_object"),
-        rel("rel:approval-lessor", "associates", "approval:contract", "party:lessor", "submitted_by", status="completed"),
+        rel("rel:approval-business", "associates", "approval:contract", "party:business", "submitted_by", status="completed", sequence=1, occurred_on="2026-02-08", details={"organization": "business_department"}),
+        rel("rel:approval-risk", "associates", "approval:contract", "party:risk", "decided_by", status="approved", sequence=2, occurred_on="2026-02-09", reason="风险条件满足", details={"organization": "risk_department", "mode": "all"}),
+        rel("rel:approval-lessor", "associates", "approval:contract", "party:lessor", "decided_by", status="approved", sequence=3, occurred_on="2026-02-10", reason="同意签约", details={"organization": "lessor_representative"}),
     ]
     return objects, relations
 

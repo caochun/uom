@@ -54,6 +54,33 @@ class LeasingDomainModelTest(unittest.TestCase):
             set(self.model["relation_types"]),
         )
 
+    def test_approval_is_one_decision_fact_with_traceable_process(self) -> None:
+        approval = next(item for item in build_graph()[0] if item["type"] == "approval")
+        details = approval["properties"]["details"]
+        self.assertEqual(["process", "history", "result"], list(details))
+        self.assertEqual("approved", details["result"]["decision"])
+
+        approval_relations = [
+            item for item in build_graph()[1] if item["from"] == approval["id"]
+        ]
+        self.assertIn(
+            "reviewed_object",
+            {item["properties"]["role"] for item in approval_relations},
+        )
+        self.assertEqual(
+            {"submitted_by", "decided_by"},
+            {
+                item["properties"]["role"]
+                for item in approval_relations
+                if item["type"] == "associates"
+            },
+        )
+        decided = [
+            item for item in approval_relations
+            if item["properties"]["role"] == "decided_by"
+        ]
+        self.assertEqual([2, 3], [item["properties"]["sequence"] for item in decided])
+
 
 if __name__ == "__main__":
     unittest.main()

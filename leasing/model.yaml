@@ -40,7 +40,8 @@ runtime:
         - 用户明确表达登记客户、签订合同、登记放款、生成应收、登记收款、核销或结清意图时，优先调用 ui_open_action_form。
         - allocation 是有金额和顺序的独立资金分配事实；不要把收款到应收的核销简化为无属性关系。
         - schedule_version 的变更使用 supersedes 关系，不覆盖历史版本；已产生的应收和核销保留原始事实。
-        - 审批对象只记录送审和执行结果，不直接替代业务对象或业务操作。
+        - approval 是一次针对业务对象的审批决策事实；流程快照、处理历史和最终结果放在 approval.details 中。
+        - 审批参与主体通过 associates 关系连接，关系上的 sequence 表示顺序，相同 sequence 表示并行或会签。
 
 property_definitions:
   status: {name: 状态, type: string, description: 对象当前业务状态。}
@@ -143,8 +144,10 @@ object_types:
     properties: {sequence: {required: true}, category: {required: true}, amount: {required: true}, status: {required: true}, details: {required: false}}
   approval:
     name: 审批申请
-    description: 业务对象提交审批的流程事实，不直接替代业务对象或领域命令。
-    properties: {reference_no: {required: true}, category: {required: true}, occurred_on: {required: true}, status: {required: true}, details: {required: false}}
+    description: >-
+      针对一个业务对象发起的一次审批决策事实。details 保存本次采用的流程快照、处理历史和最终结果；
+      审批参与主体通过 associates 关系连接，不把审批人或审批节点重复塞入业务对象。
+    properties: {reference_no: {required: true}, category: {required: true}, occurred_on: {required: true}, status: {required: true}, details: {required: true}}
 
 relation_types:
   contains:
@@ -161,10 +164,12 @@ relation_types:
     properties: {role: {required: true}}
   associates:
     name: 关联
-    description: 两个独立对象之间存在业务联系，例如客户、出租方、标的物和保证人。
+    description: >-
+      两个独立对象之间存在业务联系，例如客户、出租方、标的物、保证人和审批参与主体。
+      审批关系可用 sequence、status、occurred_on 和 reason 记录决策顺序及结果。
     from_types: [customer, party, contract, subject_matter, guarantee, payment, allocation, approval]
     to_types: [customer, party, contract, subject_matter, guarantee, loan, receivable, penalty, approval]
-    properties: {role: {required: true}, status: {required: false}}
+    properties: {role: {required: true}, status: {required: false}, sequence: {required: false}, occurred_on: {required: false}, reason: {required: false}, details: {required: false}}
   derives:
     name: 派生
     description: 来源业务事实经过计算、处理或汇总形成结果事实。
