@@ -35,7 +35,22 @@ class ModelActionService:
                     continue
                 if "*" not in available_on and context.get("type") not in available_on:
                     continue
-            actions.append({"id": action_id, **deepcopy(definition)})
+            condition_inputs = {}
+            context_input = definition.get("context_input")
+            if context is not None and context_input:
+                condition_inputs[context_input] = context["id"]
+            blocked_reasons = self._requirement_errors(
+                definition.get("requires", []),
+                condition_inputs,
+                context,
+                allow_unresolved=True,
+            )
+            actions.append({
+                "id": action_id,
+                **deepcopy(definition),
+                "executable": not blocked_reasons,
+                "blocked_reasons": blocked_reasons,
+            })
         return {"context": context, "actions": actions}
 
     def prepare_action_form(
@@ -50,11 +65,22 @@ class ModelActionService:
             definition = model.get("actions", {}).get(action_id)
             if not isinstance(definition, dict):
                 raise ChangeValidationError([f"action: 未知业务操作 {action_id}"])
-            context = self._validate_context(definition, context_id)
+            supplied_inputs, context = self._resolve_action_context(
+                definition,
+                initial_inputs or {},
+                context_id,
+                allow_missing=True,
+            )
             prepared_inputs = self._validate_partial_inputs(
                 definition.get("inputs", {}),
-                initial_inputs or {},
+                supplied_inputs,
                 model,
+            )
+            self._require_preconditions(
+                definition,
+                prepared_inputs,
+                context,
+                allow_unresolved=True,
             )
             return {
                 "action": self._action_form_definition(action_id, definition),
@@ -74,13 +100,20 @@ class ModelActionService:
             definition = model.get("actions", {}).get(action_id)
             if not isinstance(definition, dict):
                 raise ChangeValidationError([f"action: 未知业务操作 {action_id}"])
-            context = self._validate_context(definition, context_id)
+            supplied_inputs, context = self._resolve_action_context(
+                definition,
+                inputs or {},
+                context_id,
+                allow_missing=False,
+            )
             resolved_inputs = self._validate_inputs(
                 definition.get("inputs", {}),
-                inputs or {},
+                supplied_inputs,
                 model,
             )
-            operations = self._compile_effects(
+            self._require_preconditions(definition, resolved_inputs, context)
+            operations = self._compile_action_effects(
+                action_id,
                 definition.get("effects", []),
                 resolved_inputs,
                 context,
@@ -105,6 +138,16 @@ class ModelActionService:
                 result["preview_token"] = token
             return result
 
+    def _compile_action_effects(
+        self,
+        action_id: str,
+        effects: list[dict[str, Any]],
+        inputs: dict[str, Any],
+        context: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        """Compile an action's declared effects; domains may enrich them."""
+        return self._compile_effects(effects, inputs, context)
+
     def apply_action(
         self,
         preview_token: str,
@@ -117,6 +160,11 @@ class ModelActionService:
             if preview is None:
                 raise ChangeValidationError(["action: 预览已失效，请重新预览业务操作"])
             definition = preview["definition"]
+            self._require_preconditions(
+                definition,
+                preview["inputs"],
+                preview["context"],
+            )
             audit = {
                 "id": f"action:{uuid4()}",
                 "action_id": preview["action_id"],
@@ -157,11 +205,152 @@ class ModelActionService:
             ])
         return context
 
+    def _resolve_action_context(
+        self,
+        definition: dict[str, Any],
+        supplied_inputs: dict[str, Any],
+        context_id: str,
+        *,
+        allow_missing: bool,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """Resolve UI context into an explicit business-object input when declared."""
+        if not isinstance(supplied_inputs, dict):
+            return supplied_inputs, self._validate_context(definition, context_id)
+
+        context_input = definition.get("context_input")
+        if not context_input:
+            return deepcopy(supplied_inputs), self._validate_context(definition, context_id)
+
+        resolved = deepcopy(supplied_inputs)
+        input_context_id = resolved.get(context_input)
+        if context_id and input_context_id and input_context_id != context_id:
+            raise ChangeValidationError([
+                f"action.inputs.{context_input}: 与当前操作对象不一致"
+            ])
+
+        effective_context_id = context_id or input_context_id or ""
+        if not effective_context_id:
+            if allow_missing:
+                return resolved, None
+            return resolved, None
+
+        context = self._context(effective_context_id)
+        available_on = definition.get("available_on", [])
+        if "*" not in available_on and context.get("type") not in available_on:
+            raise ChangeValidationError([
+                f"action.inputs.{context_input}: {definition.get('name')} 不适用于 {context.get('type')}"
+            ])
+        resolved[context_input] = context["id"]
+        return resolved, context
+
     def _context(self, context_id: str) -> dict[str, Any]:
         context = self.workspace.repository.query_by_id("Object", context_id)
         if not context:
             raise ChangeValidationError([f"action.context_id: 未找到对象 {context_id}"])
         return context
+
+    def _require_preconditions(
+        self,
+        definition: dict[str, Any],
+        inputs: dict[str, Any],
+        context: dict[str, Any] | None,
+        *,
+        allow_unresolved: bool = False,
+    ) -> None:
+        errors = self._requirement_errors(
+            definition.get("requires", []),
+            inputs,
+            context,
+            allow_unresolved=allow_unresolved,
+        )
+        if errors:
+            raise ChangeValidationError([f"action.requires: {error}" for error in errors])
+
+    def _requirement_errors(
+        self,
+        requirements: list[dict[str, Any]],
+        inputs: dict[str, Any],
+        context: dict[str, Any] | None,
+        *,
+        allow_unresolved: bool,
+    ) -> list[str]:
+        errors: list[str] = []
+        for requirement in requirements:
+            kind, condition = next(iter(requirement.items()))
+            message = condition.get("message")
+            if kind == "object_status":
+                object_id = self._resolve_requirement_ref(condition["object"], inputs, context)
+                if object_id is _MISSING:
+                    if allow_unresolved:
+                        continue
+                    errors.append(message or "前置条件缺少业务对象")
+                    continue
+                record = self.workspace.repository.query_by_id("Object", object_id)
+                status = (record.get("properties") or {}).get("status") if record else None
+                if record is None or status not in condition["in"]:
+                    errors.append(message or f"{object_id} 状态必须是 {', '.join(condition['in'])}")
+                continue
+
+            from_id = self._resolve_requirement_endpoint(condition, "from", inputs, context)
+            to_id = self._resolve_requirement_endpoint(condition, "to", inputs, context)
+            if from_id is _MISSING or to_id is _MISSING:
+                if allow_unresolved:
+                    continue
+                errors.append(message or "前置关联条件缺少业务对象")
+                continue
+            if not self._has_related_object(condition, from_id, to_id):
+                errors.append(message or "未找到满足条件的关联业务对象")
+        return errors
+
+    def _resolve_requirement_endpoint(
+        self,
+        condition: dict[str, Any],
+        side: str,
+        inputs: dict[str, Any],
+        context: dict[str, Any] | None,
+    ) -> str | object:
+        reference = condition.get(side, _MISSING)
+        if reference is _MISSING:
+            return None
+        return self._resolve_requirement_ref(reference, inputs, context)
+
+    def _resolve_requirement_ref(
+        self,
+        reference: str,
+        inputs: dict[str, Any],
+        context: dict[str, Any] | None,
+    ) -> str | object:
+        return self._resolve(reference, inputs, context, {})
+
+    def _has_related_object(
+        self,
+        condition: dict[str, Any],
+        from_id: str | object | None,
+        to_id: str | object | None,
+    ) -> bool:
+        for relation in self.workspace.repository.query("Relation"):
+            if relation.get("type") != condition["relation"]:
+                continue
+            if from_id is not None and relation.get("from") != from_id:
+                continue
+            if to_id is not None and relation.get("to") != to_id:
+                continue
+            relation_properties = relation.get("properties") or {}
+            if condition.get("role") is not None and relation_properties.get("role") != condition["role"]:
+                continue
+            source = self.workspace.repository.query_by_id("Object", relation.get("from"))
+            target = self.workspace.repository.query_by_id("Object", relation.get("to"))
+            if not source or not target:
+                continue
+            if condition.get("from_type") and source.get("type") != condition["from_type"]:
+                continue
+            if condition.get("to_type") and target.get("type") != condition["to_type"]:
+                continue
+            source_properties = source.get("properties") or {}
+            if any(source_properties.get(key) != value for key, value in condition.get("properties", {}).items()):
+                continue
+            return True
+        return False
 
     def _validate_inputs(
         self,
@@ -335,13 +524,29 @@ class ModelActionService:
                 operations.append({"action": "create_object", "record": record})
                 created[definition["ref"]] = object_id
                 continue
+            if "update_object" in effect:
+                definition = effect["update_object"]
+                record_id = self._resolve(definition["id"], inputs, context, created)
+                changes = self._resolve(definition.get("changes", {}), inputs, context, created)
+                if record_id is _MISSING:
+                    continue
+                operations.append({
+                    "action": "update_object",
+                    "id": record_id,
+                    "changes": changes,
+                })
+                continue
             definition = effect["create_relation"]
             relation_id = f"rel:{definition['type']}:{uuid4()}"
+            from_id = self._resolve(definition["from"], inputs, context, created)
+            to_id = self._resolve(definition["to"], inputs, context, created)
+            if from_id is _MISSING or to_id is _MISSING:
+                continue
             record = {
                 "id": relation_id,
                 "type": definition["type"],
-                "from": self._resolve(definition["from"], inputs, context, created),
-                "to": self._resolve(definition["to"], inputs, context, created),
+                "from": from_id,
+                "to": to_id,
             }
             for field in ("properties", "tags"):
                 resolved = self._resolve(definition.get(field, _MISSING), inputs, context, created)
@@ -405,4 +610,8 @@ class ModelActionService:
         }
         if "available_on" in definition:
             result["available_on"] = deepcopy(definition["available_on"])
+        if "context_input" in definition:
+            result["context_input"] = definition["context_input"]
+        if "requires" in definition:
+            result["requires"] = deepcopy(definition["requires"])
         return result

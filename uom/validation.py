@@ -215,7 +215,7 @@ class ModelValidator:
                 continue
             allowed = {
                 "name", "description", "icon", "handler", "confirmation",
-                "available_on", "inputs", "effects",
+                "available_on", "context_input", "requires", "inputs", "effects",
             }
             unknown = set(definition) - allowed
             if unknown:
@@ -251,6 +251,34 @@ class ModelValidator:
             for input_id, input_definition in inputs.items():
                 self._validate_action_input(input_id, input_definition, f"{path}.inputs.{input_id}")
 
+            context_input = definition.get("context_input")
+            if context_input is not None:
+                self._validate_type_id(context_input, f"{path}.context_input")
+                context_definition = self._mapping(inputs.get(context_input))
+                if context_input not in inputs:
+                    self.result.error(f"{path}.context_input", "references an unknown input")
+                elif "object_types" not in context_definition:
+                    self.result.error(f"{path}.context_input", "must reference an object input")
+                elif context_definition.get("required") is not True:
+                    self.result.error(f"{path}.context_input", "must reference a required input")
+                elif available_on is None:
+                    self.result.error(f"{path}.context_input", "requires available_on")
+                elif "*" not in available_on:
+                    input_types = set(context_definition.get("object_types", []))
+                    available_types = set(available_on)
+                    if input_types != available_types:
+                        self.result.error(
+                            f"{path}.context_input",
+                            "object_types must match available_on",
+                        )
+
+            self._validate_action_requirements(
+                definition.get("requires", []),
+                inputs,
+                available_on is not None and context_input is None,
+                f"{path}.requires",
+            )
+
             effects = definition.get("effects")
             if not isinstance(effects, list) or not effects:
                 self.result.error(f"{path}.effects", "must be a non-empty list")
@@ -262,8 +290,8 @@ class ModelValidator:
                     self.result.error(effect_path, "must contain one effect")
                     continue
                 effect_kind, effect_definition = next(iter(effect.items()))
-                if effect_kind not in {"create_object", "create_relation"}:
-                    self.result.error(effect_path, "only create_object and create_relation are supported")
+                if effect_kind not in {"create_object", "update_object", "create_relation"}:
+                    self.result.error(effect_path, "only create_object and create_relation are supported; update_object is also supported")
                     continue
                 if not isinstance(effect_definition, dict):
                     self.result.error(f"{effect_path}.{effect_kind}", "must be a mapping")
@@ -283,12 +311,22 @@ class ModelValidator:
                         {"ref", "type", "name", "properties", "tags"},
                         inputs,
                         created_refs,
-                        available_on is not None,
+                        available_on is not None and context_input is None,
                         effect_path,
                         self._mapping(self.object_type_definitions.get(object_type)),
                     )
                     if isinstance(ref, str):
                         created_refs.add(ref)
+                elif effect_kind == "update_object":
+                    self._validate_action_effect(
+                        effect_definition,
+                        {"id", "changes"},
+                        inputs,
+                        created_refs,
+                        available_on is not None and context_input is None,
+                        effect_path,
+                        {"properties": {key: {} for key in self.property_definitions}},
+                    )
                 else:
                     relation_type = effect_definition.get("type")
                     self._validate_type_id(relation_type, f"{effect_path}.create_relation.type")
@@ -299,10 +337,98 @@ class ModelValidator:
                         {"type", "from", "to", "properties", "tags"},
                         inputs,
                         created_refs,
-                        available_on is not None,
+                        available_on is not None and context_input is None,
                         effect_path,
                         self._mapping(self.relation_type_definitions.get(relation_type)),
                     )
+
+    def _validate_action_requirements(
+        self,
+        requirements: Any,
+        inputs: dict[str, Any],
+        has_context: bool,
+        path: str,
+    ) -> None:
+        if not isinstance(requirements, list):
+            self.result.error(path, "must be a list")
+            return
+        for index, requirement in enumerate(requirements):
+            requirement_path = f"{path}[{index}]"
+            if not isinstance(requirement, dict) or len(requirement) != 1:
+                self.result.error(requirement_path, "must contain one condition")
+                continue
+            kind, condition = next(iter(requirement.items()))
+            if kind not in {"object_status", "related_object"}:
+                self.result.error(requirement_path, "only object_status and related_object are supported")
+                continue
+            if not isinstance(condition, dict):
+                self.result.error(f"{requirement_path}.{kind}", "must be a mapping")
+                continue
+            condition_path = f"{requirement_path}.{kind}"
+            if kind == "object_status":
+                allowed = {"object", "in", "message"}
+                required = {"object", "in"}
+            else:
+                allowed = {
+                    "from", "to", "from_type", "to_type", "relation", "role",
+                    "properties", "message",
+                }
+                required = {"relation"}
+            unknown = set(condition) - allowed
+            if unknown:
+                self.result.error(condition_path, f"contains unknown fields: {', '.join(sorted(unknown))}")
+            for field in required:
+                if field not in condition:
+                    self.result.error(condition_path, f"missing required field {field}")
+            if "message" in condition and not isinstance(condition["message"], str):
+                self.result.error(f"{condition_path}.message", "must be a string")
+            if kind == "object_status":
+                self._validate_action_value(
+                    condition.get("object"), inputs, set(), has_context,
+                    f"{condition_path}.object",
+                )
+                statuses = condition.get("in")
+                if not isinstance(statuses, list) or not statuses or not all(isinstance(item, str) and item for item in statuses):
+                    self.result.error(f"{condition_path}.in", "must be a non-empty string list")
+                continue
+
+            relation_type = condition.get("relation")
+            self._validate_type_id(relation_type, f"{condition_path}.relation")
+            if relation_type not in self.relation_type_definitions:
+                self.result.error(f"{condition_path}.relation", "references an unknown relation type")
+            if "from" not in condition and "to" not in condition:
+                self.result.error(condition_path, "must contain from or to")
+            for side in ("from", "to"):
+                if side in condition:
+                    self._validate_action_value(
+                        condition[side], inputs, set(), has_context,
+                        f"{condition_path}.{side}",
+                    )
+            for field in ("from_type", "to_type"):
+                if field in condition:
+                    type_id = condition[field]
+                    self._validate_type_id(type_id, f"{condition_path}.{field}")
+                    if type_id not in self.object_type_definitions:
+                        self.result.error(f"{condition_path}.{field}", "references an unknown object type")
+            properties = condition.get("properties", {})
+            if not isinstance(properties, dict):
+                self.result.error(f"{condition_path}.properties", "must be a mapping")
+            elif properties and "from_type" not in condition:
+                self.result.error(
+                    f"{condition_path}.properties",
+                    "requires from_type",
+                )
+            elif "from_type" in condition:
+                source_definition = self._mapping(
+                    self.object_type_definitions.get(condition["from_type"])
+                )
+                allowed_properties = self._mapping(source_definition.get("properties"))
+                for property_id in properties:
+                    if property_id not in allowed_properties:
+                        self.result.error(
+                            f"{condition_path}.properties.{property_id}",
+                            "is not defined for from_type",
+                        )
 
     def _validate_action_input(self, input_id: Any, definition: Any, path: str) -> None:
         self._validate_type_id(input_id, path)
@@ -358,7 +484,11 @@ class ModelValidator:
         unknown = set(definition) - allowed
         if unknown:
             self.result.error(path, f"contains unknown fields: {', '.join(sorted(unknown))}")
-        for required in ({"type", "name"} if "name" in allowed else {"type", "from", "to"}):
+        if "id" in allowed:
+            required_fields = {"id", "changes"}
+        else:
+            required_fields = {"type", "name"} if "name" in allowed else {"type", "from", "to"}
+        for required in required_fields:
             if required not in definition:
                 self.result.error(path, f"missing required field {required}")
         properties = definition.get("properties", {})
@@ -385,7 +515,11 @@ class ModelValidator:
         if isinstance(value, str) and value.startswith("$"):
             if value == "$context":
                 if not has_context:
-                    self.result.error(path, "$context requires available_on")
+                    self.result.error(
+                        path,
+                        "$context requires available_on without context_input; "
+                        "use the explicit context input instead",
+                    )
                 return
             if value.startswith("$input."):
                 if value[7:] not in inputs:

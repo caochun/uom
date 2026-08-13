@@ -466,11 +466,15 @@ function renderActionCatalog() {
   const catalog = $("#actionCatalog");
   catalog.classList.remove("hidden");
   catalog.innerHTML = state.availableActions.length
-    ? state.availableActions.map((action) => `<button class="action-card" type="button" data-action-id="${escapeAttr(action.id)}">
+    ? state.availableActions.map((action) => {
+      const blocked = action.executable === false;
+      const reasons = (action.blocked_reasons || []).join("；");
+      return `<button class="action-card ${blocked ? "blocked" : ""}" type="button" data-action-id="${escapeAttr(action.id)}" ${blocked ? "disabled" : ""} ${reasons ? `title="${escapeAttr(reasons)}"` : ""}>
         <span class="action-card-icon"><i data-lucide="${actionIcon(action.icon)}"></i></span>
-        <span><strong>${escapeHtml(action.name)}</strong><small>${escapeHtml(action.description)}</small></span>
-        <i data-lucide="chevron-right"></i>
-      </button>`).join("")
+        <span><strong>${escapeHtml(action.name)}</strong><small>${escapeHtml(blocked ? reasons : action.description)}</small></span>
+        <i data-lucide="${blocked ? "lock-keyhole" : "chevron-right"}"></i>
+      </button>`;
+    }).join("")
     : '<div class="action-empty"><i data-lucide="circle-slash"></i><span>当前上下文没有可用操作</span></div>';
   icons();
 }
@@ -484,21 +488,26 @@ function handleActionCatalogClick(event) {
 
 function openActionForm(action, initialInputs = {}) {
   state.currentAction = action;
+  const preparedInputs = { ...initialInputs };
+  if (action.context_input && state.actionContextId && preparedInputs[action.context_input] === undefined) {
+    preparedInputs[action.context_input] = state.actionContextId;
+  }
   $("#actionDialogTitle").textContent = action.name;
   $("#actionCatalog").classList.add("hidden");
   $("#actionForm").classList.remove("hidden");
   $("#actionFormError").classList.add("hidden");
-  $("#actionFormBody").innerHTML = actionContextField() + Object.entries(action.inputs || {})
+  $("#actionFormBody").innerHTML = actionContextField(action) + Object.entries(action.inputs || {})
     .map(([inputId, definition]) => actionInputField(
       inputId,
       definition,
-      Object.prototype.hasOwnProperty.call(initialInputs, inputId) ? initialInputs[inputId] : undefined,
+      Object.prototype.hasOwnProperty.call(preparedInputs, inputId) ? preparedInputs[inputId] : undefined,
     ))
     .join("");
   icons();
 }
 
-function actionContextField() {
+function actionContextField(action) {
+  if (action.context_input) return "";
   if (!state.actionContextType || state.actionContextId) return "";
   const choices = state.actionContextCandidates.map((item) => `<label class="object-choice"><input type="radio" name="action_context_id" value="${escapeAttr(item.id)}" required><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(typeNames()[item.type]?.name || item.type)} · ${escapeHtml(item.id)}</small></span><i data-lucide="check"></i></label>`).join("");
   return `<div class="field action-input full" data-action-context><label>操作对象 <em>*</em></label><div class="object-choice-list">${choices || '<span class="muted-text">当前类型还没有可操作的对象</span>'}</div></div>`;
@@ -540,10 +549,12 @@ async function submitAction(event) {
   const form = event.currentTarget;
   if (!form.reportValidity() || !state.currentAction) return;
   try {
-    const selectedContext = $('input[name="action_context_id"]:checked', form);
-    const contextId = selectedContext?.value || state.actionContextId;
-    if (state.actionContextType && !contextId) throw new Error("请选择要执行操作的对象");
     const inputs = buildActionInputs(state.currentAction, form);
+    const selectedContext = $('input[name="action_context_id"]:checked', form);
+    const contextId = state.currentAction.context_input
+      ? inputs[state.currentAction.context_input] || ""
+      : selectedContext?.value || state.actionContextId;
+    if (state.actionContextType && !contextId) throw new Error("请选择要执行操作的对象");
     const preview = await api("/api/actions/preview", {
       method: "POST",
       body: JSON.stringify({

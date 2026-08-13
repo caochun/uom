@@ -47,12 +47,48 @@ class LeasingDomainModelTest(unittest.TestCase):
             "amount", "occurred_on", "sequence", "status",
         ))
         self.assertIn("allocate_payment", self.model["actions"])
+        self.assertIn("start_approval", self.model["actions"])
+        self.assertIn("record_approval_decision", self.model["actions"])
 
     def test_model_uses_small_stable_relation_vocabulary(self) -> None:
         self.assertEqual(
             {"contains", "references", "associates", "derives", "supersedes"},
             set(self.model["relation_types"]),
         )
+
+    def test_context_actions_declare_their_business_object_inputs(self) -> None:
+        expected = {
+            "start_approval": "reviewed_object",
+            "record_approval_decision": "approval_id",
+            "create_lease_plan": "applicant_id",
+            "grant_credit": "customer_id",
+            "sign_contract": "lease_plan_id",
+            "record_loan": "contract_id",
+            "create_schedule_version": "contract_id",
+            "create_receivable": "schedule_version_id",
+            "record_payment": "payer_id",
+            "allocate_payment": "payment_id",
+            "settle_contract": "contract_id",
+            "issue_voucher": "accounting_source",
+        }
+        for action_id, input_id in expected.items():
+            action = self.model["actions"][action_id]
+            self.assertEqual(input_id, action["context_input"], action_id)
+            self.assertTrue(action["inputs"][input_id]["required"], action_id)
+            self.assertNotIn("$context", str(action["effects"]), action_id)
+
+    def test_action_preconditions_declare_business_order_constraints(self) -> None:
+        actions = self.model["actions"]
+        self.assertEqual(
+            "签订合同前，项目方案必须存在已通过的审批。",
+            actions["sign_contract"]["requires"][0]["related_object"]["message"],
+        )
+        self.assertEqual(
+            ["unallocated", "partial"],
+            actions["allocate_payment"]["requires"][0]["object_status"]["in"],
+        )
+        self.assertIn("requires", actions["record_loan"])
+        self.assertIn("requires", actions["create_receivable"])
 
     def test_approval_is_one_decision_fact_with_traceable_process(self) -> None:
         approval = next(item for item in build_graph()[0] if item["type"] == "approval")

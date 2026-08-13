@@ -99,7 +99,9 @@ functions:
 
   get_available_actions:
     summary: 获取当前上下文允许执行的模型化业务操作
-    description: 不传 context_id 时返回全局操作；传入对象后同时返回全局和适用于该对象的操作。
+    description: >-
+      不传 context_id 时返回全局操作；传入对象后返回全局和适用于该对象的操作，
+      并通过 executable 和 blocked_reasons 说明声明式前置条件是否满足。
     function_type: get
     involves_objects: [Object, Relation]
     params:
