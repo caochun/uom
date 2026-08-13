@@ -1,0 +1,173 @@
+@startuml
+
+!include _实体定义.iuml
+
+' ---------------- 主流程速览 ----------------
+
+note as flow_note
+  **融资租赁主流程（按节点编号）**
+  1客户 → 3授信 → 5项目方案 → 6主合同
+  → 11租金表版本 → 13放款 → 20应收计划明细
+  → 24收款 → 25核销 → 27结清 → 32凭证
+  14标的物 / 18担保关系随合同设立；
+  19变更单、22风险分类、23催收贯穿贷后；
+  34审批中介层贯穿全流程
+end note
+
+' ---------------- 注释 ----------------
+
+note right of credit_occupy
+  额度按「适用业务条线」跨线共用，
+  已用/预占金额为流水汇总的派生值。
+  金额守恒：额度.已用金额 ≡ 占用流水汇总
+  预占支持方案作废后释放
+end note
+
+note bottom of rent_version
+  测算稿与生效版本同表，用
+  「版本号＋版本状态」区分（总纲 8.4）：
+  草稿(测算) / 生效 / 已失效
+  旧版本不删除，仅标记失效日
+  入参与方案版本快照 → 三年后可复算
+end note
+
+note right of change_order
+  展期、提前还款、利率调整、租金重排、
+  转租、债权转让均走变更单（总纲 8.2）
+  生效后不可原地改单据，只能开变更单
+  未到期部分按新版本重算，已收部分不动
+end note
+
+note bottom of subject_matter
+  主表存共性，子表存各线专属属性（总纲 7.1）
+  1:1 共享主键，按标的物大类判定子表
+  租赁物归属主合同，取得合同id 指向买卖合同
+end note
+
+note left of receivable
+  租金/保证金/费用统一汇入，是唯一资金中枢
+  已核销金额为核销明细汇总的派生值
+  金额守恒：应收.已核销 ≡ 核销明细汇总
+  租金版本变更后旧应收标记失效，不物理删除
+end note
+
+note right of payment
+  一笔到账可核销多笔应收，
+  一笔应收可分次收（总纲 8.1）
+  未认领到账先挂账，认领后再核销
+  金额守恒：收款.已核销 ≡ 核销明细汇总
+end note
+
+note bottom of allocation
+  冲销采用反向记账，不改原行、不物理删除
+  「被冲销明细id」指向被冲的原核销行
+end note
+
+note right of amortization
+  按区间存储而非按日一条（总纲 8.3）
+  日粒度按需展开，不物理落库
+  已解决上一版「摊销月份 vs 日粒度」口径冲突
+end note
+
+note bottom of voucher
+  由领域事件驱动 + 科目映射决策表生成
+  借贷平衡为内核不变量：借方合计 ≡ 贷方合计
+  辅助核算维度预留：机构/产品线/资金渠道
+end note
+
+note right of approval
+  业务单据不感知流程，仅暴露领域命令。
+  流程引擎只驱动本单，永不触碰业务表。
+  单笔审批 = 明细 1 条，批量 = N 条，
+  业务代码与流程定义均不变。
+  验收判据：审批类型配为免审时，
+  本单自动通过并回调领域命令，
+  业务链路与开启审批时完全一致
+end note
+
+' =====================================================
+' 关系
+' =====================================================
+
+' -- 主体与授信 --
+customer   ||--o{ credit          : 1→3 客户获得授信额度
+customer   ||--o{ plan            : 1→5 客户申报项目方案
+customer   ||--o{ contract        : 1→6 客户签约（承租方）
+lessor     ||--o{ contract        : 2→6 经营主体签约（出租方）
+credit     ||--|{ credit_occupy   : 3→4 额度变动生成流水
+credit     ||--o{ plan            : 3→5 方案预占额度
+credit     ||--o{ contract        : 3→6 合同占用额度
+
+' -- 合同与放款 --
+plan       ||--o{ contract        : 5→6 方案落地为合同
+contract   ||--|{ contract_party  : 6→7 合同列参与方
+customer   ||--o{ contract_party  : 1→7 客户担任参与角色
+contract   ||--o{ sub_contract    : 6→8 主合同签订从合同
+contract   ||--o{ loan            : 6→13 合同发起放款
+contract   ||--o{ change_order    : 6→19 合同发起变更单
+
+' -- 计划与租金 --
+plan       ||..o{ deposit_plan    : 5→9 方案约定保证金
+contract   ||..o{ deposit_plan    : 6→9 合同约定保证金
+loan       ||..o{ deposit_plan    : 13→9 放款约定保证金
+plan       ||..o{ fee_plan        : 5→10 方案约定费用
+contract   ||..o{ fee_plan        : 6→10 合同约定费用
+loan       ||..o{ fee_plan        : 13→10 放款约定费用
+contract   ||..o{ rent_version    : 6→11 合同测算/生效租金表
+loan       ||..o{ rent_version    : 13→11 放款测算/生效租金表
+change_order ||--o{ rent_version  : 19→11 变更产生新版本
+rent_version ||--|{ rent_line     : 11→12 版本展开为明细
+
+' -- 标的物与担保 --
+contract        ||--o{ subject_matter : 6→14 合同关联标的物
+sub_contract    ||--o{ subject_matter : 8→14 取得合同为标的物来源
+subject_matter  ||--o| sm_lease       : 14→15 租赁物属性
+subject_matter  ||--o| sm_receivable  : 14→16 受让应收账款属性
+subject_matter  ||--o| collateral     : 14→17 标的物兼作担保物
+contract        ||--o{ guarantee      : 6→18 合同被担保
+collateral      ||--o{ guarantee      : 17→18 物权担保
+customer        ||--o{ guarantee      : 1→18 保证担保
+
+' -- 应收与逾期 --
+rent_version ||--o{ receivable    : 11→20 租金版本生成应收
+loan         ||--o{ receivable    : 13→20 放款生成应收
+contract     ||--o{ receivable    : 6→20 应收归属合同
+receivable   ||--o{ penalty       : 20→21 逾期计提罚息
+contract     ||--o{ risk_class    : 6→22 合同风险分类
+contract     ||--o{ collection    : 6→23 合同催收跟进
+
+' -- 收款与结算 --
+customer   ||--o{ payment         : 1→24 客户付款到账
+payment    ||--o{ allocation      : 24→25 收款生成核销
+receivable ||--o{ allocation      : 20→25 应收被核销
+penalty    ||--o{ allocation      : 21→25 罚息被核销
+payment    ||--o{ refund          : 24→26 收款产生退款
+contract   ||--o{ settlement      : 6→27 合同结清
+receivable ||--o{ invoice_line    : 20→29 应收为开票依据
+invoice    ||--|{ invoice_line    : 28→29 发票展开为明细行
+customer   ||--o{ invoice         : 1→28 客户为发票购买方
+
+' -- 账务核算 --
+voucher        ||--|{ voucher_line   : 32→33 凭证展开为分录
+receivable     ||..o{ voucher        : 20→32 应收记账
+allocation     ||..o{ voucher        : 25→32 核销记账
+invoice        ||..o{ voucher        : 28→32 开票记账
+refund         ||..o{ voucher        : 26→32 退款记账
+settlement     ||..o{ voucher        : 27→32 结清记账
+penalty        ||..o{ voucher        : 21→32 罚息记账
+amortization   ||..o{ voucher        : 30→32 摊销记账
+depreciation   ||..o{ voucher        : 31→32 折旧记账
+rent_version   ||--o{ amortization   : 11→30 租金版本为摊销依据
+loan           ||--o{ amortization   : 13→30 放款生成摊销
+subject_matter ||--o{ depreciation   : 14→31 标的物计提折旧
+
+' -- 审批中介层 --
+approval ||--|{ approval_item : 34→35 审批单展开为明细
+plan         ||..o{ approval_item : 5→35 方案送审
+contract     ||..o{ approval_item : 6→35 合同送审
+loan         ||..o{ approval_item : 13→35 放款送审
+change_order ||..o{ approval_item : 19→35 变更送审
+allocation   ||..o{ approval_item : 25→35 核销送审
+settlement   ||..o{ approval_item : 27→35 结清送审
+
+@enduml

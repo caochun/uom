@@ -1,0 +1,445 @@
+schema: uom.domain_model.v1
+
+model:
+  name: UOM 融资租赁领域模型
+  version: 1.0.0
+  description: >-
+    面向融资租赁经营与资金追溯的精简对象关系模型。模型围绕授信、方案、合同、放款、
+    应收、收款、核销和结清主链组织业务事实，并用版本、担保、会计和审批对象补充关键追溯。
+
+runtime:
+  functions:
+    get_finance_overview:
+      summary: 获取融资租赁业务对象、关系和金额概览
+      function_type: get
+      involves_objects: [Object, Relation]
+      implementation: leasing.business:get_finance_overview
+    get_contract_trace:
+      summary: 追溯合同从方案、放款、应收到核销和结清的业务链
+      function_type: get
+      involves_objects: [Object, Relation]
+      implementation: leasing.business:get_contract_trace
+      params:
+        contract_id: {type: str, description: 合同对象 ID}
+        depth: {type: int, description: 追溯深度, default: 5}
+    find_unallocated_payments:
+      summary: 查找尚未通过核销明细分配的收款
+      function_type: get
+      involves_objects: [Object, Relation]
+      implementation: leasing.business:find_unallocated_payments
+    audit_finance_consistency:
+      summary: 校验核销金额守恒和凭证借贷平衡
+      function_type: get
+      involves_objects: [Object, Relation]
+      implementation: leasing.business:audit_finance_consistency
+  interaction_policies:
+    user_chat:
+      include_in_system_prompt: true
+      instructions:
+        - 先使用确定性函数获取合同、应收、收款和核销结论，不自行猜测金额。
+        - 用户明确表达登记客户、签订合同、登记放款、生成应收、登记收款、核销或结清意图时，优先调用 ui_open_action_form。
+        - allocation 是有金额和顺序的独立资金分配事实；不要把收款到应收的核销简化为无属性关系。
+        - schedule_version 的变更使用 supersedes 关系，不覆盖历史版本；已产生的应收和核销保留原始事实。
+        - 审批对象只记录送审和执行结果，不直接替代业务对象或业务操作。
+
+property_definitions:
+  status: {name: 状态, type: string, description: 对象当前业务状态。}
+  category: {name: 类别, type: string, description: 同一对象类型下的业务分类。}
+  role: {name: 关系角色, type: string, description: 关系端点在业务联系中的角色。}
+  code: {name: 编码, type: string, description: 稳定业务编码。}
+  reference_no: {name: 业务编号, type: string, description: 来源系统或业务单据编号。}
+  amount: {name: 金额, type: money, description: 数值和 ISO 币种组成的金额。}
+  occurred_on: {name: 业务日期, type: date, description: 业务事实发生或记账日期。}
+  due_on: {name: 到期日, type: date, description: 应收或合同约定到期日。}
+  valid_from: {name: 生效日, type: date, description: 规则或版本开始生效日期。}
+  valid_to: {name: 失效日, type: date, description: 规则或版本结束生效日期。}
+  period: {name: 业务期间, type: period, description: 汇总事实所属月份。}
+  version: {name: 版本号, type: string, description: 业务规则或计划版本。}
+  sequence: {name: 顺序, type: number, description: 明细在计划或核销中的顺序。}
+  rate: {name: 比率, type: number, description: 利率、罚息率或费用比例。}
+  reason: {name: 原因, type: string, description: 调整、冲销或异常处理原因。}
+  details: {name: 补充信息, type: json, description: 尚未稳定为公共属性的结构化事实。}
+
+object_types:
+  party:
+    name: 经营主体
+    description: 出租方、资金方、服务机构或其他参与融资租赁经营的组织主体。
+    properties: {category: {required: true}, code: {required: false}, status: {required: false}, details: {required: false}}
+  customer:
+    name: 客户
+    description: 承租方、买方、卖方或保证人等客户侧业务主体。
+    properties: {category: {required: false}, reference_no: {required: true}, status: {required: false}, details: {required: false}}
+  credit:
+    name: 授信额度
+    description: 客户可使用的融资额度及其生命周期状态。
+    properties: {code: {required: true}, category: {required: true}, amount: {required: true}, valid_from: {required: false}, valid_to: {required: false}, status: {required: true}}
+  credit_entry:
+    name: 额度占用流水
+    description: 额度预占、正式占用、释放或冲销形成的变动事实。
+    properties: {category: {required: true}, amount: {required: true}, occurred_on: {required: true}, status: {required: true}, reason: {required: false}}
+  lease_plan:
+    name: 项目方案
+    description: 合同签订前对融资金额、期限和租金方案的业务申请。
+    properties: {reference_no: {required: true}, amount: {required: true}, occurred_on: {required: true}, status: {required: true}, details: {required: false}}
+  contract:
+    name: 融资租赁合同
+    description: 约定出租、承租、放款、租金和标的物责任的核心业务事实。
+    properties: {reference_no: {required: true}, amount: {required: true}, occurred_on: {required: true}, valid_from: {required: false}, valid_to: {required: false}, status: {required: true}, details: {required: false}}
+  contract_participation:
+    name: 合同参与关系事实
+    description: 合同参与方及其角色的可追溯事实，承载角色和生效信息。
+    properties: {role: {required: true}, status: {required: false}, valid_from: {required: false}, valid_to: {required: false}}
+  loan:
+    name: 放款
+    description: 合同项下实际向客户或供应方投放资金的业务事实。
+    properties: {reference_no: {required: true}, amount: {required: true}, occurred_on: {required: true}, status: {required: true}, details: {required: false}}
+  schedule_version:
+    name: 租金计划版本
+    description: 合同或变更后生效的租金计算和收款计划版本，历史版本不删除。
+    properties: {version: {required: true}, valid_from: {required: true}, status: {required: true}, details: {required: true}}
+  receivable:
+    name: 应收计划明细
+    description: 企业对客户形成的一笔具体应收，统一承载租金、费用或其他应收款项。
+    properties: {sequence: {required: true}, category: {required: true}, amount: {required: true}, due_on: {required: true}, status: {required: true}, details: {required: false}}
+  payment:
+    name: 收款
+    description: 客户或其他付款人实际到账的资金事实，可分配给多笔应收。
+    properties: {reference_no: {required: true}, amount: {required: true}, occurred_on: {required: true}, category: {required: true}, status: {required: true}, details: {required: false}}
+  allocation:
+    name: 核销明细
+    description: 一笔到账资金分配给应收或罚息的金额、顺序和冲销事实。
+    properties: {amount: {required: true}, occurred_on: {required: true}, sequence: {required: true}, status: {required: true}, reason: {required: false}}
+  penalty:
+    name: 逾期罚息
+    description: 应收逾期后按规则计提的罚息事实。
+    properties: {amount: {required: true}, occurred_on: {required: true}, rate: {required: false}, status: {required: true}}
+  subject_matter:
+    name: 租赁标的物
+    description: 合同项下设备、车辆或受让应收账款等租赁标的及其价值事实。
+    properties: {category: {required: true}, code: {required: false}, amount: {required: true}, status: {required: true}, details: {required: false}}
+  guarantee:
+    name: 担保关系事实
+    description: 合同由保证人或担保物提供担保的金额、方式和顺位事实。
+    properties: {category: {required: true}, amount: {required: true}, sequence: {required: false}, status: {required: true}, details: {required: false}}
+  change_order:
+    name: 合同变更单
+    description: 展期、提前还款、利率调整或租金重排等不可原地修改的变更事实。
+    properties: {reference_no: {required: true}, category: {required: true}, occurred_on: {required: true}, status: {required: true}, details: {required: true}}
+  settlement:
+    name: 结清单
+    description: 合同结束时对剩余本金、利息、违约金和保证金等进行的最终结算。
+    properties: {reference_no: {required: true}, category: {required: true}, amount: {required: true}, occurred_on: {required: true}, status: {required: true}, details: {required: false}}
+  invoice:
+    name: 发票事实
+    description: 由应收或结算事实生成的开票结果。
+    properties: {reference_no: {required: true}, amount: {required: true}, occurred_on: {required: true}, status: {required: true}, details: {required: false}}
+  voucher:
+    name: 会计凭证
+    description: 业务事实按科目映射形成的会计凭证头，借贷金额必须平衡。
+    properties: {reference_no: {required: true}, occurred_on: {required: true}, period: {required: true}, amount: {required: true}, status: {required: true}, details: {required: false}}
+  voucher_line:
+    name: 凭证分录
+    description: 会计凭证下的借贷科目和金额明细。
+    properties: {sequence: {required: true}, category: {required: true}, amount: {required: true}, status: {required: true}, details: {required: false}}
+  approval:
+    name: 审批申请
+    description: 业务对象提交审批的流程事实，不直接替代业务对象或领域命令。
+    properties: {reference_no: {required: true}, category: {required: true}, occurred_on: {required: true}, status: {required: true}, details: {required: false}}
+
+relation_types:
+  contains:
+    name: 包含
+    description: 整体包含其组成或明细事实。
+    from_types: [credit, contract, schedule_version, payment, voucher, approval]
+    to_types: [credit_entry, contract_participation, receivable, allocation, voucher_line]
+    properties: {role: {required: false}}
+  references:
+    name: 引用
+    description: 业务事实引用另一个独立对象作为来源、依据或业务对象。
+    from_types: [credit, credit_entry, lease_plan, contract, contract_participation, loan, schedule_version, receivable, payment, allocation, penalty, guarantee, change_order, settlement, invoice, voucher, approval]
+    to_types: [party, customer, credit, lease_plan, contract, loan, schedule_version, receivable, payment, penalty, subject_matter, guarantee, change_order, settlement, invoice, voucher]
+    properties: {role: {required: true}}
+  associates:
+    name: 关联
+    description: 两个独立对象之间存在业务联系，例如客户、出租方、标的物和保证人。
+    from_types: [customer, party, contract, subject_matter, guarantee, payment, allocation, approval]
+    to_types: [customer, party, contract, subject_matter, guarantee, loan, receivable, penalty, approval]
+    properties: {role: {required: true}, status: {required: false}}
+  derives:
+    name: 派生
+    description: 来源业务事实经过计算、处理或汇总形成结果事实。
+    from_types: [credit, lease_plan, contract, loan, schedule_version, payment, receivable, penalty, allocation, change_order, settlement, invoice, voucher]
+    to_types: [credit_entry, contract, loan, schedule_version, receivable, penalty, allocation, settlement, invoice, voucher, voucher_line]
+    acyclic: true
+    properties: {role: {required: false}, amount: {required: false}, reason: {required: false}}
+  supersedes:
+    name: 替代版本
+    description: 新业务版本替代旧版本，旧事实保留并标记失效。
+    from_types: [schedule_version, change_order]
+    to_types: [schedule_version, contract]
+    properties: {occurred_on: {required: false}, reason: {required: false}}
+
+actions:
+  register_customer:
+    name: 登记客户
+    description: 登记承租方、买方或其他客户侧主体。
+    icon: user_round
+    handler: changeset
+    confirmation: 登记新的融资租赁客户。
+    inputs:
+      name: {name: 客户名称, type: string, required: true}
+      reference_no: {name: 客户编号, property: reference_no, required: true}
+      category: {name: 客户类别, property: category, required: false, default: lessee}
+      status: {name: 状态, property: status, required: false, default: active}
+    effects:
+      - create_object:
+          ref: customer
+          type: customer
+          name: $input.name
+          properties: {reference_no: $input.reference_no, category: $input.category, status: $input.status}
+  create_lease_plan:
+    name: 创建项目方案
+    description: 为客户建立融资租赁项目方案。
+    icon: file_plus_2
+    handler: changeset
+    available_on: [customer]
+    confirmation: 创建融资租赁项目方案。
+    inputs:
+      reference_no: {name: 方案编号, property: reference_no, required: true}
+      amount: {name: 融资金额, property: amount, required: true}
+      occurred_on: {name: 申请日期, property: occurred_on, required: true}
+      credit_id: {name: 占用授信, object_types: [credit], required: true}
+      status: {name: 状态, property: status, required: false, default: draft}
+      details: {name: 方案信息, property: details, required: false}
+    effects:
+      - create_object:
+          ref: plan
+          type: lease_plan
+          name: $input.reference_no
+          properties: {reference_no: $input.reference_no, amount: $input.amount, occurred_on: $input.occurred_on, status: $input.status, details: $input.details}
+      - create_relation: {type: references, from: $plan, to: $context, properties: {role: applicant}}
+      - create_relation: {type: references, from: $plan, to: $input.credit_id, properties: {role: reserved_credit}}
+      - create_object:
+          ref: credit_reservation
+          type: credit_entry
+          name: $input.reference_no
+          properties: {category: reserve, amount: $input.amount, occurred_on: $input.occurred_on, status: posted}
+      - create_relation: {type: contains, from: $input.credit_id, to: $credit_reservation, properties: {role: credit_entry}}
+      - create_relation: {type: references, from: $credit_reservation, to: $plan, properties: {role: source_plan}}
+  grant_credit:
+    name: 授予客户额度
+    description: 为客户建立一项可预占和正式占用的授信额度。
+    icon: badge_dollar_sign
+    handler: changeset
+    available_on: [customer]
+    confirmation: 授予客户融资额度。
+    inputs:
+      code: {name: 额度编号, property: code, required: true}
+      category: {name: 授信品种, property: category, required: true}
+      amount: {name: 授信金额, property: amount, required: true}
+      valid_from: {name: 生效日, property: valid_from, required: false}
+      valid_to: {name: 到期日, property: valid_to, required: false}
+      status: {name: 状态, property: status, required: false, default: active}
+    effects:
+      - create_object:
+          ref: credit
+          type: credit
+          name: $input.code
+          properties: {code: $input.code, category: $input.category, amount: $input.amount, valid_from: $input.valid_from, valid_to: $input.valid_to, status: $input.status}
+      - create_relation: {type: references, from: $credit, to: $context, properties: {role: granted_customer}}
+  sign_contract:
+    name: 签订融资租赁合同
+    description: 将项目方案落地为正式融资租赁合同。
+    icon: file_check_2
+    handler: changeset
+    available_on: [lease_plan]
+    confirmation: 签订融资租赁合同。
+    inputs:
+      reference_no: {name: 合同编号, property: reference_no, required: true}
+      amount: {name: 合同金额, property: amount, required: true}
+      occurred_on: {name: 签约日期, property: occurred_on, required: true}
+      status: {name: 状态, property: status, required: false, default: active}
+      lessor_id: {name: 出租方, object_types: [party], required: true}
+      lessee_id: {name: 承租方, object_types: [customer], required: true}
+      credit_id: {name: 占用授信, object_types: [credit], required: true}
+    effects:
+      - create_object:
+          ref: contract
+          type: contract
+          name: $input.reference_no
+          properties: {reference_no: $input.reference_no, amount: $input.amount, occurred_on: $input.occurred_on, status: $input.status}
+      - create_relation: {type: derives, from: $context, to: $contract, properties: {role: signed_contract}}
+      - create_object:
+          ref: lessor_participation
+          type: contract_participation
+          name: 出租方参与事实
+          properties: {role: lessor, status: active, valid_from: $input.occurred_on}
+      - create_object:
+          ref: lessee_participation
+          type: contract_participation
+          name: 承租方参与事实
+          properties: {role: lessee, status: active, valid_from: $input.occurred_on}
+      - create_relation: {type: contains, from: $contract, to: $lessor_participation, properties: {role: contract_party}}
+      - create_relation: {type: contains, from: $contract, to: $lessee_participation, properties: {role: contract_party}}
+      - create_relation: {type: references, from: $lessor_participation, to: $input.lessor_id, properties: {role: participant}}
+      - create_relation: {type: references, from: $lessee_participation, to: $input.lessee_id, properties: {role: participant}}
+      - create_object:
+          ref: credit_conversion
+          type: credit_entry
+          name: $input.reference_no
+          properties: {category: convert_reserve_to_used, amount: $input.amount, occurred_on: $input.occurred_on, status: posted}
+      - create_relation: {type: contains, from: $input.credit_id, to: $credit_conversion, properties: {role: credit_entry}}
+      - create_relation: {type: references, from: $credit_conversion, to: $contract, properties: {role: source_contract}}
+  record_loan:
+    name: 登记放款
+    description: 记录合同项下的实际资金投放。
+    icon: banknote
+    handler: changeset
+    available_on: [contract]
+    confirmation: 登记合同放款。
+    inputs:
+      reference_no: {name: 放款编号, property: reference_no, required: true}
+      amount: {name: 放款金额, property: amount, required: true}
+      occurred_on: {name: 放款日期, property: occurred_on, required: true}
+      status: {name: 状态, property: status, required: false, default: paid}
+    effects:
+      - create_object:
+          ref: loan
+          type: loan
+          name: $input.reference_no
+          properties: {reference_no: $input.reference_no, amount: $input.amount, occurred_on: $input.occurred_on, status: $input.status}
+      - create_relation: {type: derives, from: $context, to: $loan, properties: {role: loan}}
+  create_schedule_version:
+    name: 建立租金计划版本
+    description: 为合同建立一个不可原地覆盖的租金计算和收款计划版本。
+    icon: calendar_range
+    handler: changeset
+    available_on: [contract]
+    confirmation: 建立合同租金计划版本。
+    inputs:
+      version: {name: 版本号, property: version, required: true}
+      valid_from: {name: 生效日, property: valid_from, required: true}
+      status: {name: 状态, property: status, required: false, default: active}
+      details: {name: 计算入参与结果, property: details, required: true}
+    effects:
+      - create_object:
+          ref: schedule
+          type: schedule_version
+          name: $input.version
+          properties: {version: $input.version, valid_from: $input.valid_from, status: $input.status, details: $input.details}
+      - create_relation: {type: derives, from: $context, to: $schedule, properties: {role: rent_schedule}}
+  create_receivable:
+    name: 生成应收
+    description: 根据合同或租金计划生成一笔应收计划明细。
+    icon: calendar_plus
+    handler: changeset
+    available_on: [schedule_version]
+    confirmation: 生成融资租赁应收计划明细。
+    inputs:
+      sequence: {name: 期次, property: sequence, required: true}
+      category: {name: 款项类型, property: category, required: true}
+      amount: {name: 应收金额, property: amount, required: true}
+      due_on: {name: 应收日期, property: due_on, required: true}
+      status: {name: 状态, property: status, required: false, default: open}
+    effects:
+      - create_object:
+          ref: receivable
+          type: receivable
+          name: $input.category
+          properties: {sequence: $input.sequence, category: $input.category, amount: $input.amount, due_on: $input.due_on, status: $input.status}
+      - create_relation: {type: derives, from: $context, to: $receivable, properties: {role: schedule_receivable}}
+  record_payment:
+    name: 登记收款
+    description: 记录客户或其他付款人的到账资金。
+    icon: circle_dollar_sign
+    handler: changeset
+    available_on: [customer]
+    confirmation: 登记一笔融资租赁收款。
+    inputs:
+      reference_no: {name: 收款编号, property: reference_no, required: true}
+      amount: {name: 到账金额, property: amount, required: true}
+      occurred_on: {name: 到账日期, property: occurred_on, required: true}
+      category: {name: 收款类别, property: category, required: false, default: rent}
+      status: {name: 状态, property: status, required: false, default: unallocated}
+    effects:
+      - create_object:
+          ref: payment
+          type: payment
+          name: $input.reference_no
+          properties: {reference_no: $input.reference_no, amount: $input.amount, occurred_on: $input.occurred_on, category: $input.category, status: $input.status}
+      - create_relation: {type: associates, from: $payment, to: $context, properties: {role: payer, status: confirmed}}
+  allocate_payment:
+    name: 核销收款
+    description: 将一笔收款分配给应收或罚息，形成有金额的核销明细。
+    icon: split
+    handler: changeset
+    available_on: [payment]
+    confirmation: 将收款核销到指定应收。
+    inputs:
+      receivable_id: {name: 应收对象, object_types: [receivable], required: true}
+      amount: {name: 核销金额, property: amount, required: true}
+      occurred_on: {name: 核销日期, property: occurred_on, required: true}
+      sequence: {name: 核销顺序, property: sequence, required: true}
+      status: {name: 状态, property: status, required: false, default: applied}
+    effects:
+      - create_object:
+          ref: allocation
+          type: allocation
+          name: 核销-$input.sequence
+          properties: {amount: $input.amount, occurred_on: $input.occurred_on, sequence: $input.sequence, status: $input.status}
+      - create_relation: {type: derives, from: $context, to: $allocation, properties: {role: allocation}}
+      - create_relation: {type: references, from: $allocation, to: $input.receivable_id, properties: {role: allocated_receivable}}
+  settle_contract:
+    name: 结清合同
+    description: 记录合同最终结算和终止事实。
+    icon: circle_check
+    handler: changeset
+    available_on: [contract]
+    confirmation: 结清融资租赁合同。
+    inputs:
+      reference_no: {name: 结清编号, property: reference_no, required: true}
+      category: {name: 结清类型, property: category, required: true}
+      amount: {name: 结清总额, property: amount, required: true}
+      occurred_on: {name: 结清日期, property: occurred_on, required: true}
+      status: {name: 状态, property: status, required: false, default: settled}
+    effects:
+      - create_object:
+          ref: settlement
+          type: settlement
+          name: $input.reference_no
+          properties: {reference_no: $input.reference_no, category: $input.category, amount: $input.amount, occurred_on: $input.occurred_on, status: $input.status}
+      - create_relation: {type: derives, from: $context, to: $settlement, properties: {role: settlement}}
+  issue_voucher:
+    name: 生成会计凭证
+    description: 将合同相关业务事实投影为会计凭证。
+    icon: receipt
+    handler: changeset
+    available_on: [contract]
+    confirmation: 生成融资租赁会计凭证。
+    inputs:
+      reference_no: {name: 凭证编号, property: reference_no, required: true}
+      occurred_on: {name: 记账日期, property: occurred_on, required: true}
+      period: {name: 会计期间, property: period, required: true}
+      amount: {name: 凭证金额, property: amount, required: true}
+      debit_account: {name: 借方科目, type: string, required: true}
+      credit_account: {name: 贷方科目, type: string, required: true}
+      status: {name: 状态, property: status, required: false, default: posted}
+    effects:
+      - create_object:
+          ref: voucher
+          type: voucher
+          name: $input.reference_no
+          properties: {reference_no: $input.reference_no, occurred_on: $input.occurred_on, period: $input.period, amount: $input.amount, status: $input.status}
+      - create_object:
+          ref: debit_line
+          type: voucher_line
+          name: $input.debit_account
+          properties: {sequence: 1, category: debit, amount: $input.amount, status: $input.status, details: {account: $input.debit_account}}
+      - create_object:
+          ref: credit_line
+          type: voucher_line
+          name: $input.credit_account
+          properties: {sequence: 2, category: credit, amount: $input.amount, status: $input.status, details: {account: $input.credit_account}}
+      - create_relation: {type: references, from: $voucher, to: $context, properties: {role: accounting_source}}
+      - create_relation: {type: contains, from: $voucher, to: $debit_line, properties: {role: entry}}
+      - create_relation: {type: contains, from: $voucher, to: $credit_line, properties: {role: entry}}

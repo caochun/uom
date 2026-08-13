@@ -1,7 +1,6 @@
-# Highway OMS
+# UOM Domains
 
-本项目使用 UOM（Unified Ontology Modeling）实现高速联网收费对象关系模型。路网、车辆与通行介质、
-通行交易、拆分清分、客服资金、费率和运行控制被组织在同一张可追溯业务图中。
+本项目提供 UOM（Unified Ontology Modeling）运行时，以及基于它实现的高速联网收费和融资租赁领域。
 
 UOM 只有两个固定本体概念：
 
@@ -16,14 +15,19 @@ Relation 两个 Object 之间有方向、可携带事实的业务关系
 oag-agent/  通用 Agent 运行时和 DomainProvider 协议
 uom/        Object / Relation、Action、ChangeSet、SQLite 和模型校验运行时
 highway/    高速领域模型、数据、函数、空间能力和 Web 应用
+leasing/    融资租赁模型、数据、Action、确定性函数、领域资料和 Web 应用
 ```
 
-核心图语义由 [`uom/ontology.yaml`](uom/ontology.yaml) 定义，具体高速业务语义由
+核心图语义由 [`uom/ontology.yaml`](uom/ontology.yaml) 定义。具体高速业务语义由
 [`highway/model.yaml`](highway/model.yaml) 中的 `type`、`properties`、关系、Action 和领域函数表达。
 `highway/provider.py` 复用 UOM provider 形成最终运行时 Ontology，并通过 `oag-agent` 的
 `DomainProvider` 协议加载。OAG 不关心本体是否经过组合。当前模型基于
 [`highway/docs/高速联网收费领域本体模型 V3.1.md`](highway/docs/高速联网收费领域本体模型%20V3.1.md) 做了面向 LLM 的抽象，
 没有把设备、名单和运行参数逐表展开。
+
+融资租赁领域位于 [`leasing`](leasing)，它围绕授信、方案、合同、放款、应收、收款、核销、结清和凭证
+建立经营与资金追溯主链。详细设计见 [`leasing/README.md`](leasing/README.md)，原始 PlantUML 资料位于
+[`leasing/docs`](leasing/docs)。
 
 ## 运行
 
@@ -36,6 +40,14 @@ PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --env-file .env -- p
 ```
 
 打开 <http://127.0.0.1:8765>。LLM 配置写在根目录 `.env` 中；没有 LLM 配置时，图数据、模型和表单仍可使用。
+
+融资租赁工作台使用独立领域入口和端口：
+
+```bash
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --env-file .env -- python -m leasing.app.server
+```
+
+打开 <http://127.0.0.1:8766>。
 
 ## 用户级 systemd 服务
 
@@ -68,5 +80,8 @@ SQLite 事务中同时写入对象、关系和操作审计。模型扩展使用�
 ```bash
 PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python highway/scripts/validate_model.py --root highway
 PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s highway/tests -v
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python leasing/scripts/validate_model.py --root leasing
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s leasing/tests -v
 node --check highway/app/static/app.js
+node --check leasing/app/static/app.js
 ```

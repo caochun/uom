@@ -1,0 +1,1 @@
+"""Financing lease UOM domain."""

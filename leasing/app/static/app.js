@@ -23,8 +23,6 @@ const state = {
   actionContextCandidates: [],
   availableActions: [],
   currentAction: null,
-  spatialRequest: 0,
-  detailMap: null,
   sessionId: createSessionId(),
   agentBusy: false,
   agentPending: false,
@@ -93,6 +91,10 @@ function bindEvents() {
   $("#agentInput").addEventListener("input", autoGrowTextarea);
   $("#agentInput").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); $("#agentForm").requestSubmit(); } });
   $("#agentMessages").addEventListener("click", handleAgentClick);
+  $("#detailBody").addEventListener("click", (event) => {
+    const link = event.target.closest("[data-related-object]");
+    if (link) showDetail("object", link.dataset.relatedObject);
+  });
   document.addEventListener("keydown", (event) => {
     if (event.key === "/" && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) { event.preventDefault(); $("#globalSearch").focus(); }
     if (event.key === "Escape") closeOverlays();
@@ -196,25 +198,49 @@ function renderShell() {
 
 function renderMetrics() {
   const objects = state.data.objects;
-  const relations = state.data.relations;
   const index = objectIndex();
-  const passages = objects.filter((item) => item.type === "passage");
-  const transactions = sumObjectMoney(objects.filter((item) => item.type === "toll_transaction"));
-  const clearing = sumObjectMoney(objects.filter((item) => item.type === "clearing_result"));
-  const incomplete = passages.filter((passage) => {
-    const outbound = relations.filter((item) => item.from === passage.id);
-    const stages = new Set(outbound
-      .filter((item) => item.type === "references" && index[item.to]?.type === "toll_transaction")
-      .map((item) => index[item.to]?.properties?.stage));
-    const hasSplit = outbound.some((item) => item.type === "derives" && index[item.to]?.type === "split_record");
-    return !stages.has("entry") || !stages.has("exit") || !hasSplit;
-  });
-  $("#metricPassages").textContent = passages.length;
-  $("#metricTransactions").textContent = money(transactions.amount, transactions.currency || "CNY");
-  $("#metricClearing").textContent = money(clearing.amount, clearing.currency || "CNY");
-  $("#metricIncomplete").textContent = incomplete.length;
-  $("#metricIncompleteHint").textContent = incomplete.length ? "需要补充入口、出口或拆分" : "通行主链完整";
-  $("#initialAgentMessage").textContent = `当前有 ${passages.length} 条通行记录，交易金额 ${money(transactions.amount, transactions.currency || "CNY")}，清分金额 ${money(clearing.amount, clearing.currency || "CNY")}；${incomplete.length ? `仍有 ${incomplete.length} 条通行待完善。` : "通行主链暂未发现缺口。"}`;
+  const contracts = objects.filter((item) => item.type === "contract");
+  const contractAmount = sumObjectMoney(contracts);
+  const payments = objects.filter((item) => item.type === "payment");
+  const allocationsByPayment = state.data.relations.reduce((totals, relation) => {
+    const allocation = index[relation.to];
+    if (relation.type !== "derives" || index[relation.from]?.type !== "payment" || allocation?.type !== "allocation") return totals;
+    const value = allocation.properties?.amount;
+    totals[relation.from] = (totals[relation.from] || 0) + Number(value?.amount || 0);
+    return totals;
+  }, {});
+  const unallocated = payments.map((item) => {
+    const value = item.properties?.amount || {};
+    return {
+      item,
+      amount: Math.max(0, Number(value.amount || 0) - Number(allocationsByPayment[item.id] || 0)),
+      currency: value.currency || "CNY",
+    };
+  }).filter((entry) => entry.amount > 0);
+  const unallocatedAmount = unallocated.reduce((total, entry) => total + entry.amount, 0);
+  $("#metricContracts").textContent = contracts.length;
+  $("#metricContractAmount").textContent = money(contractAmount.amount, contractAmount.currency || "CNY");
+  $("#metricPayments").textContent = money(sumObjectMoney(payments).amount, "CNY");
+  $("#metricUnallocated").textContent = money(unallocatedAmount, unallocated[0]?.currency || "CNY");
+  $("#metricUnallocatedHint").textContent = unallocated.length ? `${unallocated.length} 笔收款等待分配` : "收款均已分配";
+  $("#initialAgentMessage").textContent = `当前有 ${contracts.length} 份融资租赁合同，合同金额 ${money(contractAmount.amount, contractAmount.currency || "CNY")}，共登记 ${payments.length} 笔收款；${unallocated.length ? `仍有 ${unallocated.length} 笔、${money(unallocatedAmount, unallocated[0]?.currency || "CNY")} 待核销。` : "收款核销暂未发现缺口。"}`;
+  renderBusinessPipeline();
+}
+
+function renderBusinessPipeline() {
+  const stages = [
+    ["credit", "授信"], ["lease_plan", "方案"], ["contract", "合同"], ["loan", "放款"],
+    ["receivable", "应收"], ["payment", "收款"], ["allocation", "核销"], ["settlement", "结清"],
+  ];
+  $("#businessPipeline").innerHTML = stages.map(([type, label], index) => {
+    const count = state.data.objects.filter((item) => item.type === type).length;
+    return `${index ? '<i data-lucide="chevron-right"></i>' : ""}<button type="button" data-pipeline-type="${type}"><span>${escapeHtml(label)}</span><strong>${count}</strong></button>`;
+  }).join("");
+  $$("[data-pipeline-type]", $("#businessPipeline")).forEach((button) => button.addEventListener("click", () => {
+    state.objectFilter = button.dataset.pipelineType;
+    renderTypeFilters();
+    renderObjects();
+  }));
 }
 
 function sumObjectMoney(items) {
@@ -252,7 +278,7 @@ function renderObjects() {
   $("#objectsTable").innerHTML = items.map((item) => {
     const props = item.properties || {};
     const amount = props.amount ? money(props.amount.amount, props.amount.currency) : "-";
-    const period = props.period || props.occurred_on || props.details?.due_date || "-";
+    const period = props.period || props.occurred_on || props.due_on || props.valid_from || "-";
     const label = typeNames()[item.type]?.name || item.type;
     return `<tr data-object-id="${escapeAttr(item.id)}">
       <td><div class="object-cell"><div class="type-icon ${escapeAttr(item.type)}"><i data-lucide="${typeIcon(item.type)}"></i></div><div class="object-main"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.id)}</span></div></div></td>
@@ -279,7 +305,7 @@ function renderRelations() {
     const target = index[item.to] || { id: item.to, name: "未知对象", type: "unknown" };
     const definition = relationNames()[item.type];
     const props = item.properties || {};
-    const fact = props.amount ? money(props.amount.amount, props.amount.currency) : (props.status || "-");
+    const fact = props.amount ? money(props.amount.amount, props.amount.currency) : (props.role || props.status || "-");
     return `<tr data-relation-id="${escapeAttr(item.id)}">
       <td><div class="object-main"><strong>${escapeHtml(definition?.name || item.type)}</strong><span>${escapeHtml(item.type)}</span></div></td>
       <td>${endpoint(source)}</td><td class="direction-arrow"><i data-lucide="arrow-right"></i></td><td>${endpoint(target)}</td>
@@ -336,13 +362,11 @@ function showDetail(kind, id) {
   $("#detailEyebrow").textContent = kind === "model" ? ({ object: "对象类型", relation: "关系类型", action: "业务操作" }[state.modelKind]) : `${kind === "object" ? "对象" : "关系"}详情`;
   $("#detailTitle").textContent = title;
   $("#detailBody").innerHTML = detailMarkup(kind, id, item);
-  $("#detailDrawer").classList.remove("spatial");
   $("#contextActionBtn").classList.toggle("hidden", kind !== "object");
   $("#detailDrawer").classList.add("open");
   $("#scrim").classList.remove("hidden");
   updateAgentContext();
   icons();
-  if (kind === "object" && isSpatialCandidate(item)) loadSpatialView(id);
 }
 
 function detailMarkup(kind, id, item) {
@@ -355,179 +379,14 @@ function detailMarkup(kind, id, item) {
   const linkMarkup = links.length ? links.map((rel) => {
     const outbound = rel.from === id;
     const other = index[outbound ? rel.to : rel.from];
-    return `<div class="relation-link"><i data-lucide="${outbound ? "arrow-right" : "arrow-left"}"></i><div><strong>${escapeHtml(relationNames()[rel.type]?.name || rel.type)} · ${escapeHtml(other?.name || (outbound ? rel.to : rel.from))}</strong><span>${escapeHtml(rel.id)}</span></div></div>`;
+    const role = rel.properties?.role ? ` · ${rel.properties.role}` : "";
+    return `<button class="relation-link" type="button" data-related-object="${escapeAttr(other?.id || (outbound ? rel.to : rel.from))}"><i data-lucide="${outbound ? "arrow-right" : "arrow-left"}"></i><div><strong>${escapeHtml(relationNames()[rel.type]?.name || rel.type)}${escapeHtml(role)} · ${escapeHtml(other?.name || (outbound ? rel.to : rel.from))}</strong><span>${escapeHtml(typeNames()[other?.type]?.name || other?.type || "未知类型")} · ${escapeHtml(rel.id)}</span></div><i data-lucide="chevron-right"></i></button>`;
   }).join("") : `<span class="muted-text">暂无关系</span>`;
-  return spatialPlaceholder(item)
-    + detailSection("基本信息", Object.fromEntries(Object.entries(item).filter(([key]) => !["properties", "tags", "source_refs"].includes(key))))
+  return detailSection("基本信息", Object.fromEntries(Object.entries(item).filter(([key]) => !["properties", "tags", "source_refs"].includes(key))))
     + detailSection("Properties", item.properties || {})
     + (item.tags?.length ? detailSection("Tags", { tags: item.tags }) : "")
     + (item.source_refs?.length ? detailSection("来源引用", { source_refs: item.source_refs }) : "")
     + `<div class="detail-section"><h3>相邻关系 · ${links.length}</h3><div>${linkMarkup}</div></div>`;
-}
-
-function isSpatialCandidate(item) {
-  const props = item?.properties || {};
-  return (Number.isFinite(props.longitude) && Number.isFinite(props.latitude))
-    || ["toll_road", "section", "toll_interval", "passage"].includes(item?.type);
-}
-
-function spatialPlaceholder(item) {
-  if (!isSpatialCandidate(item)) return "";
-  return `<div class="detail-section spatial-section" id="spatialSection">
-    <div class="spatial-heading"><h3>空间视图</h3><span>正在推导位置...</span></div>
-    <div class="spatial-loading"><i data-lucide="loader-circle"></i><span>正在加载地图</span></div>
-  </div>`;
-}
-
-async function loadSpatialView(objectId) {
-  const request = ++state.spatialRequest;
-  try {
-    const view = await api(`/api/spatial/objects/${encodeURIComponent(objectId)}`);
-    if (request !== state.spatialRequest || state.selected?.id !== objectId) return;
-    if (!view.available) {
-      $("#spatialSection")?.remove();
-      return;
-    }
-    const section = $("#spatialSection");
-    if (!section) return;
-    $("#detailDrawer").classList.add("spatial");
-    section.innerHTML = spatialMarkup(view);
-    bindSpatialEvents(view);
-    icons();
-    await renderDetailMap(view, request);
-  } catch (error) {
-    if (request !== state.spatialRequest) return;
-    $("#spatialSection")?.remove();
-    console.warn("Unable to load spatial view", error);
-  }
-}
-
-function spatialMarkup(view) {
-  const sourceLabel = view.route_source === "amap_route_planning"
-    ? "高德规划推导"
-    : view.derived ? "按业务节点推导" : "对象位置";
-  const events = (view.events || []).map((event, index) => `<button class="passage-event" type="button" data-spatial-point="${index}">
-    <span class="event-node ${escapeAttr(event.stage)}"><i data-lucide="${passageEventIcon(event.stage)}"></i></span>
-    <span class="event-main"><strong>${escapeHtml(event.stage_label)} · ${escapeHtml(event.facility_name)}</strong><small>${escapeHtml(formatEventTime(event.occurred_at))}${event.amount ? ` · ${escapeHtml(money(event.amount.amount, event.amount.currency))}` : ""}</small></span>
-    <i data-lucide="locate-fixed"></i>
-  </button>`).join("");
-  return `<div class="spatial-heading"><h3>${view.mode === "passage" ? "通行路线" : "空间视图"}</h3><span>${escapeHtml(sourceLabel)}</span></div>
-    <div class="detail-map" id="detailMap" aria-label="${view.mode === "passage" ? "通行路线地图" : "对象位置地图"}"><div class="map-loading">正在加载地图...</div></div>
-    ${view.derived ? '<p class="spatial-note"><i data-lucide="info"></i><span>线路是根据收费节点推导的展示结果，不代表车辆 GPS 轨迹或权威路网边界。</span></p>' : ""}
-    ${events ? `<div class="passage-timeline"><h3>通行过程 · ${view.events.length}</h3>${events}</div>` : ""}`;
-}
-
-function bindSpatialEvents(view) {
-  $$("[data-spatial-point]", $("#spatialSection")).forEach((button) => button.addEventListener("click", () => {
-    const point = view.points[Number(button.dataset.spatialPoint)];
-    if (!point || !state.detailMap) return;
-    state.detailMap.setZoomAndCenter(15, [point.longitude, point.latitude], false, 280);
-    $$(".passage-event", $("#spatialSection")).forEach((item) => item.classList.toggle("active", item === button));
-  }));
-}
-
-async function renderDetailMap(view, request) {
-  destroyDetailMap();
-  const container = $("#detailMap");
-  if (!container) return;
-  try {
-    const AMap = await loadAmap();
-    if (request !== state.spatialRequest || !container.isConnected) return;
-    container.innerHTML = "";
-    const map = new AMap.Map(container, {
-      viewMode: "2D",
-      zoom: 11,
-      resizeEnable: true,
-      showLabel: true,
-      mapStyle: "amap://styles/normal",
-    });
-    state.detailMap = map;
-    const overlays = [];
-    (view.lines || []).forEach((line) => {
-      const polyline = new AMap.Polyline({
-        path: line.coordinates,
-        strokeColor: "#156b4a",
-        strokeWeight: view.mode === "passage" ? 7 : 6,
-        strokeOpacity: .88,
-        lineJoin: "round",
-        lineCap: "round",
-        showDir: view.mode === "passage",
-        zIndex: 40,
-      });
-      map.add(polyline);
-      overlays.push(polyline);
-    });
-    (view.points || []).forEach((point, index) => {
-      const marker = new AMap.Marker({
-        position: [point.longitude, point.latitude],
-        anchor: "center",
-        content: mapMarkerMarkup(point, index, view.mode),
-        zIndex: 60 + index,
-        title: point.name,
-      });
-      marker.on("click", () => {
-        map.setZoomAndCenter(15, [point.longitude, point.latitude], false, 250);
-        const eventButton = $(`[data-spatial-point="${index}"]`, $("#spatialSection"));
-        if (eventButton) {
-          $$(".passage-event", $("#spatialSection")).forEach((item) => item.classList.toggle("active", item === eventButton));
-          eventButton.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        }
-      });
-      map.add(marker);
-      overlays.push(marker);
-    });
-    if (overlays.length) map.setFitView(overlays, false, [34, 34, 34, 34], view.mode === "point" ? 16 : 14);
-    setTimeout(() => state.detailMap?.resize(), 230);
-  } catch (error) {
-    container.innerHTML = fallbackMapMarkup(view);
-    console.warn("Unable to initialize AMap", error);
-  }
-}
-
-let amapPromise;
-async function loadAmap() {
-  if (window.AMap) return window.AMap;
-  if (amapPromise) return amapPromise;
-  amapPromise = (async () => {
-    const config = await api("/api/map/config");
-    if (!config.enabled || !config.api_key) throw new Error("未配置高德地图 JS API Key");
-    if (config.security_key) window._AMapSecurityConfig = { securityJsCode: config.security_key };
-    await new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(config.api_key)}`;
-      script.onload = resolve;
-      script.onerror = () => reject(new Error("高德地图脚本加载失败"));
-      document.head.appendChild(script);
-    });
-    return window.AMap;
-  })();
-  return amapPromise;
-}
-
-function mapMarkerMarkup(point, index, mode) {
-  const label = mode === "passage" ? (point.label || index + 1) : (point.name || index + 1);
-  return `<div class="oms-map-marker ${escapeAttr(point.role || "location")}"><span>${escapeHtml(String(index + 1))}</span><b>${escapeHtml(label)}</b></div>`;
-}
-
-function fallbackMapMarkup(view) {
-  const points = (view.points || []).map((point, index) => `<span><b>${index + 1}</b>${escapeHtml(point.name)}</span>`).join('<i data-lucide="arrow-right"></i>');
-  return `<div class="map-fallback"><i data-lucide="map-off"></i><strong>底图暂不可用</strong><div>${points}</div></div>`;
-}
-
-function passageEventIcon(stage) {
-  return ({ entry: "log-in", gantry: "scan-line", exit: "log-out" })[stage] || "map-pin";
-}
-
-function formatEventTime(value) {
-  if (!value) return "时间未知";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
-}
-
-function destroyDetailMap() {
-  if (state.detailMap) state.detailMap.destroy();
-  state.detailMap = null;
 }
 
 function detailSection(title, values) {
@@ -536,9 +395,7 @@ function detailSection(title, values) {
 }
 
 function closeDetail() {
-  state.spatialRequest += 1;
-  destroyDetailMap();
-  $("#detailDrawer").classList.remove("open", "spatial");
+  $("#detailDrawer").classList.remove("open");
   $("#scrim").classList.add("hidden");
 }
 function closeOverlays() { closeDetail(); closeAgent(); }
@@ -785,7 +642,7 @@ function openEditor(kind) {
 
 function objectForm(definitions) {
   return `
-    ${field("对象 ID", "id", "text", "例如 passage:customer-a-2026-08", true)}
+    ${field("对象 ID", "id", "text", "例如 contract:fl-2026-002", true)}
     ${selectField("对象类型", "type", Object.entries(definitions).map(([id, def]) => [id, def.name]), true)}
     ${field("名称", "name", "text", "面向业务人员的清晰名称", true, "full")}
     ${instancePropertiesContainer()}
@@ -796,7 +653,7 @@ function objectForm(definitions) {
 function relationForm(definitions) {
   const objectOptions = state.data.objects.map((item) => [item.id, `${item.name} · ${typeNames()[item.type]?.name || item.type}`]);
   return `
-    ${field("关系 ID", "id", "text", "例如 rel:passage-split-002", true)}
+    ${field("关系 ID", "id", "text", "例如 rel:contract-loan-002", true)}
     ${selectField("关系类型", "type", Object.entries(definitions).map(([id, def]) => [id, def.name]), true)}
     ${selectField("From", "from", objectOptions, true, "full")}
     ${selectField("To", "to", objectOptions, true, "full")}
@@ -811,7 +668,7 @@ function modelForm() {
     ${selectField("类型种类", "model_kind", [["object", "对象类型"], ["relation", "关系类型"]], true)}
     ${field("Type ID", "type_id", "text", "例如 channel_commission", true)}
     ${field("显示名称", "display_name", "text", "渠道返佣", true, "full")}
-    ${field("业务定义", "description", "textarea", "说明它在联网收费中的含义", true, "full")}
+    ${field("业务定义", "description", "textarea", "说明它在融资租赁经营中的含义", true, "full")}
     <div class="field model-relation-fields hidden">${selectInner("From 类型", "from_type", [["", "不限"], ...objectOptions], false)}</div>
     <div class="field model-relation-fields hidden">${selectInner("To 类型", "to_type", [["", "不限"], ...objectOptions], false)}</div>
     <div class="field full property-editor">
@@ -1302,18 +1159,15 @@ function scrollAgent(force = false) { const messages = $("#agentMessages"); if (
 function endpoint(item) { return `<div class="endpoint"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.id)} · ${escapeHtml(typeNames()[item.type]?.name || item.type)}</span></div>`; }
 function actionIcon(icon) { return String(icon || "play").replaceAll("_", "-"); }
 function typeIcon(type) {
-  if (["toll_road", "section", "toll_interval", "toll_station", "toll_plaza", "toll_lane", "toll_gantry"].includes(type)) return "route";
-  if (["vehicle", "passage"].includes(type)) return "car-front";
-  if (type === "obu") return "radio-tower";
-  if (type === "etc_card") return "credit-card";
-  if (type === "cpc_card") return "contact";
-  if (type === "paper_ticket") return "ticket";
-  if (["toll_transaction", "vehicle_id_record", "consumption_detail"].includes(type)) return "scan-line";
-  if (["split_record", "clearing_result", "invoice_basis_data"].includes(type)) return "waypoints";
-  if (["user_account", "card_account", "account_transaction", "bill", "bill_settlement"].includes(type)) return "wallet-cards";
-  if (["stock_account", "stock_movement"].includes(type)) return "warehouse";
-  if (type === "party") return "building-2";
-  if (["fee_module", "fee_rule", "control_record", "operating_parameter"].includes(type)) return "shield-check";
+  if (["party", "customer"].includes(type)) return "building-2";
+  if (["credit", "credit_entry"].includes(type)) return "badge-dollar-sign";
+  if (["lease_plan", "contract", "contract_participation", "change_order"].includes(type)) return "file-text";
+  if (type === "loan") return "banknote";
+  if (["schedule_version", "receivable", "penalty"].includes(type)) return "calendar-range";
+  if (["payment", "allocation", "settlement"].includes(type)) return "circle-dollar-sign";
+  if (["subject_matter", "guarantee"].includes(type)) return "shield-check";
+  if (["invoice", "voucher", "voucher_line"].includes(type)) return "receipt";
+  if (type === "approval") return "clipboard-check";
   return "box";
 }
 function statusPill(status) { return status ? `<span class="status-pill ${escapeAttr(status)}">${escapeHtml(status)}</span>` : '<span class="muted-text">-</span>'; }

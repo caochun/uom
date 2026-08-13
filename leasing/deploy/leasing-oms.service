@@ -1,0 +1,21 @@
+[Unit]
+Description=Financing Lease OMS powered by UOM
+ConditionPathExists=%h/Develop/leasing-oms/leasing/app/server.py
+ConditionPathExists=%h/Develop/leasing-oms/.env
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Develop/leasing-oms
+Environment="PYTHONPATH=%h/Develop/leasing-oms/oag-agent:%h/Develop/leasing-oms"
+Environment=UOM_DOMAIN_DIR=leasing
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+ExecStartPre=%h/.local/bin/uv run --project %h/Develop/leasing-oms/oag-agent -- python %h/Develop/leasing-oms/leasing/scripts/validate_model.py --root %h/Develop/leasing-oms/leasing
+ExecStart=%h/.local/bin/uv run --project %h/Develop/leasing-oms/oag-agent --env-file %h/Develop/leasing-oms/.env -- python -m leasing.app.server --host 0.0.0.0 --port 8767
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+SyslogIdentifier=leasing-oms
+
+[Install]
+WantedBy=default.target
