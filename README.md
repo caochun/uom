@@ -22,7 +22,7 @@ highway/    高速领域模型、数据、函数、空间能力和 Web 应用
 [`highway/model.yaml`](highway/model.yaml) 中的 `type`、`properties`、关系、Action 和领域函数表达。
 `highway/provider.py` 复用 UOM provider 形成最终运行时 Ontology，并通过 `oag-agent` 的
 `DomainProvider` 协议加载。OAG 不关心本体是否经过组合。当前模型基于
-[`docs/高速联网收费领域本体模型 V3.1.md`](docs/高速联网收费领域本体模型%20V3.1.md) 做了面向 LLM 的抽象，
+[`highway/docs/高速联网收费领域本体模型 V3.1.md`](highway/docs/高速联网收费领域本体模型%20V3.1.md) 做了面向 LLM 的抽象，
 没有把设备、名单和运行参数逐表展开。
 
 ## 运行
@@ -42,7 +42,7 @@ PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --env-file .env -- p
 部署目录为 `~/Develop/highway-oms` 时，可安装仓库中的用户服务：
 
 ```bash
-install -Dm644 deploy/highway-oms.service ~/.config/systemd/user/highway-oms.service
+install -Dm644 highway/deploy/highway-oms.service ~/.config/systemd/user/highway-oms.service
 systemctl --user daemon-reload
 systemctl --user enable --now highway-oms.service
 systemctl --user status highway-oms.service

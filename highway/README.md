@@ -72,6 +72,7 @@ provider.py           在 UOM 之上注册高速领域能力
 business.py           高速领域确定性查询
 spatial.py            高速空间视图派生服务
 app/                  高速 Web UI、HTTP API 和 OAG Agent 适配
+docs/                 高速领域原始模型与问题分析资料
 scripts/              seed 和兼容的模型校验入口
 ```
 
