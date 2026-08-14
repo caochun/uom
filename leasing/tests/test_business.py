@@ -53,6 +53,58 @@ class LeasingBusinessTest(unittest.TestCase):
             result["credit_balances"]["credit:001"],
         )
 
+    def test_seed_represents_distinct_credit_lifecycle_states(self) -> None:
+        balances = audit_finance_consistency(self.repository)["credit_balances"]
+        self.assertEqual(
+            {"reserved": 4_000_000.0, "used": 0.0},
+            balances["credit:qingdao"],
+        )
+        self.assertEqual(
+            {"reserved": 0.0, "used": 0.0},
+            balances["credit:weifang"],
+        )
+        self.assertEqual(
+            {"reserved": 0.0, "used": 7_200_000.0},
+            balances["credit:yantai"],
+        )
+        self.assertEqual(
+            {"reserved": 0.0, "used": 0.0},
+            balances["credit:zibo"],
+        )
+
+    def test_seed_represents_many_to_many_payment_allocation(self) -> None:
+        result = audit_finance_consistency(self.repository)
+        self.assertEqual(
+            550_000,
+            result["allocated_by_payment"]["payment:yantai:001"],
+        )
+        self.assertEqual(
+            355_000,
+            result["allocated_by_payment"]["payment:yantai:002"],
+        )
+        self.assertEqual(
+            400_000,
+            result["allocated_by_target"]["receivable:yantai:002"],
+        )
+        self.assertEqual(
+            5_000,
+            result["allocated_by_target"]["penalty:yantai:003"],
+        )
+
+    def test_seed_approval_targets_match_their_business_facts(self) -> None:
+        reviewed = {
+            relation["from"]: relation["to"]
+            for relation in self.relations
+            if relation["type"] == "references"
+            and relation.get("properties", {}).get("role") == "reviewed_object"
+        }
+        self.assertEqual("lease_plan:001", reviewed["approval:plan:001"])
+        self.assertEqual("change:001", reviewed["approval:change:001"])
+        self.assertEqual(
+            "lease_plan:qingdao",
+            reviewed["approval:plan:qingdao"],
+        )
+
     def test_unallocated_payment_is_found(self) -> None:
         self.assertEqual(
             ["payment:002"],
@@ -66,6 +118,17 @@ class LeasingBusinessTest(unittest.TestCase):
         result = audit_finance_consistency(MemoryRepository(objects, self.relations))
         self.assertFalse(result["valid"])
         self.assertTrue(any("payment:001" in error for error in result["errors"]))
+
+    def test_allocation_progress_status_must_match_amounts(self) -> None:
+        objects = copy.deepcopy(self.objects)
+        payment = next(item for item in objects if item["id"] == "payment:001")
+        payment["properties"]["status"] = "partial"
+        result = audit_finance_consistency(MemoryRepository(objects, self.relations))
+        self.assertFalse(result["valid"])
+        self.assertIn(
+            "payment:001: 核销进度对应状态应为 allocated，当前为 partial",
+            result["errors"],
+        )
 
     def test_credit_entries_cannot_exceed_limit(self) -> None:
         objects = copy.deepcopy(self.objects)

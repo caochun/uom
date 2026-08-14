@@ -30,6 +30,36 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         self.repository.close()
         self.temp_dir.cleanup()
 
+    def apply_business_action(
+        self,
+        action_id: str,
+        inputs: dict,
+        context_id: str = "",
+    ) -> dict:
+        preview = self.registry.call(
+            "preview_action",
+            action_id=action_id,
+            inputs=inputs,
+            context_id=context_id,
+        )
+        self.assertTrue(preview["valid"], preview["errors"])
+        applied = self.registry.call(
+            "apply_action",
+            preview_token=preview["preview_token"],
+            reason="端到端业务测试",
+        )
+        self.assertTrue(applied["applied"])
+        return preview
+
+    @staticmethod
+    def created_object_id(preview: dict, object_type: str) -> str:
+        return next(
+            operation["record"]["id"]
+            for operation in preview["operations"]
+            if operation["action"] == "create_object"
+            and operation["record"]["type"] == object_type
+        )
+
     def test_provider_loads_effective_leasing_ontology(self) -> None:
         self.assertEqual("UOM 融资租赁领域模型", self.ontology.name)
         self.assertIn("get_contract_trace", self.ontology.functions)
@@ -37,6 +67,369 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         self.assertEqual(
             "LeasingActionService",
             type(self.registry.get_resolver("uom_actions")).__name__,
+        )
+
+    def test_complete_business_actions_close_the_lifecycle(self) -> None:
+        for record in (
+            {
+                "id": "party:lifecycle-lessor",
+                "type": "party",
+                "name": "测试出租方",
+                "properties": {"category": "lessor", "status": "active"},
+            },
+            {
+                "id": "party:lifecycle-approver",
+                "type": "party",
+                "name": "测试审批主体",
+                "properties": {"category": "risk", "status": "active"},
+            },
+        ):
+            self.repository.insert_record("Object", record)
+
+        customer_preview = self.apply_business_action(
+            "register_customer",
+            {"name": "端到端承租方", "reference_no": "CUST-LIFECYCLE"},
+        )
+        customer_id = self.created_object_id(customer_preview, "customer")
+
+        credit_preview = self.apply_business_action(
+            "grant_credit",
+            {
+                "code": "CR-LIFECYCLE",
+                "category": "finance_lease",
+                "amount": {"amount": 100, "currency": "CNY"},
+            },
+            customer_id,
+        )
+        credit_id = self.created_object_id(credit_preview, "credit")
+
+        plan_preview = self.apply_business_action(
+            "create_lease_plan",
+            {
+                "reference_no": "PLAN-LIFECYCLE",
+                "amount": {"amount": 100, "currency": "CNY"},
+                "occurred_on": "2026-08-01",
+                "credit_id": credit_id,
+            },
+            customer_id,
+        )
+        plan_id = self.created_object_id(plan_preview, "lease_plan")
+
+        approval_preview = self.apply_business_action(
+            "start_approval",
+            {
+                "reference_no": "APR-LIFECYCLE",
+                "category": "lease_plan_approval",
+                "occurred_on": "2026-08-02",
+                "submitted_by": "party:lifecycle-approver",
+                "process": [{"sequence": 1, "role": "risk"}],
+            },
+            plan_id,
+        )
+        approval_id = self.created_object_id(approval_preview, "approval")
+        self.assertEqual(
+            "pending_approval",
+            self.repository.query_by_id("Object", plan_id)["properties"]["status"],
+        )
+
+        self.apply_business_action(
+            "record_approval_decision",
+            {
+                "decision": "approved",
+                "occurred_on": "2026-08-03",
+                "sequence": 1,
+                "decided_by": "party:lifecycle-approver",
+                "is_final": True,
+                "opinion": "同意签约",
+            },
+            approval_id,
+        )
+        self.assertEqual(
+            "approved",
+            self.repository.query_by_id("Object", plan_id)["properties"]["status"],
+        )
+
+        contract_preview = self.apply_business_action(
+            "sign_contract",
+            {
+                "reference_no": "FL-LIFECYCLE",
+                "amount": {"amount": 100, "currency": "CNY"},
+                "occurred_on": "2026-08-04",
+                "lessor_id": "party:lifecycle-lessor",
+                "lessee_id": customer_id,
+                "credit_id": credit_id,
+            },
+            plan_id,
+        )
+        contract_id = self.created_object_id(contract_preview, "contract")
+        self.assertEqual(
+            "contracted",
+            self.repository.query_by_id("Object", plan_id)["properties"]["status"],
+        )
+
+        schedule_v1_preview = self.apply_business_action(
+            "create_schedule_version",
+            {
+                "version": "1",
+                "valid_from": "2026-08-04",
+                "details": {"term_count": 1, "annual_rate": 0.05},
+            },
+            contract_id,
+        )
+        schedule_v1_id = self.created_object_id(
+            schedule_v1_preview, "schedule_version"
+        )
+        with self.assertRaisesRegex(ChangeValidationError, "被替代"):
+            self.registry.call(
+                "preview_action",
+                action_id="create_schedule_version",
+                context_id=contract_id,
+                inputs={
+                    "version": "2",
+                    "valid_from": "2026-08-05",
+                    "details": {"term_count": 1, "annual_rate": 0.048},
+                },
+            )
+        schedule_v2_preview = self.apply_business_action(
+            "create_schedule_version",
+            {
+                "version": "2",
+                "valid_from": "2026-08-05",
+                "details": {"term_count": 1, "annual_rate": 0.048},
+                "supersedes_id": schedule_v1_id,
+            },
+            contract_id,
+        )
+        schedule_v2_id = self.created_object_id(
+            schedule_v2_preview, "schedule_version"
+        )
+        self.assertEqual(
+            "inactive",
+            self.repository.query_by_id("Object", schedule_v1_id)["properties"]["status"],
+        )
+
+        receivable_preview = self.apply_business_action(
+            "create_receivable",
+            {
+                "sequence": 1,
+                "category": "rent",
+                "amount": {"amount": 100, "currency": "CNY"},
+                "due_on": "2026-09-01",
+            },
+            schedule_v2_id,
+        )
+        receivable_id = self.created_object_id(receivable_preview, "receivable")
+
+        payment_preview = self.apply_business_action(
+            "record_payment",
+            {
+                "reference_no": "PAY-LIFECYCLE",
+                "amount": {"amount": 100, "currency": "CNY"},
+                "occurred_on": "2026-09-01",
+                "contract_id": contract_id,
+            },
+            customer_id,
+        )
+        payment_id = self.created_object_id(payment_preview, "payment")
+
+        self.apply_business_action(
+            "allocate_payment",
+            {
+                "target_id": receivable_id,
+                "amount": {"amount": 40, "currency": "CNY"},
+                "occurred_on": "2026-09-01",
+                "sequence": 1,
+            },
+            payment_id,
+        )
+        self.assertEqual(
+            "partial",
+            self.repository.query_by_id("Object", payment_id)["properties"]["status"],
+        )
+        with self.assertRaisesRegex(ChangeValidationError, "未结清应收"):
+            self.registry.call(
+                "preview_action",
+                action_id="settle_contract",
+                context_id=contract_id,
+                inputs={
+                    "reference_no": "SET-TOO-EARLY",
+                    "category": "maturity",
+                    "amount": {"amount": 100, "currency": "CNY"},
+                    "occurred_on": "2026-09-01",
+                },
+            )
+        self.apply_business_action(
+            "allocate_payment",
+            {
+                "target_id": receivable_id,
+                "amount": {"amount": 60, "currency": "CNY"},
+                "occurred_on": "2026-09-02",
+                "sequence": 2,
+            },
+            payment_id,
+        )
+        self.assertEqual(
+            "allocated",
+            self.repository.query_by_id("Object", payment_id)["properties"]["status"],
+        )
+        self.assertEqual(
+            "settled",
+            self.repository.query_by_id("Object", receivable_id)["properties"]["status"],
+        )
+
+        settlement_preview = self.apply_business_action(
+            "settle_contract",
+            {
+                "reference_no": "SET-LIFECYCLE",
+                "category": "maturity",
+                "amount": {"amount": 100, "currency": "CNY"},
+                "occurred_on": "2026-09-03",
+            },
+            contract_id,
+        )
+        settlement_id = self.created_object_id(settlement_preview, "settlement")
+        self.assertEqual(
+            "settled",
+            self.repository.query_by_id("Object", contract_id)["properties"]["status"],
+        )
+        self.assertEqual(
+            "inactive",
+            self.repository.query_by_id("Object", schedule_v2_id)["properties"]["status"],
+        )
+        audit = self.registry.call("audit_finance_consistency")
+        self.assertTrue(audit["valid"], audit["errors"])
+        self.assertEqual(
+            {"reserved": 0.0, "used": 0.0},
+            audit["credit_balances"][credit_id],
+        )
+        self.assertTrue(any(
+            relation.get("type") == "references"
+            and relation.get("to") == settlement_id
+            and relation.get("properties", {}).get("role") == "source_settlement"
+            for relation in self.repository.query("Relation")
+        ))
+
+    def test_rejected_plan_releases_reserved_credit(self) -> None:
+        for record in (
+            {
+                "id": "customer:rejection",
+                "type": "customer",
+                "name": "拒绝方案客户",
+                "properties": {"reference_no": "CUST-REJECT", "status": "active"},
+            },
+            {
+                "id": "credit:rejection",
+                "type": "credit",
+                "name": "拒绝方案授信",
+                "properties": {
+                    "code": "CR-REJECT",
+                    "category": "finance_lease",
+                    "amount": {"amount": 100, "currency": "CNY"},
+                    "status": "active",
+                },
+            },
+            {
+                "id": "lease_plan:rejection",
+                "type": "lease_plan",
+                "name": "待拒绝方案",
+                "properties": {
+                    "reference_no": "PLAN-REJECT",
+                    "amount": {"amount": 60, "currency": "CNY"},
+                    "occurred_on": "2026-08-01",
+                    "status": "draft",
+                },
+            },
+            {
+                "id": "credit_entry:rejection-reserve",
+                "type": "credit_entry",
+                "name": "拒绝方案预占",
+                "properties": {
+                    "category": "reserve",
+                    "amount": {"amount": 60, "currency": "CNY"},
+                    "occurred_on": "2026-08-01",
+                    "status": "posted",
+                },
+            },
+            {
+                "id": "party:rejection-approver",
+                "type": "party",
+                "name": "拒绝方案审批主体",
+                "properties": {"category": "risk", "status": "active"},
+            },
+        ):
+            self.repository.insert_record("Object", record)
+        for relation in (
+            {
+                "id": "rel:rejection-credit-customer",
+                "type": "references",
+                "from": "credit:rejection",
+                "to": "customer:rejection",
+                "properties": {"role": "granted_customer"},
+            },
+            {
+                "id": "rel:rejection-credit-entry",
+                "type": "contains",
+                "from": "credit:rejection",
+                "to": "credit_entry:rejection-reserve",
+                "properties": {"role": "credit_entry"},
+            },
+            {
+                "id": "rel:rejection-plan-credit",
+                "type": "references",
+                "from": "lease_plan:rejection",
+                "to": "credit:rejection",
+                "properties": {"role": "reserved_credit"},
+            },
+            {
+                "id": "rel:rejection-plan-customer",
+                "type": "references",
+                "from": "lease_plan:rejection",
+                "to": "customer:rejection",
+                "properties": {"role": "applicant"},
+            },
+            {
+                "id": "rel:rejection-entry-plan",
+                "type": "references",
+                "from": "credit_entry:rejection-reserve",
+                "to": "lease_plan:rejection",
+                "properties": {"role": "source_plan"},
+            },
+        ):
+            self.repository.insert_record("Relation", relation)
+
+        approval_preview = self.apply_business_action(
+            "start_approval",
+            {
+                "reference_no": "APR-REJECT",
+                "category": "lease_plan_approval",
+                "occurred_on": "2026-08-02",
+                "submitted_by": "party:rejection-approver",
+                "process": [{"sequence": 1, "role": "risk"}],
+            },
+            "lease_plan:rejection",
+        )
+        approval_id = self.created_object_id(approval_preview, "approval")
+        self.apply_business_action(
+            "record_approval_decision",
+            {
+                "decision": "rejected",
+                "occurred_on": "2026-08-03",
+                "sequence": 1,
+                "decided_by": "party:rejection-approver",
+                "is_final": True,
+                "opinion": "风险条件不满足",
+            },
+            approval_id,
+        )
+        self.assertEqual(
+            "rejected",
+            self.repository.query_by_id("Object", "lease_plan:rejection")["properties"]["status"],
+        )
+        audit = self.registry.call("audit_finance_consistency")
+        self.assertTrue(audit["valid"], audit["errors"])
+        self.assertEqual(
+            {"reserved": 0.0, "used": 0.0},
+            audit["credit_balances"]["credit:rejection"],
         )
 
     def test_customer_action_writes_through_uom_repository(self) -> None:
@@ -130,6 +523,10 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         applied = self.registry.call("apply_action", preview_token=approval["preview_token"])
         self.assertTrue(applied["applied"])
         approval_id = next(item["record"]["id"] for item in approval["operations"] if item["action"] == "create_object")
+        self.assertEqual(
+            "pending_approval",
+            self.repository.query_by_id("Object", "lease_plan:approval-test")["properties"]["status"],
+        )
 
         decision = self.registry.call(
             "preview_action",
@@ -149,6 +546,10 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         self.assertEqual("pending", updated["properties"]["status"])
         self.assertEqual("pending", updated["properties"]["details"]["result"]["decision"])
         self.assertEqual(1, len(updated["properties"]["details"]["history"]))
+        self.assertEqual(
+            "pending_approval",
+            self.repository.query_by_id("Object", "lease_plan:approval-test")["properties"]["status"],
+        )
 
         final_decision = self.registry.call(
             "preview_action",
@@ -169,6 +570,10 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         self.assertEqual("approved", updated["properties"]["status"])
         self.assertEqual("approved", updated["properties"]["details"]["result"]["decision"])
         self.assertEqual(2, len(updated["properties"]["details"]["history"]))
+        self.assertEqual(
+            "approved",
+            self.repository.query_by_id("Object", "lease_plan:approval-test")["properties"]["status"],
+        )
 
         signed = self.registry.call(
             "preview_action",
@@ -184,6 +589,20 @@ class LeasingOagIntegrationTest(unittest.TestCase):
             },
         )
         self.assertTrue(signed["valid"], signed["errors"])
+        self.registry.call("apply_action", preview_token=signed["preview_token"])
+        self.assertEqual(
+            "contracted",
+            self.repository.query_by_id("Object", "lease_plan:approval-test")["properties"]["status"],
+        )
+        available = self.registry.call(
+            "get_available_actions",
+            context_id="lease_plan:approval-test",
+        )
+        sign_again = next(
+            action for action in available["actions"]
+            if action["id"] == "sign_contract"
+        )
+        self.assertFalse(sign_again["executable"])
 
     def test_approval_has_explicit_reviewed_object_without_ui_context(self) -> None:
         for record in (
@@ -267,7 +686,10 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         )
         self.assertFalse(sign_contract["executable"])
         self.assertEqual(
-            ["签订合同前，项目方案必须存在已通过的审批。"],
+            [
+                "签订合同前，项目方案必须存在已通过的审批。",
+                "只有已审批通过且尚未签约的项目方案可以签订合同。",
+            ],
             sign_contract["blocked_reasons"],
         )
 
@@ -358,7 +780,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
             context_id="payment:test",
             inputs={
                 "target_id": "receivable:test",
-                "amount": {"amount": 100, "currency": "CNY"},
+                "amount": {"amount": 40, "currency": "CNY"},
                 "occurred_on": "2026-08-13",
                 "sequence": 1,
             },
@@ -374,6 +796,37 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         ]
         self.assertEqual("allocation", object_operations[0]["record"]["type"])
         self.assertEqual(2, len(relation_operations))
+        self.registry.call("apply_action", preview_token=preview["preview_token"])
+        self.assertEqual(
+            "partial",
+            self.repository.query_by_id("Object", "payment:test")["properties"]["status"],
+        )
+        self.assertEqual(
+            "partial",
+            self.repository.query_by_id("Object", "receivable:test")["properties"]["status"],
+        )
+
+        final = self.registry.call(
+            "preview_action",
+            action_id="allocate_payment",
+            context_id="payment:test",
+            inputs={
+                "target_id": "receivable:test",
+                "amount": {"amount": 60, "currency": "CNY"},
+                "occurred_on": "2026-08-14",
+                "sequence": 2,
+            },
+        )
+        self.assertTrue(final["valid"], final["errors"])
+        self.registry.call("apply_action", preview_token=final["preview_token"])
+        self.assertEqual(
+            "allocated",
+            self.repository.query_by_id("Object", "payment:test")["properties"]["status"],
+        )
+        self.assertEqual(
+            "settled",
+            self.repository.query_by_id("Object", "receivable:test")["properties"]["status"],
+        )
 
     def test_voucher_action_generates_balanced_entries(self) -> None:
         self.repository.insert_record("Object", {

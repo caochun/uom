@@ -113,6 +113,36 @@ def audit_finance_records(
                 if owner_amount is not None and totals[owner_id] > owner_amount + 1e-9:
                     errors.append(f"{owner_id}: 累计核销金额超过业务金额")
 
+    for record in objects.values():
+        record_type = record.get("type")
+        if record_type == "payment":
+            totals = allocated_by_payment
+            statuses = ("unallocated", "partial", "allocated")
+        elif record_type in {"receivable", "penalty"}:
+            totals = allocated_by_target
+            statuses = ("open", "partial", "settled")
+        else:
+            continue
+        status = (record.get("properties") or {}).get("status")
+        if status not in statuses:
+            continue
+        amount, _ = _money(record)
+        if amount is None:
+            continue
+        allocated = totals.get(record["id"], 0.0)
+        if allocated <= 1e-9:
+            expected = statuses[0]
+        elif allocated < amount - 1e-9:
+            expected = statuses[1]
+        elif allocated <= amount + 1e-9:
+            expected = statuses[2]
+        else:
+            continue
+        if status != expected:
+            errors.append(
+                f"{record['id']}: 核销进度对应状态应为 {expected}，当前为 {status}"
+            )
+
     for voucher_id, line_ids in voucher_lines.items():
         debit = credit = 0.0
         for line_id in line_ids:

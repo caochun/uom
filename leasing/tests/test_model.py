@@ -41,6 +41,25 @@ class LeasingDomainModelTest(unittest.TestCase):
             {item["type"] for item in relations},
         )
 
+    def test_seed_is_a_multi_case_semantic_dataset(self) -> None:
+        objects, relations = build_graph()
+        self.assertGreaterEqual(len(objects), 80)
+        self.assertGreaterEqual(len(relations), 120)
+        statuses_by_type = {}
+        for item in objects:
+            statuses_by_type.setdefault(item["type"], set()).add(
+                item.get("properties", {}).get("status")
+            )
+        self.assertTrue(
+            {"pending", "approved", "rejected"}.issubset(
+                statuses_by_type["approval"]
+            )
+        )
+        self.assertTrue(
+            {"active", "settled"}.issubset(statuses_by_type["contract"])
+        )
+        self.assertIn("inactive", statuses_by_type["customer"])
+
     def test_model_keeps_money_allocation_as_an_object(self) -> None:
         allocation = self.model["object_types"]["allocation"]
         self.assertTrue(allocation["properties"][name]["required"] for name in (
@@ -89,6 +108,32 @@ class LeasingDomainModelTest(unittest.TestCase):
         )
         self.assertIn("requires", actions["record_loan"])
         self.assertIn("requires", actions["create_receivable"])
+
+    def test_action_outcome_statuses_are_not_user_inputs(self) -> None:
+        actions = self.model["actions"]
+        for action_id in (
+            "register_customer",
+            "create_lease_plan",
+            "grant_credit",
+            "sign_contract",
+            "record_loan",
+            "create_schedule_version",
+            "create_receivable",
+            "record_payment",
+            "allocate_payment",
+            "settle_contract",
+            "issue_voucher",
+        ):
+            self.assertNotIn("status", actions[action_id]["inputs"], action_id)
+        self.assertEqual(
+            "contracted",
+            actions["sign_contract"]["effects"][1]["update_object"]
+            ["changes"]["properties"]["status"],
+        )
+        self.assertEqual(
+            "supersedes",
+            actions["create_schedule_version"]["effects"][-1]["create_relation"]["type"],
+        )
 
     def test_approval_is_one_decision_fact_with_traceable_process(self) -> None:
         approval = next(item for item in build_graph()[0] if item["type"] == "approval")
