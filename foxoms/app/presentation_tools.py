@@ -16,7 +16,7 @@ def register_presentation_tools(harness, ontology, workspace, actions) -> None:
     if definition is None:
         return
 
-    model_actions = workspace.snapshot()["model"].get("actions", {})
+    model_actions = workspace.load_model().get("actions", {})
     action_ids = list(model_actions)
     if not action_ids:
         return

@@ -106,10 +106,10 @@ class OagAgentRuntime:
         except Exception as exc:  # The web shell remains usable without LLM credentials.
             self._error = f"OAG Agent 初始化失败: {exc}"
 
-    def bootstrap(self) -> dict[str, Any]:
+    def bootstrap(self, include_graph: bool = True) -> dict[str, Any]:
         if self.workspace is None:
             raise RuntimeError(self._error or "UOM domain 未初始化")
-        return self.workspace.bootstrap()
+        return self.workspace.bootstrap(include_graph=include_graph)
 
     def call_domain(self, name: str, **kwargs: Any) -> Any:
         if self.registry is None:

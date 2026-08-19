@@ -112,10 +112,11 @@ function segmentedHandler(stateKey, render, dataKey = "filter") {
 function typeCatalog(kind) {
   const definitions = kind === "object" ? typeNames() : relationNames();
   const records = kind === "object" ? state.data.objects : state.data.relations;
-  const counts = records.reduce((result, item) => {
+  const summaryCounts = kind === "object" ? state.data.stats?.object_types : state.data.stats?.relation_types;
+  const counts = records.length ? records.reduce((result, item) => {
     result[item.type] = (result[item.type] || 0) + 1;
     return result;
-  }, {});
+  }, {}) : (summaryCounts || {});
   const catalog = Object.entries(definitions).map(([id, definition]) => ({
     id,
     name: definition.name || id,
@@ -136,12 +137,12 @@ function renderTypeFilters() {
   if (state.relationFilter !== "all" && !relationTypes.some((item) => item.id === state.relationFilter)) state.relationFilter = "all";
 
   $("#objectFilters").innerHTML = [
-    filterButton("all", "全部", state.data.objects.length, state.objectFilter),
+    filterButton("all", "全部", state.data.stats.object_count, state.objectFilter),
     ...objectTypes.map((item) => filterButton(item.id, item.name, item.count, state.objectFilter)),
   ].join("");
 
   $("#relationFilters").innerHTML = [
-    filterButton("all", "全部", state.data.relations.length, state.relationFilter),
+    filterButton("all", "全部", state.data.stats.relation_count, state.relationFilter),
     ...relationTypes.map((item) => filterButton(item.id, item.name, item.count, state.relationFilter)),
   ].join("");
 }
@@ -170,11 +171,34 @@ async function api(path, options = {}) {
 
 async function loadData() {
   try {
-    state.data = await api("/api/bootstrap");
+    state.data = { ...(await api("/api/bootstrap")), objects: [], relations: [] };
+    renderShell();
+    const [objects, relations] = await Promise.all([
+      loadRecordPages("object"),
+      loadRecordPages("relation"),
+    ]);
+    state.data.objects = objects;
+    state.data.relations = relations;
+    state.data.graph_loaded = true;
     renderShell();
     toast("数据已刷新");
   } catch (error) {
     toast(error.message, true);
+  }
+}
+
+async function loadRecordPages(kind) {
+  const records = [];
+  const path = kind === "object" ? "/api/objects/query" : "/api/relations/query";
+  let offset = 0;
+  while (true) {
+    const page = await api(path, {
+      method: "POST",
+      body: JSON.stringify({ limit: 500, offset }),
+    });
+    records.push(...page.records);
+    if (!page.has_more) return records;
+    offset += page.records.length;
   }
 }
 

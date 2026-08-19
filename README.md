@@ -84,6 +84,24 @@ SQLite 事务中同时写入对象、关系和操作审计。模型扩展使用�
 业务意图 -> Action 表单 -> preview -> 用户确认 -> apply -> highway/data/graph.db
 ```
 
+### 对象和关系的变化
+
+UOM 使用“当前状态图 + 不可变 Action 历史”处理业务变化。对象和关系的 `lifecycle`
+由存储层统一维护，包含 `revision`、`created_at`、`updated_at` 和 `retired_at`；
+领域 Action 不得自行填写这些字段。
+
+- 同一业务身份的事实变化使用更新，产生新业务事实时创建新对象。
+- `id` 和 `type` 是稳定身份；关系的 `from` / `to` 也不可原地修改。
+- 关联对象变化时，应退役旧关系并创建新关系。
+- `delete_object` / `delete_relation` 在日常 ChangeSet 中表示退役，数据仍保留在 SQLite，
+  但不再出现于当前图。退役后的稳定 ID 不能复用。
+- 每次数据变更都记录操作、操作人、渠道、原因以及每条记录的 `before` / `after`。
+- 提交时校验 `revision`；如果预览后数据已被修改，本次提交失效，必须刷新后重试。
+
+`model.yaml` 的演化与业务数据历史分开管理。类型或属性可使用 `deprecated: true`
+停止新增，使用 `aliases` 保留旧名称。已被数据使用的属性不能原地修改值类型，应新建属性并执行
+显式数据迁移。`model.yaml` 的完整版本历史仍由 Git 管理。
+
 ## 校验
 
 ```bash

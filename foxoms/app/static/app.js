@@ -121,10 +121,11 @@ function segmentedHandler(stateKey, render, dataKey = "filter") {
 function typeCatalog(kind) {
   const definitions = kind === "object" ? typeNames() : relationNames();
   const records = kind === "object" ? state.data.objects : state.data.relations;
-  const counts = records.reduce((result, item) => {
+  const summaryCounts = kind === "object" ? state.data.stats?.object_types : state.data.stats?.relation_types;
+  const counts = records.length ? records.reduce((result, item) => {
     result[item.type] = (result[item.type] || 0) + 1;
     return result;
-  }, {});
+  }, {}) : (summaryCounts || {});
   const catalog = Object.entries(definitions).map(([id, definition]) => ({
     id,
     name: definition.name || id,
@@ -145,12 +146,12 @@ function renderTypeFilters() {
   if (state.relationFilter !== "all" && !relationTypes.some((item) => item.id === state.relationFilter)) state.relationFilter = "all";
 
   $("#objectFilters").innerHTML = [
-    filterButton("all", "全部", state.data.objects.length, state.objectFilter),
+    filterButton("all", "全部", state.data.stats.object_count, state.objectFilter),
     ...objectTypes.map((item) => filterButton(item.id, item.name, item.count, state.objectFilter)),
   ].join("");
 
   $("#relationFilters").innerHTML = [
-    filterButton("all", "全部", state.data.relations.length, state.relationFilter),
+    filterButton("all", "全部", state.data.stats.relation_count, state.relationFilter),
     ...relationTypes.map((item) => filterButton(item.id, item.name, item.count, state.relationFilter)),
   ].join("");
 }
@@ -179,11 +180,34 @@ async function api(path, options = {}) {
 
 async function loadData() {
   try {
-    state.data = await api("/api/bootstrap");
+    state.data = { ...(await api("/api/bootstrap")), objects: [], relations: [] };
+    renderShell();
+    const [objects, relations] = await Promise.all([
+      loadRecordPages("object"),
+      loadRecordPages("relation"),
+    ]);
+    state.data.objects = objects;
+    state.data.relations = relations;
+    state.data.graph_loaded = true;
     renderShell();
     toast("数据已刷新");
   } catch (error) {
     toast(error.message, true);
+  }
+}
+
+async function loadRecordPages(kind) {
+  const records = [];
+  const path = kind === "object" ? "/api/objects/query" : "/api/relations/query";
+  let offset = 0;
+  while (true) {
+    const page = await api(path, {
+      method: "POST",
+      body: JSON.stringify({ limit: 500, offset }),
+    });
+    records.push(...page.records);
+    if (!page.has_more) return records;
+    offset += page.records.length;
   }
 }
 
@@ -758,6 +782,7 @@ function showDetail(kind, id) {
   $("#scrim").classList.remove("hidden");
   updateAgentContext();
   icons();
+  if (kind !== "model") loadDetailHistory(kind, id);
 }
 
 function detailMarkup(kind, id, item) {
@@ -775,11 +800,75 @@ function detailMarkup(kind, id, item) {
     return `<button class="relation-link" type="button" data-related-object="${escapeAttr(other?.id || (outbound ? rel.to : rel.from))}"><i data-lucide="${outbound ? "arrow-right" : "arrow-left"}"></i><div><strong>${escapeHtml(relationNames()[rel.type]?.name || rel.type)}${escapeHtml(role)} · ${escapeHtml(other?.name || (outbound ? rel.to : rel.from))}</strong><span>${escapeHtml(typeNames()[other?.type]?.name || other?.type || "未知类型")} · ${escapeHtml(rel.id)}</span></div><i data-lucide="chevron-right"></i></button>`;
   }).join("") : `<span class="muted-text">暂无关系</span>`;
   return (kind === "object" ? businessPositionMarkup(item) : "")
-    + detailSection("基本信息", Object.fromEntries(Object.entries(item).filter(([key]) => !["properties", "tags", "source_refs"].includes(key))))
+    + detailSection("基本信息", Object.fromEntries(Object.entries(item).filter(([key]) => !["properties", "tags", "source_refs", "lifecycle"].includes(key))))
     + detailSection("Properties", item.properties || {})
     + (item.tags?.length ? detailSection("Tags", { tags: item.tags }) : "")
     + (item.source_refs?.length ? detailSection("来源引用", { source_refs: item.source_refs }) : "")
-    + `<div class="detail-section"><h3>相邻关系 · ${links.length}</h3><div>${linkMarkup}</div></div>`;
+    + lifecycleMarkup(item.lifecycle)
+    + `<div class="detail-section"><h3>相邻关系 · ${links.length}</h3><div>${linkMarkup}</div></div>`
+    + `<div class="detail-section"><h3>变更历史</h3><div class="record-history" id="recordHistory"><div class="history-empty"><i data-lucide="loader-circle"></i><span>正在读取</span></div></div></div>`;
+}
+
+function lifecycleMarkup(lifecycle) {
+  if (!lifecycle) return "";
+  const values = {
+    版本: `r${lifecycle.revision || 1}`,
+    创建时间: formatTimestamp(lifecycle.created_at),
+    最后变更: formatTimestamp(lifecycle.updated_at),
+  };
+  if (lifecycle.retired_at) values.退役时间 = formatTimestamp(lifecycle.retired_at);
+  return detailSection("生命周期", values);
+}
+
+async function loadDetailHistory(kind, id) {
+  const container = $("#recordHistory");
+  if (!container) return;
+  try {
+    const result = await api("/api/records/history", {
+      method: "POST",
+      body: JSON.stringify({ kind, record_id: id, limit: 100 }),
+    });
+    if (state.selected?.kind !== kind || state.selected?.id !== id) return;
+    container.innerHTML = historyMarkup(result.history || []);
+    icons();
+  } catch (error) {
+    container.innerHTML = `<div class="history-empty"><i data-lucide="circle-alert"></i><span>${escapeHtml(error.message)}</span></div>`;
+    icons();
+  }
+}
+
+function historyMarkup(history) {
+  if (!history.length) return `<div class="history-empty"><i data-lucide="history"></i><span>暂无可追溯的业务操作</span></div>`;
+  return history.map((entry) => {
+    const change = entry.change || {};
+    const operation = {
+      create_object: "创建对象", update_object: "更新对象", delete_object: "退役对象",
+      create_relation: "建立关系", update_relation: "更新关系", delete_relation: "终止关系",
+    }[change.operation] || change.operation || "变更";
+    const differences = historyDifferences(change.before, change.after);
+    return `<article class="history-item">
+      <span class="history-marker"><i data-lucide="git-commit-horizontal"></i></span>
+      <div class="history-main"><div><strong>${escapeHtml(entry.action_name || operation)}</strong><span>${escapeHtml(operation)}</span></div>
+      <time>${escapeHtml(formatTimestamp(entry.created_at))} · ${escapeHtml(entry.actor || "-")} · ${escapeHtml(entry.channel || "-")}</time>
+      ${entry.reason ? `<p>${escapeHtml(entry.reason)}</p>` : ""}
+      ${differences.length ? `<details><summary>${differences.length} 项变化</summary><div class="history-differences">${differences.map((item) => `<div><code>${escapeHtml(item.path)}</code><span>${escapeHtml(item.before)} → ${escapeHtml(item.after)}</span></div>`).join("")}</div></details>` : ""}</div>
+    </article>`;
+  }).join("");
+}
+
+function historyDifferences(before, after) {
+  const left = flattenRecord(before || {});
+  const right = flattenRecord(after || {});
+  return [...new Set([...Object.keys(left), ...Object.keys(right)])]
+    .filter((key) => !key.startsWith("lifecycle.") && formatValue(left[key]) !== formatValue(right[key]))
+    .map((key) => ({ path: key, before: formatValue(left[key]), after: formatValue(right[key]) }));
+}
+
+function flattenRecord(value, prefix = "", output = {}) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    Object.entries(value).forEach(([key, child]) => flattenRecord(child, prefix ? `${prefix}.${key}` : key, output));
+  } else if (prefix) output[prefix] = value;
+  return output;
 }
 
 function businessPositionMarkup(item) {
@@ -1253,14 +1342,18 @@ async function submitEditor(event) {
 }
 
 function objectTypeOptions() {
-  const result = { ...typeNames() };
-  state.data.objects.forEach((item) => { result[item.type] ||= { name: item.type }; });
+  const result = Object.fromEntries(Object.entries(typeNames()).filter(([, definition]) => definition.deprecated !== true));
+  state.data.objects.forEach((item) => {
+    if (!typeNames()[item.type]) result[item.type] ||= { name: item.type };
+  });
   return result;
 }
 
 function relationTypeOptions() {
-  const result = { ...relationNames() };
-  state.data.relations.forEach((item) => { result[item.type] ||= { name: item.type }; });
+  const result = Object.fromEntries(Object.entries(relationNames()).filter(([, definition]) => definition.deprecated !== true));
+  state.data.relations.forEach((item) => {
+    if (!relationNames()[item.type]) result[item.type] ||= { name: item.type };
+  });
   return result;
 }
 
@@ -1381,7 +1474,7 @@ function renderChangePreview() {
   const box = $("#validationBox");
   box.classList.toggle("invalid", !preview.valid);
   box.innerHTML = preview.valid ? `<i data-lucide="shield-check"></i><span>结构与业务约束校验通过，将更新 ${preview.changed_files.join("、")}。</span>` : `<i data-lucide="circle-x"></i><span>${escapeHtml(preview.errors.join("\n"))}</span>`;
-  $("#actionReasonField").classList.toggle("hidden", !isAction);
+  $("#actionReasonLabel").textContent = isAction ? "执行说明" : "变更说明";
   if (!isAction) $("#actionReason").value = "";
   $("#applyChangesBtn").disabled = !preview.valid;
   $("#applyChangesBtn").innerHTML = isAction ? '<i data-lucide="check"></i>确认执行' : '<i data-lucide="check"></i>应用变更';
@@ -1410,7 +1503,14 @@ async function applyPendingChanges() {
             actor: "web_user",
           }),
         })
-      : await api("/api/changes/apply", { method: "POST", body: JSON.stringify({ operations: state.pendingOperations }) });
+      : await api("/api/changes/apply", {
+          method: "POST",
+          body: JSON.stringify({
+            operations: state.pendingOperations,
+            reason: $("#actionReason").value.trim(),
+            actor: "web_user",
+          }),
+        });
     $("#changeDialog").close();
     state.pendingOperations = []; state.preview = null; state.previewMode = "changeset"; $("#changeCount").textContent = "0";
     toast(result.summary || result.changes.join("；"));
@@ -1639,6 +1739,7 @@ function typeIcon(type) {
 function statusPill(status, label = status) { return status ? `<span class="status-pill ${escapeAttr(status)}">${escapeHtml(label)}</span>` : '<span class="muted-text">-</span>'; }
 function money(amount, currency = "CNY") { if (amount === null || amount === undefined || Number.isNaN(Number(amount))) return "-"; return new Intl.NumberFormat("zh-CN", { style: "currency", currency, maximumFractionDigits: 0 }).format(Number(amount)); }
 function formatValue(value) { return typeof value === "object" ? JSON.stringify(value, null, 2) : String(value ?? "-"); }
+function formatTimestamp(value) { if (!value) return "-"; const date = new Date(value); return Number.isNaN(date.getTime()) ? String(value) : new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(date); }
 function parseExtraProperties(value) { if (!value?.trim()) return {}; const parsed = JSON.parse(value); if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("其他 Properties 必须是 JSON 对象"); return parsed; }
 function splitList(value) { return String(value || "").split(",").map((item) => item.trim()).filter(Boolean); }
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]); }

@@ -56,6 +56,7 @@ class UomDomainProvider:
         handlers = {
             "trace_object": partial(trace_object, context.repository),
             "get_model_vocabulary": workspace.get_model_vocabulary,
+            "get_record_history": workspace.get_record_history,
             "preview_changes": workspace.preview_changes,
             "apply_changes": workspace.apply_changes,
             "get_available_actions": actions.get_available_actions,

@@ -453,6 +453,25 @@ th:first-child { width: 29%; } th:nth-child(2) { width: 14%; } th:nth-child(3) {
 .relation-link svg { width: 14px; color: var(--primary); }
 .relation-link strong, .relation-link span { display: block; font-size: 10px; }
 .relation-link span { color: var(--muted); margin-top: 2px; }
+.record-history { position: relative; }
+.history-item { position: relative; display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; padding-bottom: 15px; }
+.history-item:not(:last-child)::before { content: ""; position: absolute; top: 21px; bottom: 0; left: 11px; width: 1px; background: var(--line); }
+.history-marker { z-index: 1; display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid #c9d5e1; border-radius: 50%; color: var(--primary); background: white; }
+.history-marker svg { width: 12px; }
+.history-main { min-width: 0; padding-top: 2px; }
+.history-main > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.history-main strong { font-size: 11px; }
+.history-main > div:first-child span, .history-main time { color: var(--muted); font-size: 9px; }
+.history-main time { display: block; margin-top: 3px; }
+.history-main p { margin: 7px 0 0; font-size: 10px; }
+.history-main details { margin-top: 7px; font-size: 9px; }
+.history-main summary { color: var(--primary-dark); cursor: pointer; }
+.history-differences { margin-top: 5px; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+.history-differences div { display: grid; grid-template-columns: minmax(80px, .7fr) minmax(0, 1.3fr); gap: 7px; padding: 6px 7px; border-bottom: 1px solid var(--line); }
+.history-differences div:last-child { border-bottom: 0; }
+.history-differences code, .history-differences span { overflow-wrap: anywhere; font-size: 9px; }
+.history-empty { display: flex; align-items: center; gap: 7px; padding: 10px; border: 1px dashed var(--line); border-radius: 6px; color: var(--muted); font-size: 10px; }
+.history-empty svg { width: 14px; }
 
 dialog { padding: 0; border: 0; border-radius: 8px; box-shadow: var(--shadow); color: var(--ink); }
 dialog::backdrop { background: rgba(12,27,44,.38); }

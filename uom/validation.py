@@ -109,6 +109,94 @@ class ModelValidator:
         self._validate_semantics()
         return self.result
 
+    def validate_changes(
+        self,
+        object_ids: set[str],
+        relation_ids: set[str],
+        *,
+        check_acyclic_types: set[str] | None = None,
+    ) -> ValidationResult:
+        """Validate records and endpoints affected by a data-only ChangeSet.
+
+        The ontology and domain model are validated when loaded and whenever the
+        model changes. Routine writes therefore need only re-check their records,
+        endpoint contracts and any acyclic relation types they add to.
+        """
+        objects = self.object_data.get("objects")
+        relations = self.relation_data.get("relations")
+        if not isinstance(objects, list) or not isinstance(relations, list):
+            return self.validate()
+        self.object_index = {
+            item.get("id"): item
+            for item in objects
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        relation_index = {
+            item.get("id"): item
+            for item in relations
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        object_contract = self._record_contract("Object")
+        for record_id in sorted(object_ids):
+            item = self.object_index.get(record_id)
+            if not isinstance(item, dict):
+                self.result.error(f"data.objects.{record_id}", "unknown object")
+                continue
+            path = f"data.objects.{record_id}"
+            self._validate_record_fields(item, object_contract, path)
+            self._validate_instance_id(item.get("id"), f"{path}.id")
+            self._validate_type_id(item.get("type"), f"{path}.type")
+            self._validate_properties(item.get("properties", {}), f"{path}.properties")
+            self._validate_tags(item.get("tags"), f"{path}.tags")
+            self._validate_source_refs(item.get("source_refs"), f"{path}.source_refs")
+            self._validate_lifecycle(item.get("lifecycle"), f"{path}.lifecycle")
+            definition = self._mapping(self.object_type_definitions.get(item.get("type")))
+            self._validate_typed_properties(
+                item.get("properties", {}), definition, f"{path}.properties"
+            )
+
+        relation_contract = self._record_contract("Relation")
+        for record_id in sorted(relation_ids):
+            item = relation_index.get(record_id)
+            if not isinstance(item, dict):
+                self.result.error(f"data.relations.{record_id}", "unknown relation")
+                continue
+            path = f"data.relations.{record_id}"
+            self._validate_record_fields(item, relation_contract, path)
+            self._validate_instance_id(item.get("id"), f"{path}.id")
+            self._validate_type_id(item.get("type"), f"{path}.type")
+            source = self.object_index.get(item.get("from"))
+            target = self.object_index.get(item.get("to"))
+            if source is None:
+                self.result.error(f"{path}.from", "unknown object")
+            if target is None:
+                self.result.error(f"{path}.to", "unknown object")
+            if item.get("from") == item.get("to"):
+                self.result.error(path, "self-relations are not allowed")
+            self._validate_properties(item.get("properties", {}), f"{path}.properties")
+            self._validate_tags(item.get("tags"), f"{path}.tags")
+            self._validate_source_refs(item.get("source_refs"), f"{path}.source_refs")
+            self._validate_lifecycle(item.get("lifecycle"), f"{path}.lifecycle")
+            definition = self._mapping(self.relation_type_definitions.get(item.get("type")))
+            if source is not None and definition.get("from_types"):
+                if source.get("type") not in definition["from_types"]:
+                    self.result.error(f"{path}.from", "object type does not match domain model")
+            if target is not None and definition.get("to_types"):
+                if target.get("type") not in definition["to_types"]:
+                    self.result.error(f"{path}.to", "object type does not match domain model")
+            self._validate_typed_properties(
+                item.get("properties", {}), definition, f"{path}.properties"
+            )
+
+        acyclic_types = check_acyclic_types or set()
+        if acyclic_types:
+            self.relation_items = relations
+            for relation_type in sorted(acyclic_types):
+                definition = self._mapping(self.relation_type_definitions.get(relation_type))
+                if definition.get("acyclic") is True:
+                    self._validate_acyclic(relation_type)
+        return self.result
+
     def _validate_domain_model(self) -> None:
         model = self.domain_model or {}
         if model.get("schema") != "uom.domain_model.v1":
@@ -129,6 +217,7 @@ class ModelValidator:
                 self.result.error(path, "must contain name")
             if definition.get("type") not in VALUE_TYPES:
                 self.result.error(f"{path}.type", f"must be one of {', '.join(sorted(VALUE_TYPES))}")
+            self._validate_evolution_metadata(definition, path)
 
         for kind in ("object", "relation"):
             section_name = f"{kind}_types"
@@ -144,6 +233,7 @@ class ModelValidator:
                     continue
                 if not definition.get("name") or not definition.get("description"):
                     self.result.error(path, "must contain name and description")
+                self._validate_evolution_metadata(definition, path)
 
                 properties = definition.get("properties", {})
                 if not isinstance(properties, dict):
@@ -174,6 +264,19 @@ class ModelValidator:
 
         self._validate_runtime(model)
         self._validate_actions(model.get("actions"))
+
+    def _validate_evolution_metadata(self, definition: dict[str, Any], path: str) -> None:
+        if "deprecated" in definition and not isinstance(definition["deprecated"], bool):
+            self.result.error(f"{path}.deprecated", "must be a boolean")
+        aliases = definition.get("aliases")
+        if aliases is None:
+            return
+        if not isinstance(aliases, list) or not all(
+            isinstance(alias, str) and alias.strip() for alias in aliases
+        ):
+            self.result.error(f"{path}.aliases", "must be a list of non-empty strings")
+        elif len(set(aliases)) != len(aliases):
+            self.result.error(f"{path}.aliases", "must not contain duplicates")
 
     def _validate_runtime(self, model: dict[str, Any]) -> None:
         try:
@@ -575,6 +678,7 @@ class ModelValidator:
                 "properties": ("dict", False),
                 "tags": ("list", False),
                 "source_refs": ("list", False),
+                "lifecycle": ("dict", False),
             },
             "Relation": {
                 "id": ("str", True),
@@ -584,6 +688,7 @@ class ModelValidator:
                 "properties": ("dict", False),
                 "tags": ("list", False),
                 "source_refs": ("list", False),
+                "lifecycle": ("dict", False),
             },
         }
         if set(self.object_definitions) != set(expected_objects):
@@ -649,6 +754,7 @@ class ModelValidator:
             self._validate_properties(item.get("properties", {}), f"{path}.properties")
             self._validate_tags(item.get("tags"), f"{path}.tags")
             self._validate_source_refs(item.get("source_refs"), f"{path}.source_refs")
+            self._validate_lifecycle(item.get("lifecycle"), f"{path}.lifecycle")
 
         relation_contract = self._record_contract("Relation")
         relations = self.relation_data.get("relations")
@@ -681,6 +787,31 @@ class ModelValidator:
             self._validate_properties(item.get("properties", {}), f"{path}.properties")
             self._validate_tags(item.get("tags"), f"{path}.tags")
             self._validate_source_refs(item.get("source_refs"), f"{path}.source_refs")
+            self._validate_lifecycle(item.get("lifecycle"), f"{path}.lifecycle")
+
+    def _validate_lifecycle(self, value: Any, path: str) -> None:
+        if value is None:
+            return
+        if not isinstance(value, dict):
+            self.result.error(path, "must be a mapping")
+            return
+        allowed = {"revision", "created_at", "updated_at", "retired_at"}
+        unknown = set(value) - allowed
+        if unknown:
+            self.result.error(path, f"contains unknown fields: {', '.join(sorted(unknown))}")
+        revision = value.get("revision")
+        if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+            self.result.error(f"{path}.revision", "must be a positive integer")
+        for field in ("created_at", "updated_at", "retired_at"):
+            timestamp = value.get(field)
+            if timestamp is None and field == "retired_at":
+                continue
+            try:
+                if not isinstance(timestamp, str):
+                    raise ValueError
+                datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            except ValueError:
+                self.result.error(f"{path}.{field}", "must be an ISO datetime")
 
     def _validate_record_fields(
         self,

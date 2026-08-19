@@ -33,6 +33,7 @@ objects:
       properties: {type: dict, description: 领域模型定义的结构化事实}
       tags: {type: list, description: 可选横向检索标签}
       source_refs: {type: list, description: 可选来源系统引用}
+      lifecycle: {type: dict, description: UOM 维护的版本、创建、更新和退役信息}
 
   Relation:
     display_name: 业务关系
@@ -57,6 +58,7 @@ objects:
       properties: {type: dict, description: 领域模型定义的关系事实}
       tags: {type: list, description: 可选横向检索标签}
       source_refs: {type: list, description: 可选来源系统引用}
+      lifecycle: {type: dict, description: UOM 维护的版本、创建、更新和退役信息}
 
 functions:
   trace_object:
@@ -74,6 +76,16 @@ functions:
     params:
       kind: {type: str, description: all、property、object 或 relation, default: all}
       type_id: {type: str, description: 可选的具体属性或 type ID, default: ""}
+
+  get_record_history:
+    summary: 查看对象或关系的完整变更历史
+    description: 按稳定 ID 返回 Action 导致的前后值、操作人、时间和原因。
+    function_type: get
+    involves_objects: [Object, Relation]
+    params:
+      kind: {type: str, description: object 或 relation}
+      record_id: {type: str, description: 对象或关系的稳定 ID}
+      limit: {type: int, description: 最多返回条数, default: 100}
 
   preview_changes:
     summary: 校验对象、关系或领域模型变更并返回预览，不写入数据
@@ -96,6 +108,9 @@ functions:
     involves_objects: [Object, Relation]
     params:
       operations: {type: list, description: 已通过预览的 ChangeSet 操作数组}
+      reason: {type: str, description: 可选的变更原因, default: ""}
+      actor: {type: str, description: 操作者标识, default: agent}
+      channel: {type: str, description: 操作渠道, default: agent}
 
   get_available_actions:
     summary: 获取当前上下文允许执行的模型化业务操作

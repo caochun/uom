@@ -26,7 +26,7 @@ class UomHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path == "/api/bootstrap":
-            self._json(AGENT.bootstrap())
+            self._json(AGENT.bootstrap(include_graph=False))
         elif path == "/api/agent/status":
             self._json(AGENT.status())
         elif path == "/api/map/config":
@@ -70,7 +70,15 @@ class UomHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         try:
             body = self._read_json()
-            if path == "/api/changes/preview":
+            if path in {"/api/objects/query", "/api/relations/query"}:
+                self._json(AGENT.workspace.query_records(
+                    "object" if path == "/api/objects/query" else "relation",
+                    filters=body.get("filters"),
+                    limit=int(body.get("limit", 200)),
+                    offset=int(body.get("offset", 0)),
+                    order_by=body.get("order_by"),
+                ))
+            elif path == "/api/changes/preview":
                 self._json(AGENT.call_domain(
                     "preview_changes",
                     operations=body.get("operations"),
@@ -79,6 +87,16 @@ class UomHandler(BaseHTTPRequestHandler):
                 self._json(AGENT.call_domain(
                     "apply_changes",
                     operations=body.get("operations"),
+                    reason=str(body.get("reason", "")),
+                    actor=str(body.get("actor", "web_user")),
+                    channel="ui",
+                ))
+            elif path == "/api/records/history":
+                self._json(AGENT.call_domain(
+                    "get_record_history",
+                    kind=str(body.get("kind", "")),
+                    record_id=str(body.get("record_id", "")),
+                    limit=int(body.get("limit", 100)),
                 ))
             elif path == "/api/actions/available":
                 self._json(AGENT.call_domain(

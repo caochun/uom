@@ -25,7 +25,7 @@ class ModelActionService:
         self._lock = threading.RLock()
 
     def get_available_actions(self, context_id: str = "") -> dict[str, Any]:
-        model = self.workspace.snapshot()["model"]
+        model = self.workspace.load_model()
         context = self._context(context_id) if context_id else None
         actions = []
         for action_id, definition in model.get("actions", {}).items():
@@ -61,7 +61,7 @@ class ModelActionService:
     ) -> dict[str, Any]:
         """Validate a UI handoff without requiring the action's missing inputs."""
         with self._lock:
-            model = self.workspace.snapshot()["model"]
+            model = self.workspace.load_model()
             definition = model.get("actions", {}).get(action_id)
             if not isinstance(definition, dict):
                 raise ChangeValidationError([f"action: 未知业务操作 {action_id}"])
@@ -96,7 +96,7 @@ class ModelActionService:
         context_id: str = "",
     ) -> dict[str, Any]:
         with self._lock:
-            model = self.workspace.snapshot()["model"]
+            model = self.workspace.load_model()
             definition = model.get("actions", {}).get(action_id)
             if not isinstance(definition, dict):
                 raise ChangeValidationError([f"action: 未知业务操作 {action_id}"])
@@ -118,7 +118,12 @@ class ModelActionService:
                 resolved_inputs,
                 context,
             )
-            preview = self.workspace.preview_changes(operations)
+            preview = self.workspace.preview_changes(
+                operations,
+                read_object_ids=self._action_read_object_ids(
+                    definition, resolved_inputs, context,
+                ),
+            )
             result = {
                 **preview,
                 "action": self._action_summary(action_id, definition),
@@ -147,6 +152,19 @@ class ModelActionService:
     ) -> list[dict[str, Any]]:
         """Compile an action's declared effects; domains may enrich them."""
         return self._compile_effects(effects, inputs, context)
+
+    @staticmethod
+    def _action_read_object_ids(
+        definition: dict[str, Any],
+        inputs: dict[str, Any],
+        context: dict[str, Any] | None,
+    ) -> set[str]:
+        object_ids = {context["id"]} if context and isinstance(context.get("id"), str) else set()
+        for input_id, input_definition in definition.get("inputs", {}).items():
+            value = inputs.get(input_id)
+            if "object_types" in input_definition and isinstance(value, str):
+                object_ids.add(value)
+        return object_ids
 
     def apply_action(
         self,
@@ -328,13 +346,12 @@ class ModelActionService:
         from_id: str | object | None,
         to_id: str | object | None,
     ) -> bool:
-        for relation in self.workspace.repository.query("Relation"):
-            if relation.get("type") != condition["relation"]:
-                continue
-            if from_id is not None and relation.get("from") != from_id:
-                continue
-            if to_id is not None and relation.get("to") != to_id:
-                continue
+        filters: dict[str, Any] = {"type": condition["relation"]}
+        if from_id is not None:
+            filters["from"] = from_id
+        if to_id is not None:
+            filters["to"] = to_id
+        for relation in self.workspace.repository.query("Relation", filters=filters):
             relation_properties = relation.get("properties") or {}
             if condition.get("role") is not None and relation_properties.get("role") != condition["role"]:
                 continue
