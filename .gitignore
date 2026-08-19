@@ -38,6 +38,7 @@ chat_*.db
 *.db-*
 !highway/data/graph.db
 !leasing/data/graph.db
+!foxoms/data/graph.db
 
 # Frontend tooling and browser tests
 node_modules/

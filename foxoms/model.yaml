@@ -1,0 +1,181 @@
+schema: uom.domain_model.v1
+
+model:
+  name: FoxOMS
+  version: 0.1.0
+  description: 待定义的 FoxOMS 领域模型。
+
+runtime:
+  functions: {}
+  presentation_tools: {}
+  interaction_policies: {}
+
+property_definitions:
+  is_managed:
+    name: 是否受管
+    type: boolean
+    description: 是否属于 FoxOMS 直接管理其运营过程的业务主体。
+  participation_role:
+    name: 参与角色
+    type: string
+    description: 业务主体在具体业务中承担的角色。
+  bid_result:
+    name: 投标结果
+    type: string
+    description: 投标记录的当前结果，用于表达是否中标。
+  quantity:
+    name: 投入数量
+    type: number
+    description: 一次资源投入的数量。
+  unit:
+    name: 投入单位
+    type: string
+    description: 资源投入数量使用的计量单位。
+  start_date:
+    name: 开始日期
+    type: date
+    description: 资源投入开始的日期。
+  end_date:
+    name: 结束日期
+    type: date
+    description: 资源投入结束的日期。
+  ip_role:
+    name: 知识资产角色
+    type: string
+    description: 知识资产在订单、项目或任务中是所需条件还是产生成果。
+  amount:
+    name: 金额
+    type: money
+    description: 发票或回款记录的总金额。
+  issued_date:
+    name: 开票日期
+    type: date
+    description: 发票开具的日期。
+  received_date:
+    name: 回款日期
+    type: date
+    description: 企业收到客户回款的日期。
+  settled_amount:
+    name: 核销金额
+    type: money
+    description: 一笔回款分配到某张发票的金额。
+
+object_types:
+  party:
+    name: 业务主体
+    description: 参与企业运营活动的个人或组织。
+    properties:
+      is_managed: {required: true}
+  opportunity:
+    name: 商机
+    description: 由某个受管业务主体跟进、可能形成后续交易的潜在商业机会。
+    properties: {}
+  tender:
+    name: 招标事项
+    description: 与商机关联、由招标方组织的招标活动。
+    properties: {}
+  bid:
+    name: 投标记录
+    description: 一个或多个业务主体针对招标事项形成的一次投标。
+    properties:
+      bid_result: {required: false}
+  framework_agreement:
+    name: 框架协议
+    description: 中标后签订、用于约定后续订单合作规则的框架性协议。
+    properties: {}
+  contract:
+    name: 项目合同
+    description: 中标后围绕具体项目或任务签订的服务采购合同。
+    properties: {}
+  order:
+    name: 订单
+    description: 客户依据框架协议向服务提供方发出的具体服务采购。
+    properties: {}
+  work_item:
+    name: 项目/任务
+    description: 由项目合同定义并由企业组织履行的具体工作事项。
+    properties: {}
+  personnel:
+    name: 人员
+    description: 可被安排参与订单、项目或任务的人员资源。
+    properties: {}
+  software_resource:
+    name: 软件资源
+    description: 可被配置到订单、项目或任务的软件、许可或使用权。
+    properties: {}
+  hardware_resource:
+    name: 硬件资源
+    description: 可被配置到订单、项目或任务的设备或硬件资产。
+    properties: {}
+  intellectual_asset:
+    name: 知识资产
+    description: 与某个订单、项目或任务关联的专利、论文、软著或技术报告。
+    properties: {}
+  invoice:
+    name: 发票
+    description: 受管主体依据合同或订单向客户开具的发票。
+    properties:
+      amount: {required: true}
+      issued_date: {required: true}
+  receipt:
+    name: 回款
+    description: 客户针对发票向受管主体支付并已到账的款项。
+    properties:
+      amount: {required: true}
+      received_date: {required: true}
+
+relation_types:
+  participates_in:
+    name: 参与业务
+    description: 业务主体以特定角色参与某个业务对象。
+    from_types: [party]
+    to_types:
+      - opportunity
+      - tender
+      - bid
+      - framework_agreement
+      - contract
+      - order
+      - work_item
+    properties:
+      participation_role: {required: true}
+  contains:
+    name: 包含
+    description: >-
+      表达商机包含招标事项、招标事项包含投标记录、框架协议包含订单，
+      或项目合同定义项目/任务的结构关系。
+    from_types: [opportunity, tender, framework_agreement, contract, order]
+    to_types: [tender, bid, order, work_item, invoice]
+    properties: {}
+  derives:
+    name: 形成
+    description: 中标的投标记录形成后续框架协议或项目合同。
+    from_types: [bid]
+    to_types: [framework_agreement, contract]
+    properties: {}
+  allocated_to:
+    name: 投入到
+    description: 人员、软件或硬件在一定期间内投入某个订单、项目或任务。
+    from_types: [personnel, software_resource, hardware_resource]
+    to_types: [order, work_item]
+    properties:
+      quantity: {required: true}
+      unit: {required: true}
+      start_date: {required: false}
+      end_date: {required: false}
+  involves_ip:
+    name: 涉及知识资产
+    description: 订单、项目或任务所需或产生的知识资产；每项知识资产只关联一个履约对象。
+    from_types: [order, work_item]
+    to_types: [intellectual_asset]
+    properties:
+      ip_role: {required: true}
+  settles:
+    name: 核销
+    description: 一笔回款以指定金额核销一张发票。
+    from_types: [receipt]
+    to_types: [invoice]
+    properties:
+      settled_amount: {required: true}
+
+actions: {}

@@ -1,6 +1,6 @@
 # UOM Domains
 
-本项目提供 UOM（Unified Ontology Modeling）运行时，以及基于它实现的高速联网收费和融资租赁领域。
+本项目提供 UOM（Unified Ontology Modeling）运行时，以及基于它实现的高速联网收费、融资租赁和企业日常运营领域。
 
 UOM 只有两个固定本体概念：
 
@@ -16,6 +16,7 @@ oag-agent/  通用 Agent 运行时和 DomainProvider 协议
 uom/        Object / Relation、Action、ChangeSet、SQLite 和模型校验运行时
 highway/    高速领域模型、数据、函数、空间能力和 Web 应用
 leasing/    融资租赁模型、数据、Action、确定性函数、领域资料和 Web 应用
+foxoms/     企业日常运营模型、Mock 数据、Agent 和 Web 应用
 ```
 
 核心图语义由 [`uom/ontology.yaml`](uom/ontology.yaml) 定义。具体高速业务语义由
@@ -48,6 +49,14 @@ PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --env-file .env -- p
 ```
 
 打开 <http://127.0.0.1:8766>。
+
+FoxOMS 企业运营工作台使用独立领域入口和端口：
+
+```bash
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --env-file .env -- python -m foxoms.app.server
+```
+
+打开 <http://127.0.0.1:8768>。
 
 ## 用户级 systemd 服务
 
@@ -82,6 +91,9 @@ PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python highway/sc
 PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s highway/tests -v
 PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python leasing/scripts/validate_model.py --root leasing
 PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s leasing/tests -v
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python foxoms/scripts/validate_model.py --root foxoms
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s foxoms/tests -v
+node --check foxoms/app/static/app.js
 node --check highway/app/static/app.js
 node --check leasing/app/static/app.js
 ```

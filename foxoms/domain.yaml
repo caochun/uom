@@ -1,0 +1,2 @@
+schema: oag.domain.v1
+provider: provider:create_domain
