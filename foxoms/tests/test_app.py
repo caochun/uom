@@ -25,6 +25,7 @@ class FoxOmsAppTest(unittest.TestCase):
         self.assertEqual(43, payload["stats"]["object_count"])
         self.assertEqual(65, payload["stats"]["relation_count"])
         self.assertEqual(8, payload["stats"]["object_types"]["party"])
+        self.assertEqual(20, len(payload["model"]["actions"]))
         self.assertEqual(
             2,
             sum(
@@ -43,6 +44,11 @@ class FoxOmsAppTest(unittest.TestCase):
 
         self.assertIn("FoxOMS", content)
         self.assertIn("企业运营", content)
+        self.assertIn("经营工作台", content)
+        self.assertIn("商务拓展", content)
+        self.assertIn("开票回款", content)
+        self.assertIn("资源资产", content)
+        self.assertIn("全部数据", content)
         self.assertNotIn("融资租赁", content)
 
 

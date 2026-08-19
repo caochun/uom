@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "oag-agent"))
 
 from oag.ontology import load_domain  # noqa: E402
+from foxoms.business import audit_foxoms_records  # noqa: E402
 from foxoms.scripts.seed import build_graph, validate_graph  # noqa: E402
 from uom.validation import load_yaml, validate_model  # noqa: E402
 
@@ -108,12 +109,65 @@ class FoxOmsDomainModelTest(unittest.TestCase):
         self.assertTrue(settlement["properties"]["settled_amount"]["required"])
         self.assertNotIn("invoice", participation["to_types"])
         self.assertNotIn("receipt", participation["to_types"])
-        self.assertEqual({}, model["actions"])
+        self.assertEqual(
+            {
+                "register_party",
+                "register_personnel",
+                "register_software_resource",
+                "register_hardware_resource",
+                "create_opportunity",
+                "register_tender",
+                "register_bid",
+                "add_business_participant",
+                "record_bid_result",
+                "sign_framework_agreement",
+                "issue_order",
+                "sign_project_contract",
+                "define_work_item",
+                "allocate_personnel",
+                "allocate_software",
+                "allocate_hardware",
+                "register_intellectual_asset",
+                "issue_invoice",
+                "record_receipt",
+                "settle_receipt",
+            },
+            set(model["actions"]),
+        )
+
+    def test_context_actions_have_explicit_context_inputs(self) -> None:
+        for action_id, action in self.model["actions"].items():
+            if "available_on" not in action:
+                continue
+            context_input = action.get("context_input")
+            self.assertIsNotNone(context_input, action_id)
+            self.assertTrue(action["inputs"][context_input]["required"], action_id)
+            self.assertNotIn("$context", str(action["effects"]), action_id)
+
+    def test_opportunity_has_no_direct_signing_path(self) -> None:
+        signing_actions = {
+            "sign_framework_agreement",
+            "sign_project_contract",
+        }
+        for action_id in signing_actions:
+            self.assertEqual(["bid"], self.model["actions"][action_id]["available_on"])
+        self.assertFalse(
+            any(
+                action.get("available_on") == ["opportunity"]
+                and any(
+                    effect.get("create_object", {}).get("type")
+                    in {"framework_agreement", "contract"}
+                    for effect in action["effects"]
+                )
+                for action in self.model["actions"].values()
+            )
+        )
 
     def test_seed_covers_every_declared_type_and_is_valid(self) -> None:
         objects, relations = build_graph()
 
         validate_graph(objects, relations)
+        self.assertTrue(audit_foxoms_records(objects, relations)["valid"])
         self.assertEqual(
             set(self.model["object_types"]),
             {item["type"] for item in objects},

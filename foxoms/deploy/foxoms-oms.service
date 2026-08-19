@@ -1,0 +1,21 @@
+[Unit]
+Description=FoxOMS powered by UOM
+ConditionPathExists=%h/Develop/fox-oms/foxoms/app/server.py
+ConditionPathExists=%h/Develop/fox-oms/.env
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Develop/fox-oms
+Environment="PYTHONPATH=%h/Develop/fox-oms/oag-agent:%h/Develop/fox-oms"
+Environment=UOM_DOMAIN_DIR=foxoms
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+ExecStartPre=%h/.local/bin/uv run --project %h/Develop/fox-oms/oag-agent -- python %h/Develop/fox-oms/foxoms/scripts/validate_model.py --root %h/Develop/fox-oms/foxoms
+ExecStart=%h/.local/bin/uv run --project %h/Develop/fox-oms/oag-agent --env-file %h/Develop/fox-oms/.env -- python -m foxoms.app.server --host 0.0.0.0 --port 8768
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+SyslogIdentifier=foxoms-oms
+
+[Install]
+WantedBy=default.target

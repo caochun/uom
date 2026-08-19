@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "oag-agent"))
 
 from oag.ontology.loader import load_domain  # noqa: E402
+from foxoms.business import audit_foxoms_records  # noqa: E402
 from uom.validation import ModelValidator, load_yaml  # noqa: E402
 
 
@@ -178,7 +179,7 @@ def build_graph() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         rel("rel:tender_park:agency", "participates_in", "party:bid_agency", "tender:park_ops", participation_role="tender_agent"),
         rel("rel:bid_park:lead", "participates_in", "party:qilu_digital", "bid:park_joint", participation_role="lead_bidder"),
         rel("rel:bid_park:member", "participates_in", "party:taishan_partner", "bid:park_joint", participation_role="consortium_member"),
-        rel("rel:bid_park_competitor:bidder", "participates_in", "party:competitor", "bid:park_competitor", participation_role="bidder"),
+        rel("rel:bid_park_competitor:bidder", "participates_in", "party:competitor", "bid:park_competitor", participation_role="lead_bidder"),
         rel("rel:framework_park:provider", "participates_in", "party:qilu_digital", "framework:park_ops", participation_role="service_provider"),
         rel("rel:framework_park:customer", "participates_in", "party:jinan_city", "framework:park_ops", participation_role="customer"),
         rel("rel:order_inspection:provider", "participates_in", "party:qilu_digital", "order:park_inspection", participation_role="service_provider"),
@@ -240,72 +241,9 @@ def validate_business_rules(
     objects: list[dict[str, Any]],
     relations: list[dict[str, Any]],
 ) -> None:
-    object_index = {item["id"]: item for item in objects}
-
-    ip_links = Counter(
-        item["to"] for item in relations if item["type"] == "involves_ip"
-    )
-    intellectual_assets = {
-        item["id"] for item in objects if item["type"] == "intellectual_asset"
-    }
-    invalid_ip_links = {
-        asset_id: ip_links[asset_id]
-        for asset_id in intellectual_assets
-        if ip_links[asset_id] != 1
-    }
-    if invalid_ip_links:
-        raise ValueError(f"knowledge assets must have one work target: {invalid_ip_links}")
-
-    invoice_parents = Counter(
-        item["to"]
-        for item in relations
-        if item["type"] == "contains"
-        and object_index[item["to"]]["type"] == "invoice"
-    )
-    invoices = {item["id"] for item in objects if item["type"] == "invoice"}
-    invalid_invoice_parents = {
-        invoice_id: invoice_parents[invoice_id]
-        for invoice_id in invoices
-        if invoice_parents[invoice_id] != 1
-    }
-    if invalid_invoice_parents:
-        raise ValueError(f"invoices must have one contract/order: {invalid_invoice_parents}")
-
-    allocations_by_receipt: defaultdict[str, float] = defaultdict(float)
-    allocations_by_invoice: defaultdict[str, float] = defaultdict(float)
-    for item in relations:
-        if item["type"] != "settles":
-            continue
-        amount = item["properties"]["settled_amount"]
-        source_amount = object_index[item["from"]]["properties"]["amount"]
-        target_amount = object_index[item["to"]]["properties"]["amount"]
-        if amount["currency"] != source_amount["currency"] or amount["currency"] != target_amount["currency"]:
-            raise ValueError(f"settlement currency mismatch: {item['id']}")
-        if amount["amount"] <= 0:
-            raise ValueError(f"settlement amount must be positive: {item['id']}")
-        allocations_by_receipt[item["from"]] += amount["amount"]
-        allocations_by_invoice[item["to"]] += amount["amount"]
-
-    for object_id, allocated in allocations_by_receipt.items():
-        total = object_index[object_id]["properties"]["amount"]["amount"]
-        if allocated > total:
-            raise ValueError(f"receipt is over-allocated: {object_id}")
-    for object_id, allocated in allocations_by_invoice.items():
-        total = object_index[object_id]["properties"]["amount"]["amount"]
-        if allocated > total:
-            raise ValueError(f"invoice is over-settled: {object_id}")
-
-    repeated_party_targets = [
-        item["id"]
-        for item in relations
-        if item["type"] == "participates_in"
-        and object_index[item["to"]]["type"] in {"invoice", "receipt"}
-    ]
-    if repeated_party_targets:
-        raise ValueError(
-            "invoice/receipt parties must be inferred from contract/order: "
-            + ", ".join(repeated_party_targets)
-        )
+    audit = audit_foxoms_records(objects, relations)
+    if not audit["valid"]:
+        raise ValueError("\n".join(audit["errors"]))
 
 
 def validate_graph(

@@ -9,7 +9,10 @@ function createSessionId() {
 
 const state = {
   data: null,
-  view: "objects",
+  view: "operations",
+  operationView: "overview",
+  managedPartyId: "all",
+  dataKind: "object",
   objectFilter: "all",
   relationFilter: "all",
   modelKind: "object",
@@ -54,6 +57,10 @@ function bindEvents() {
   $$('[data-open-actions]').forEach((button) => button.addEventListener("click", openActionsForCurrentView));
   $("#objectFilters").addEventListener("click", (event) => handleTypeFilterClick(event, "object"));
   $("#relationFilters").addEventListener("click", (event) => handleTypeFilterClick(event, "relation"));
+  $("#operationTabs").addEventListener("click", handleOperationTabClick);
+  $("#managedPartyList").addEventListener("click", handleManagedPartyClick);
+  $("#operationContent").addEventListener("click", handleOperationContentClick);
+  $("#dataKindTabs").addEventListener("click", handleDataKindClick);
   $("#modelKindTabs").addEventListener("click", segmentedHandler("modelKind", renderModel, "kind"));
   $("#globalSearch").addEventListener("input", (event) => { state.search = event.target.value.trim().toLowerCase(); renderCurrentView(); });
   $("#refreshBtn").addEventListener("click", loadData);
@@ -183,6 +190,8 @@ async function loadData() {
 function renderShell() {
   const { stats, model } = state.data;
   const hasActions = Object.keys(model.actions || {}).length > 0;
+  $("#operationsNavCount").textContent = state.data.objects.filter((item) => item.type === "opportunity").length;
+  $("#dataNavCount").textContent = stats.object_count + stats.relation_count;
   $("#objectNavCount").textContent = stats.object_count;
   $("#relationNavCount").textContent = stats.relation_count;
   $("#modelNavCount").textContent = Object.keys(model.object_types || {}).length + Object.keys(model.relation_types || {}).length + Object.keys(model.actions || {}).length;
@@ -191,7 +200,8 @@ function renderShell() {
   $("#modelVersion").textContent = `v${model.model.version}`;
   $$('[data-open-actions]').forEach((button) => button.classList.toggle("hidden", !hasActions));
   renderTypeFilters();
-  renderMetrics();
+  renderManagedPartyList();
+  renderOperations();
   renderObjects();
   renderRelations();
   renderModel();
@@ -199,42 +209,45 @@ function renderShell() {
 }
 
 function renderMetrics() {
-  const objects = state.data.objects;
-  const managedParties = objects.filter((item) => item.type === "party" && item.properties?.is_managed === true);
+  const objects = scopedObjects();
   const opportunities = objects.filter((item) => item.type === "opportunity");
+  const bids = objects.filter((item) => item.type === "bid");
   const invoices = objects.filter((item) => item.type === "invoice");
   const receipts = objects.filter((item) => item.type === "receipt");
   const invoiced = sumObjectMoney(invoices);
   const received = sumObjectMoney(receipts);
+  const objectIds = new Set(objects.map((item) => item.id));
   const settledAmount = state.data.relations
-    .filter((item) => item.type === "settles")
+    .filter((item) => item.type === "settles" && objectIds.has(item.from) && objectIds.has(item.to))
     .reduce((total, item) => total + Number(item.properties?.settled_amount?.amount || 0), 0);
   const outstanding = Math.max(0, invoiced.amount - settledAmount);
   const unallocated = Math.max(0, received.amount - settledAmount);
   const currency = invoiced.currency || received.currency || "CNY";
 
-  $("#metricManagedParties").textContent = managedParties.length;
   $("#metricOpportunities").textContent = opportunities.length;
-  $("#metricInvoiced").textContent = money(invoiced.amount, currency);
-  $("#metricReceived").textContent = money(received.amount, currency);
-  $("#metricReceivedHint").textContent = outstanding
-    ? `待回款 ${money(outstanding, currency)}${unallocated ? ` · 待核销 ${money(unallocated, currency)}` : ""}`
-    : "已开票金额全部回款";
-  $("#initialAgentMessage").textContent = `FoxOMS 当前管理 ${managedParties.length} 家企业和 ${opportunities.length} 项商机；累计开票 ${money(invoiced.amount, currency)}，已回款 ${money(received.amount, currency)}，待回款 ${money(outstanding, currency)}。`;
-  renderBusinessPipeline();
+  $("#metricOpportunityHint").textContent = `${opportunities.filter((item) => !businessChildren(item.id, "contains", "tender").length).length} 项暂无后续`;
+  $("#metricPendingBids").textContent = bids.filter((item) => !item.properties?.bid_result).length;
+  $("#metricAwards").textContent = bids.filter((item) => item.properties?.bid_result === "awarded").length;
+  $("#metricDeliveries").textContent = objects.filter((item) => ["order", "work_item"].includes(item.type)).length;
+  $("#metricOutstanding").textContent = money(outstanding, currency);
+  $("#metricOutstandingHint").textContent = `${money(invoiced.amount, currency)} 已开票${unallocated ? ` · ${money(unallocated, currency)} 待核销` : ""}`;
+  const partyName = selectedManagedParty()?.name || `${managedParties().length} 家受管企业`;
+  $("#initialAgentMessage").textContent = `${partyName}当前有 ${opportunities.length} 项商机、${bids.filter((item) => item.properties?.bid_result === "awarded").length} 项中标记录和 ${money(outstanding, currency)} 待回款。`;
 }
 
-function renderBusinessPipeline() {
+function renderBusinessPipelineLegacy() {
   const stages = [
     ["opportunity", "商机"], ["tender", "招标"], ["bid", "投标"],
     ["framework_agreement", "框架协议"], ["contract", "项目合同"],
     ["order", "订单"], ["work_item", "项目/任务"], ["invoice", "发票"], ["receipt", "回款"],
   ];
-  $("#businessPipeline").innerHTML = stages.map(([type, label], index) => {
+  const pipeline = $("#businessPipeline");
+  if (!pipeline) return;
+  pipeline.innerHTML = stages.map(([type, label], index) => {
     const count = state.data.objects.filter((item) => item.type === type).length;
     return `${index ? '<i data-lucide="chevron-right"></i>' : ""}<button type="button" data-pipeline-type="${type}"><span>${escapeHtml(label)}</span><strong>${count}</strong></button>`;
   }).join("");
-  $$("[data-pipeline-type]", $("#businessPipeline")).forEach((button) => button.addEventListener("click", () => {
+  $$("[data-pipeline-type]", pipeline).forEach((button) => button.addEventListener("click", () => {
     state.objectFilter = button.dataset.pipelineType;
     renderTypeFilters();
     renderObjects();
@@ -250,6 +263,384 @@ function sumObjectMoney(items) {
   }, { amount: 0, currency: null });
 }
 
+function managedParties() {
+  return (state.data?.objects || []).filter((item) => item.type === "party" && item.properties?.is_managed === true);
+}
+
+function selectedManagedParty() {
+  return state.managedPartyId === "all"
+    ? null
+    : managedParties().find((item) => item.id === state.managedPartyId) || null;
+}
+
+function renderManagedPartyList() {
+  const parties = managedParties();
+  if (state.managedPartyId !== "all" && !parties.some((item) => item.id === state.managedPartyId)) state.managedPartyId = "all";
+  $("#managedPartyList").innerHTML = [
+    `<button class="${state.managedPartyId === "all" ? "active" : ""}" data-managed-party="all"><i data-lucide="building-2"></i><span><strong>全部受管企业</strong><small>${parties.length} 家经营主体</small></span></button>`,
+    ...parties.map((party) => `<button class="${state.managedPartyId === party.id ? "active" : ""}" data-managed-party="${escapeAttr(party.id)}"><i data-lucide="building"></i><span><strong>${escapeHtml(party.name)}</strong><small>${escapeHtml(party.id)}</small></span></button>`),
+  ].join("");
+  icons();
+}
+
+function handleManagedPartyClick(event) {
+  const button = event.target.closest("[data-managed-party]");
+  if (!button) return;
+  state.managedPartyId = button.dataset.managedParty;
+  renderManagedPartyList();
+  renderOperations();
+}
+
+function handleOperationTabClick(event) {
+  const button = event.target.closest("[data-operation]");
+  if (!button) return;
+  state.operationView = button.dataset.operation;
+  $$('[data-operation]', $("#operationTabs")).forEach((item) => item.classList.toggle("active", item === button));
+  renderOperations();
+}
+
+function handleDataKindClick(event) {
+  const button = event.target.closest("[data-kind]");
+  if (!button) return;
+  state.dataKind = button.dataset.kind;
+  $$('[data-kind]', $("#dataKindTabs")).forEach((item) => item.classList.toggle("active", item === button));
+  renderDataView();
+}
+
+function renderDataView() {
+  const objectsVisible = state.dataKind === "object";
+  $("#dataObjectsPanel").classList.toggle("hidden", !objectsVisible);
+  $("#dataRelationsPanel").classList.toggle("hidden", objectsVisible);
+  (objectsVisible ? renderObjects : renderRelations)();
+}
+
+function businessChildren(id, relationType, childType = "") {
+  const index = objectIndex();
+  return (state.data?.relations || [])
+    .filter((relation) => relation.type === relationType && relation.from === id)
+    .map((relation) => index[relation.to])
+    .filter((item) => item && (!childType || item.type === childType));
+}
+
+function businessParents(id, relationType, parentType = "") {
+  const index = objectIndex();
+  return (state.data?.relations || [])
+    .filter((relation) => relation.type === relationType && relation.to === id)
+    .map((relation) => index[relation.from])
+    .filter((item) => item && (!parentType || item.type === parentType));
+}
+
+function scopedObjectIds() {
+  const allObjects = state.data?.objects || [];
+  if (state.managedPartyId === "all") return new Set(allObjects.map((item) => item.id));
+  const index = objectIndex();
+  const ids = new Set([state.managedPartyId]);
+  const structural = new Set(["contains", "derives"]);
+  const relations = state.data?.relations || [];
+
+  relations.filter((item) => item.type === "participates_in" && item.from === state.managedPartyId)
+    .forEach((item) => ids.add(item.to));
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    relations.forEach((relation) => {
+      if (!structural.has(relation.type)) return;
+      if (ids.has(relation.from) && !ids.has(relation.to)) {
+        ids.add(relation.to);
+        changed = true;
+      }
+      if (ids.has(relation.to) && !ids.has(relation.from)) {
+        ids.add(relation.from);
+        changed = true;
+      }
+    });
+  }
+
+  relations.forEach((relation) => {
+    if (relation.type === "participates_in" && ids.has(relation.to)) ids.add(relation.from);
+    if (relation.type === "allocated_to" && ids.has(relation.to)) ids.add(relation.from);
+    if (relation.type === "involves_ip" && ids.has(relation.from)) ids.add(relation.to);
+    if (relation.type === "settles" && ids.has(relation.to)) ids.add(relation.from);
+  });
+
+  // A split receipt may introduce another invoice from the same customer/provider chain.
+  relations.filter((relation) => relation.type === "settles" && ids.has(relation.from))
+    .forEach((relation) => ids.add(relation.to));
+  relations.filter((relation) => relation.type === "contains" && ids.has(relation.to))
+    .forEach((relation) => ids.add(relation.from));
+  return new Set([...ids].filter((id) => index[id]));
+}
+
+function scopedObjects() {
+  const ids = scopedObjectIds();
+  return (state.data?.objects || []).filter((item) => ids.has(item.id));
+}
+
+function renderOperations() {
+  if (!state.data) return;
+  const party = selectedManagedParty();
+  $("#operationsTitle").textContent = party ? party.name : "经营工作台";
+  $("#operationsSubtitle").textContent = party
+    ? "从该企业经营的商机出发，追踪签约、履约投入和资金回收。"
+    : "跨受管企业查看商务、履约和资金链；选择企业可收窄经营范围。";
+  renderMetrics();
+  const renderers = {
+    overview: renderOperationsOverview,
+    commercial: renderCommercialView,
+    delivery: renderDeliveryView,
+    finance: renderFinanceView,
+    resources: renderResourceView,
+  };
+  $("#operationContent").innerHTML = (renderers[state.operationView] || renderOperationsOverview)();
+  icons();
+}
+
+function handleOperationContentClick(event) {
+  const objectButton = event.target.closest("[data-business-object]");
+  if (objectButton) {
+    showDetail("object", objectButton.dataset.businessObject);
+    return;
+  }
+  const viewButton = event.target.closest("[data-go-operation]");
+  if (viewButton) {
+    state.operationView = viewButton.dataset.goOperation;
+    $$('[data-operation]', $("#operationTabs")).forEach((item) => item.classList.toggle("active", item.dataset.operation === state.operationView));
+    renderOperations();
+  }
+}
+
+function renderOperationsOverview() {
+  const objects = scopedObjects().filter(matchesSearch);
+  const opportunities = objects.filter((item) => item.type === "opportunity");
+  const agreements = objects.filter((item) => ["framework_agreement", "contract"].includes(item.type));
+  const invoices = objects.filter((item) => item.type === "invoice");
+  const invoiceIds = new Set(invoices.map((item) => item.id));
+  const settled = (state.data.relations || []).filter((item) => item.type === "settles" && invoiceIds.has(item.to))
+    .reduce((total, item) => total + Number(item.properties?.settled_amount?.amount || 0), 0);
+  const invoiced = sumObjectMoney(invoices);
+  const outstanding = Math.max(0, invoiced.amount - settled);
+  const currency = invoiced.currency || "CNY";
+  const openOpportunities = opportunities.filter((item) => !businessChildren(item.id, "contains", "tender").length);
+  const activeDeliveries = objects.filter((item) => ["order", "work_item"].includes(item.type));
+  const allocations = (state.data.relations || []).filter((item) => item.type === "allocated_to" && activeDeliveries.some((target) => target.id === item.to));
+
+  return `<div class="overview-grid">
+    <section class="business-band span-two">
+      <div class="band-heading"><div><span class="eyebrow">商务状态</span><h2>从机会到商务约定</h2></div><button class="text-command" data-go-operation="commercial">查看完整脉络<i data-lucide="arrow-right"></i></button></div>
+      <div class="stage-track">
+        ${overviewStage("lightbulb", "商机", opportunities.length, `${openOpportunities.length} 项暂无后续`)}
+        <i data-lucide="chevron-right"></i>
+        ${overviewStage("landmark", "进入招投标", opportunities.length - openOpportunities.length, "按商机统计")}
+        <i data-lucide="chevron-right"></i>
+        ${overviewStage("badge-check", "中标", objects.filter((item) => item.type === "bid" && item.properties?.bid_result === "awarded").length, "已确认结果")}
+        <i data-lucide="chevron-right"></i>
+        ${overviewStage("file-signature", "商务约定", agreements.length, "框架协议或项目合同")}
+      </div>
+    </section>
+    <section class="business-band">
+      <div class="band-heading"><div><span class="eyebrow">资金回收</span><h2>${money(outstanding, currency)} 待回款</h2></div><button class="icon-command" data-go-operation="finance" title="查看开票回款"><i data-lucide="arrow-up-right"></i></button></div>
+      <div class="finance-meter"><span style="width:${invoiced.amount ? Math.min(100, settled / invoiced.amount * 100) : 0}%"></span></div>
+      <div class="band-stat-row"><span>已开票 <strong>${money(invoiced.amount, currency)}</strong></span><span>已核销 <strong>${money(settled, currency)}</strong></span></div>
+    </section>
+    <section class="business-band">
+      <div class="band-heading"><div><span class="eyebrow">履约投入</span><h2>${activeDeliveries.length} 项订单/任务</h2></div><button class="icon-command" data-go-operation="delivery" title="查看履约交付"><i data-lucide="arrow-up-right"></i></button></div>
+      <div class="band-stat-row compact"><span>资源投入 <strong>${allocations.length}</strong></span><span>知识资产 <strong>${objects.filter((item) => item.type === "intellectual_asset").length}</strong></span></div>
+    </section>
+    <section class="business-band span-two">
+      <div class="band-heading"><div><span class="eyebrow">需要关注</span><h2>经营事项</h2></div></div>
+      <div class="attention-list">
+        ${openOpportunities.length ? attentionRow("clock-3", `${openOpportunities.length} 项商机尚未进入招投标`, "商机可以停留于此，不视为数据异常", "commercial") : attentionRow("circle-check", "商机均已有后续记录", "当前不存在停留在机会阶段的商机", "commercial")}
+        ${outstanding ? attentionRow("circle-dollar-sign", `${money(outstanding, currency)} 已开票未回款`, "按发票核销金额计算", "finance") : attentionRow("circle-check", "已开票金额全部回款", "当前没有发票余额", "finance")}
+      </div>
+    </section>
+  </div>`;
+}
+
+function overviewStage(icon, label, count, hint) {
+  return `<div class="stage-item"><span><i data-lucide="${icon}"></i></span><div><strong>${count}</strong><b>${escapeHtml(label)}</b><small>${escapeHtml(hint)}</small></div></div>`;
+}
+
+function attentionRow(icon, title, hint, view) {
+  return `<button data-go-operation="${view}"><i data-lucide="${icon}"></i><span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(hint)}</small></span><i data-lucide="chevron-right"></i></button>`;
+}
+
+function renderCommercialView() {
+  const scopedIds = scopedObjectIds();
+  let opportunities = (state.data.objects || []).filter((item) => item.type === "opportunity" && scopedIds.has(item.id));
+  if (state.search) opportunities = opportunities.filter((item) => commercialThreadIds(item).some((id) => matchesSearch(objectIndex()[id] || { id })));
+  const content = opportunities.map(renderCommercialThread).join("");
+  return operationSectionHeader("商务拓展", "以商机为入口查看招标、投标结果及中标后的商务路径", `${opportunities.length} 项商机`)
+    + `<div class="commercial-thread-list">${content || operationEmpty("没有匹配的商机")}</div>`;
+}
+
+function commercialThreadIds(opportunity) {
+  const ids = [opportunity.id];
+  businessChildren(opportunity.id, "contains", "tender").forEach((tender) => {
+    ids.push(tender.id);
+    businessChildren(tender.id, "contains", "bid").forEach((bid) => {
+      ids.push(bid.id);
+      businessChildren(bid.id, "derives").forEach((agreement) => {
+        ids.push(agreement.id);
+        businessChildren(agreement.id, "contains").forEach((item) => ids.push(item.id));
+      });
+    });
+  });
+  return ids;
+}
+
+function renderCommercialThread(opportunity) {
+  const tenders = businessChildren(opportunity.id, "contains", "tender");
+  return `<article class="commercial-thread">
+    <button class="thread-root" data-business-object="${escapeAttr(opportunity.id)}"><span class="type-icon opportunity"><i data-lucide="lightbulb"></i></span><span><strong>${escapeHtml(opportunity.name)}</strong><small>${escapeHtml(partyNamesFor(opportunity.id, "potential_customer").join("、") || "未记录潜在客户")}</small></span><i data-lucide="chevron-right"></i></button>
+    <div class="thread-body">${tenders.length ? tenders.map(renderTenderBranch).join("") : `<div class="thread-empty"><i data-lucide="pause"></i><span><strong>暂未进入招投标</strong><small>商机可以停留在当前阶段，不视为流程异常</small></span></div>`}</div>
+  </article>`;
+}
+
+function renderTenderBranch(tender) {
+  const bids = businessChildren(tender.id, "contains", "bid");
+  return `<div class="thread-branch">
+    ${businessNode(tender, "landmark", `${partyNamesFor(tender.id, "tenderer").join("、") || "未记录招标方"} · ${bids.length} 份投标`)}
+    <div class="thread-children">${bids.length ? bids.map(renderBidBranch).join("") : `<div class="thread-empty compact"><span>尚未登记投标</span></div>`}</div>
+  </div>`;
+}
+
+function renderBidBranch(bid) {
+  const result = bid.properties?.bid_result;
+  const downstream = businessChildren(bid.id, "derives");
+  const label = result === "awarded" ? "中标" : result === "not_awarded" ? "未中标" : "待结果";
+  return `<div class="thread-branch bid-branch">
+    ${businessNode(bid, "file-check-2", `${partyNamesFor(bid.id, "lead_bidder").join("、") || "未记录投标方"}`, statusPill(result || "pending", label))}
+    ${downstream.length ? `<div class="thread-children">${downstream.map((item) => {
+      const children = businessChildren(item.id, "contains").filter((child) => ["order", "work_item"].includes(child.type));
+      return `<div class="thread-branch">${businessNode(item, "file-signature", typeNames()[item.type]?.name || item.type)}${children.length ? `<div class="thread-children">${children.map((child) => businessNode(child, typeIcon(child.type), typeNames()[child.type]?.name || child.type)).join("")}</div>` : ""}</div>`;
+    }).join("")}</div>` : ""}
+  </div>`;
+}
+
+function businessNode(item, icon, hint, trailing = "") {
+  return `<button class="business-node" data-business-object="${escapeAttr(item.id)}"><span class="node-icon"><i data-lucide="${icon}"></i></span><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(hint)}</small></span>${trailing || '<i data-lucide="chevron-right"></i>'}</button>`;
+}
+
+function partyNamesFor(targetId, role) {
+  const index = objectIndex();
+  return (state.data.relations || [])
+    .filter((item) => item.type === "participates_in" && item.to === targetId && item.properties?.participation_role === role)
+    .map((item) => index[item.from]?.name)
+    .filter(Boolean);
+}
+
+function renderDeliveryView() {
+  const scopedIds = scopedObjectIds();
+  let commitments = (state.data.objects || []).filter((item) => scopedIds.has(item.id) && ["framework_agreement", "contract"].includes(item.type));
+  if (state.search) commitments = commitments.filter((item) => [item, ...businessChildren(item.id, "contains")].some(matchesSearch));
+  return operationSectionHeader("履约交付", "从框架协议或项目合同进入订单和项目/任务，查看实际资源与知识资产", `${commitments.length} 项商务约定`)
+    + `<div class="delivery-list">${commitments.map(renderDeliveryCommitment).join("") || operationEmpty("暂无履约事项")}</div>`;
+}
+
+function renderDeliveryCommitment(commitment) {
+  const targetType = commitment.type === "framework_agreement" ? "order" : "work_item";
+  const items = businessChildren(commitment.id, "contains", targetType);
+  return `<article class="delivery-group">
+    <button class="delivery-heading" data-business-object="${escapeAttr(commitment.id)}"><span class="type-icon ${escapeAttr(commitment.type)}"><i data-lucide="file-signature"></i></span><span><strong>${escapeHtml(commitment.name)}</strong><small>${escapeHtml(typeNames()[commitment.type]?.name || commitment.type)} · ${escapeHtml(partyNamesFor(commitment.id, "customer").join("、"))}</small></span><b>${items.length} 项履约</b><i data-lucide="chevron-right"></i></button>
+    <div class="delivery-items">${items.map(renderDeliveryItem).join("") || `<div class="thread-empty"><i data-lucide="inbox"></i><span><strong>尚未建立履约事项</strong><small>${commitment.type === "framework_agreement" ? "可在协议下下达订单" : "可在合同下建立项目/任务"}</small></span></div>`}</div>
+  </article>`;
+}
+
+function renderDeliveryItem(item) {
+  const allocations = (state.data.relations || []).filter((relation) => relation.type === "allocated_to" && relation.to === item.id);
+  const intellectualAssets = businessChildren(item.id, "involves_ip");
+  const index = objectIndex();
+  const resourceTypes = ["personnel", "software_resource", "hardware_resource"].map((type) => ({ type, count: allocations.filter((relation) => index[relation.from]?.type === type).length }));
+  return `<div class="delivery-item">
+    <button data-business-object="${escapeAttr(item.id)}"><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(typeNames()[item.type]?.name || item.type)}</small></span><i data-lucide="chevron-right"></i></button>
+    <div class="delivery-facts">${resourceTypes.map(({ type, count }) => `<span><i data-lucide="${typeIcon(type)}"></i>${escapeHtml(typeNames()[type]?.name || type)} <b>${count}</b></span>`).join("")}<span><i data-lucide="badge-check"></i>知识资产 <b>${intellectualAssets.length}</b></span></div>
+    ${allocations.length || intellectualAssets.length ? `<div class="allocation-list">${allocations.map((relation) => allocationChip(index[relation.from], relation)).join("")}${intellectualAssets.map((asset) => `<button data-business-object="${escapeAttr(asset.id)}"><i data-lucide="badge-check"></i>${escapeHtml(asset.name)}</button>`).join("")}</div>` : ""}
+  </div>`;
+}
+
+function allocationChip(resource, relation) {
+  if (!resource) return "";
+  return `<button data-business-object="${escapeAttr(resource.id)}"><i data-lucide="${typeIcon(resource.type)}"></i>${escapeHtml(resource.name)}<small>${escapeHtml(relationFact(relation))}</small></button>`;
+}
+
+function renderFinanceView() {
+  const scopedIds = scopedObjectIds();
+  let parents = (state.data.objects || []).filter((item) => scopedIds.has(item.id) && ["contract", "order"].includes(item.type) && businessChildren(item.id, "contains", "invoice").length);
+  if (state.search) parents = parents.filter((item) => [item, ...businessChildren(item.id, "contains", "invoice")].some(matchesSearch));
+  return operationSectionHeader("开票回款", "按合同或订单汇总发票、回款核销和待回款余额", `${parents.length} 项开票业务`)
+    + `<div class="finance-list">${parents.map(renderFinanceGroup).join("") || operationEmpty("暂无开票数据")}</div>`;
+}
+
+function renderFinanceGroup(parent) {
+  const invoices = businessChildren(parent.id, "contains", "invoice");
+  const total = sumObjectMoney(invoices);
+  const settled = invoices.reduce((sum, invoice) => sum + settledForInvoice(invoice.id), 0);
+  const outstanding = Math.max(0, total.amount - settled);
+  const progress = total.amount ? Math.min(100, settled / total.amount * 100) : 0;
+  return `<article class="finance-group">
+    <button class="finance-heading" data-business-object="${escapeAttr(parent.id)}"><span><strong>${escapeHtml(parent.name)}</strong><small>${escapeHtml(typeNames()[parent.type]?.name || parent.type)} · ${invoices.length} 张发票</small></span><span class="finance-total"><b>${money(outstanding, total.currency || "CNY")}</b><small>待回款</small></span><i data-lucide="chevron-right"></i></button>
+    <div class="finance-progress"><span style="width:${progress}%"></span></div>
+    <div class="finance-columns"><span>发票</span><span>开票金额</span><span>已核销</span><span>余额</span></div>
+    <div class="invoice-list">${invoices.map(renderInvoiceRow).join("")}</div>
+  </article>`;
+}
+
+function settledForInvoice(invoiceId) {
+  return (state.data.relations || []).filter((item) => item.type === "settles" && item.to === invoiceId)
+    .reduce((total, item) => total + Number(item.properties?.settled_amount?.amount || 0), 0);
+}
+
+function renderInvoiceRow(invoice) {
+  const value = invoice.properties?.amount || { amount: 0, currency: "CNY" };
+  const allocations = (state.data.relations || []).filter((item) => item.type === "settles" && item.to === invoice.id);
+  const settled = settledForInvoice(invoice.id);
+  const balance = Math.max(0, Number(value.amount || 0) - settled);
+  const index = objectIndex();
+  return `<div class="invoice-row">
+    <button data-business-object="${escapeAttr(invoice.id)}"><span><strong>${escapeHtml(invoice.name)}</strong><small>${escapeHtml(invoice.properties?.issued_date || "未记录日期")}</small></span><span>${money(value.amount, value.currency)}</span><span>${money(settled, value.currency)}</span><span class="${balance ? "amount-due" : "amount-clear"}">${money(balance, value.currency)}</span><i data-lucide="chevron-right"></i></button>
+    ${allocations.length ? `<div class="receipt-allocations">${allocations.map((relation) => `<button data-business-object="${escapeAttr(relation.from)}"><i data-lucide="corner-down-right"></i><span>${escapeHtml(index[relation.from]?.name || relation.from)}</span><small>核销 ${escapeHtml(relationFact(relation))}</small></button>`).join("")}</div>` : `<div class="receipt-allocations empty">尚无回款核销</div>`}
+  </div>`;
+}
+
+function renderResourceView() {
+  const objects = scopedObjects();
+  const resources = objects.filter((item) => ["personnel", "software_resource", "hardware_resource"].includes(item.type));
+  const intellectualAssets = objects.filter((item) => item.type === "intellectual_asset");
+  const filteredResources = state.search ? resources.filter(matchesSearch) : resources;
+  return operationSectionHeader("资源资产", "人员、软件和硬件分别管理，以投入关系展示实际去向；知识资产显示所需或产出角色", `${resources.length + intellectualAssets.length} 项资产`)
+    + `<div class="resource-sections">
+      ${["personnel", "software_resource", "hardware_resource"].map((type) => renderResourceSection(type, filteredResources.filter((item) => item.type === type))).join("")}
+      ${renderIntellectualAssetSection(state.search ? intellectualAssets.filter(matchesSearch) : intellectualAssets)}
+    </div>`;
+}
+
+function renderResourceSection(type, resources) {
+  return `<section class="resource-section"><div class="resource-section-heading"><span class="type-icon ${escapeAttr(type)}"><i data-lucide="${typeIcon(type)}"></i></span><div><h3>${escapeHtml(typeNames()[type]?.name || type)}</h3><span>${resources.length} 项</span></div></div><div class="resource-list">${resources.map(renderResourceRow).join("") || `<span class="muted-text">当前范围没有此类资源投入</span>`}</div></section>`;
+}
+
+function renderResourceRow(resource) {
+  const allocations = (state.data.relations || []).filter((item) => item.type === "allocated_to" && item.from === resource.id);
+  const index = objectIndex();
+  return `<div class="resource-row"><button data-business-object="${escapeAttr(resource.id)}"><strong>${escapeHtml(resource.name)}</strong><small>${allocations.length} 个投入去向</small></button><div>${allocations.map((relation) => `<button data-business-object="${escapeAttr(relation.to)}"><span>${escapeHtml(index[relation.to]?.name || relation.to)}</span><small>${escapeHtml(relationFact(relation))}</small></button>`).join("") || '<span class="muted-text">暂无投入记录</span>'}</div></div>`;
+}
+
+function renderIntellectualAssetSection(assets) {
+  const index = objectIndex();
+  return `<section class="resource-section ip-section"><div class="resource-section-heading"><span class="type-icon intellectual_asset"><i data-lucide="badge-check"></i></span><div><h3>知识资产</h3><span>${assets.length} 项</span></div></div><div class="resource-list">${assets.map((asset) => {
+    const link = (state.data.relations || []).find((item) => item.type === "involves_ip" && item.to === asset.id);
+    return `<div class="resource-row"><button data-business-object="${escapeAttr(asset.id)}"><strong>${escapeHtml(asset.name)}</strong><small>${link?.properties?.ip_role === "required" ? "履约所需" : "履约产出"}</small></button><div><button data-business-object="${escapeAttr(link?.from || "")}"><span>${escapeHtml(index[link?.from]?.name || "未关联")}</span><small>${escapeHtml(typeNames()[index[link?.from]?.type]?.name || "履约对象")}</small></button></div></div>`;
+  }).join("") || '<span class="muted-text">当前范围没有知识资产</span>'}</div></section>`;
+}
+
+function operationSectionHeader(title, description, count) {
+  return `<div class="operation-section-heading"><div><span class="eyebrow">经营视图</span><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><span>${escapeHtml(count)}</span></div>`;
+}
+
+function operationEmpty(message) {
+  return `<div class="operation-empty"><i data-lucide="inbox"></i><strong>${escapeHtml(message)}</strong><span>调整经营主体或搜索条件后再试。</span></div>`;
+}
+
 function switchView(view) {
   state.view = view;
   $$(".nav-item[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
@@ -258,7 +649,7 @@ function switchView(view) {
 }
 
 function renderCurrentView() {
-  ({ objects: renderObjects, relations: renderRelations, model: renderModel }[state.view] || renderObjects)();
+  ({ operations: renderOperations, data: renderDataView, model: renderModel }[state.view] || renderOperations)();
 }
 
 function matchesSearch(item) {
@@ -360,8 +751,9 @@ function showDetail(kind, id) {
   $("#detailEyebrow").textContent = kind === "model" ? ({ object: "对象类型", relation: "关系类型", action: "业务操作" }[state.modelKind]) : `${kind === "object" ? "对象" : "关系"}详情`;
   $("#detailTitle").textContent = title;
   $("#detailBody").innerHTML = detailMarkup(kind, id, item);
-  const hasActions = Object.keys(state.data?.model?.actions || {}).length > 0;
-  $("#contextActionBtn").classList.toggle("hidden", kind !== "object" || !hasActions);
+  const hasContextActions = kind === "object" && Object.values(state.data?.model?.actions || {})
+    .some((action) => action.available_on?.some((type) => type === "*" || type === item.type));
+  $("#contextActionBtn").classList.toggle("hidden", !hasContextActions);
   $("#detailDrawer").classList.add("open");
   $("#scrim").classList.remove("hidden");
   updateAgentContext();
@@ -382,11 +774,46 @@ function detailMarkup(kind, id, item) {
     const role = fact !== "-" ? ` · ${fact}` : "";
     return `<button class="relation-link" type="button" data-related-object="${escapeAttr(other?.id || (outbound ? rel.to : rel.from))}"><i data-lucide="${outbound ? "arrow-right" : "arrow-left"}"></i><div><strong>${escapeHtml(relationNames()[rel.type]?.name || rel.type)}${escapeHtml(role)} · ${escapeHtml(other?.name || (outbound ? rel.to : rel.from))}</strong><span>${escapeHtml(typeNames()[other?.type]?.name || other?.type || "未知类型")} · ${escapeHtml(rel.id)}</span></div><i data-lucide="chevron-right"></i></button>`;
   }).join("") : `<span class="muted-text">暂无关系</span>`;
-  return detailSection("基本信息", Object.fromEntries(Object.entries(item).filter(([key]) => !["properties", "tags", "source_refs"].includes(key))))
+  return (kind === "object" ? businessPositionMarkup(item) : "")
+    + detailSection("基本信息", Object.fromEntries(Object.entries(item).filter(([key]) => !["properties", "tags", "source_refs"].includes(key))))
     + detailSection("Properties", item.properties || {})
     + (item.tags?.length ? detailSection("Tags", { tags: item.tags }) : "")
     + (item.source_refs?.length ? detailSection("来源引用", { source_refs: item.source_refs }) : "")
     + `<div class="detail-section"><h3>相邻关系 · ${links.length}</h3><div>${linkMarkup}</div></div>`;
+}
+
+function businessPositionMarkup(item) {
+  const upstream = (state.data.relations || [])
+    .filter((relation) => ["contains", "derives"].includes(relation.type) && relation.to === item.id)
+    .map((relation) => objectIndex()[relation.from])
+    .filter(Boolean);
+  const downstream = (state.data.relations || [])
+    .filter((relation) => ["contains", "derives"].includes(relation.type) && relation.from === item.id)
+    .map((relation) => objectIndex()[relation.to])
+    .filter(Boolean);
+  const roles = (state.data.relations || [])
+    .filter((relation) => relation.type === "participates_in" && relation.to === item.id)
+    .map((relation) => `${objectIndex()[relation.from]?.name || relation.from} · ${relation.properties?.participation_role || "参与"}`);
+  const facts = [];
+  if (upstream.length) facts.push(["业务来源", upstream.map((parent) => parent.name).join("、")]);
+  if (downstream.length) facts.push(["后续结果", downstream.map((child) => child.name).join("、")]);
+  if (roles.length) facts.push(["参与主体", roles.join("；")]);
+  if (item.type === "opportunity" && !businessChildren(item.id, "contains", "tender").length) facts.push(["当前阶段", "暂未进入招投标（合法状态）"]);
+  if (item.type === "bid") facts.push(["投标结果", { awarded: "中标", not_awarded: "未中标" }[item.properties?.bid_result] || "待结果"]);
+  if (item.type === "invoice") {
+    const amount = item.properties?.amount || { amount: 0, currency: "CNY" };
+    const settled = settledForInvoice(item.id);
+    facts.push(["核销进度", `${money(settled, amount.currency)} / ${money(amount.amount, amount.currency)}`]);
+    facts.push(["待回款", money(Math.max(0, Number(amount.amount || 0) - settled), amount.currency)]);
+  }
+  if (item.type === "receipt") {
+    const value = item.properties?.amount || { amount: 0, currency: "CNY" };
+    const settled = (state.data.relations || []).filter((relation) => relation.type === "settles" && relation.from === item.id)
+      .reduce((total, relation) => total + Number(relation.properties?.settled_amount?.amount || 0), 0);
+    facts.push(["核销进度", `${money(settled, value.currency)} / ${money(value.amount, value.currency)}`]);
+  }
+  if (!facts.length) return "";
+  return `<div class="detail-section business-position"><h3>业务位置</h3><div class="detail-list">${facts.map(([label, value]) => `<div class="detail-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div></div>`;
 }
 
 function detailSection(title, values) {
@@ -431,7 +858,7 @@ async function openActionLauncher(contextId = "") {
 }
 
 function openActionsForCurrentView() {
-  if (state.view === "objects" && state.objectFilter !== "all") {
+  if (state.view === "data" && state.dataKind === "object" && state.objectFilter !== "all") {
     openActionLauncherForType(state.objectFilter);
     return;
   }

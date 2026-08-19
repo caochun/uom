@@ -18,11 +18,11 @@
       </div>
 
       <nav class="primary-nav">
-        <button class="nav-item active" data-view="objects">
-          <i data-lucide="boxes"></i><span>对象</span><b id="objectNavCount">0</b>
+        <button class="nav-item active" data-view="operations">
+          <i data-lucide="chart-no-axes-combined"></i><span>经营工作台</span><b id="operationsNavCount">0</b>
         </button>
-        <button class="nav-item" data-view="relations">
-          <i data-lucide="git-branch"></i><span>关系</span><b id="relationNavCount">0</b>
+        <button class="nav-item" data-view="data">
+          <i data-lucide="table-properties"></i><span>全部数据</span><b id="dataNavCount">0</b>
         </button>
         <button class="nav-item" data-view="model">
           <i data-lucide="book-open"></i><span>模型</span><b id="modelNavCount">0</b>
@@ -55,62 +55,85 @@
       </header>
 
       <div class="content-scroll">
-        <section class="view active" id="objectsView">
+        <section class="view active" id="operationsView">
           <div class="page-heading">
             <div>
-              <span class="eyebrow">企业运营全景</span>
-              <h1>业务对象</h1>
-              <p>从商机、招投标和商务约定，追溯到履约资源、开票与回款。</p>
+              <span class="eyebrow">企业经营脉络</span>
+              <h1 id="operationsTitle">经营工作台</h1>
+              <p id="operationsSubtitle">沿商务、履约和资金链查看企业运营，而不是孤立地查看对象。</p>
             </div>
             <button class="primary-button hidden" data-open-actions><i data-lucide="play"></i>业务操作</button>
           </div>
 
-          <div class="metric-strip" id="metricStrip">
-            <article><span>受管企业</span><strong id="metricManagedParties">-</strong><small>FoxOMS 管理的经营主体</small></article>
-            <article><span>商机</span><strong id="metricOpportunities">-</strong><small>当前商机业务事实</small></article>
-            <article><span>已开票</span><strong id="metricInvoiced">-</strong><small>合同与订单累计开票</small></article>
-            <article class="attention"><span>已回款</span><strong id="metricReceived">-</strong><small id="metricReceivedHint">正在计算待回款</small></article>
+          <div class="managed-scope">
+            <div><span class="eyebrow">经营主体</span><strong>查看哪家企业</strong></div>
+            <div class="managed-party-list" id="managedPartyList" aria-label="受管业务主体"></div>
           </div>
 
-          <div class="business-pipeline" id="businessPipeline" aria-label="企业运营业务主链"></div>
-
-          <div class="toolbar">
-            <div class="segmented type-filter-list" id="objectFilters" aria-label="对象类型筛选"></div>
-            <div class="toolbar-meta"><span id="objectResultCount">0 项</span></div>
+          <div class="metric-strip operations-metrics" id="metricStrip">
+            <article><span>商机</span><strong id="metricOpportunities">-</strong><small id="metricOpportunityHint">潜在业务入口</small></article>
+            <article><span>投标中</span><strong id="metricPendingBids">-</strong><small>尚未记录结果</small></article>
+            <article><span>已中标</span><strong id="metricAwards">-</strong><small>形成商务路径的起点</small></article>
+            <article><span>履约事项</span><strong id="metricDeliveries">-</strong><small>订单与项目/任务</small></article>
+            <article class="attention"><span>待回款</span><strong id="metricOutstanding">-</strong><small id="metricOutstandingHint">按发票核销计算</small></article>
           </div>
 
-          <div class="data-surface">
-            <table>
-              <thead><tr><th>业务对象</th><th>类型</th><th>金额</th><th>业务日期</th><th>状态 / 标识</th><th>关系</th><th></th></tr></thead>
-              <tbody id="objectsTable"></tbody>
-            </table>
-            <div class="empty-state hidden" id="objectsEmpty"><i data-lucide="search-x"></i><strong>没有匹配的对象</strong><span>调整搜索词或类型筛选。</span></div>
+          <div class="operation-tabs">
+            <div class="segmented" id="operationTabs" aria-label="经营视图">
+              <button class="active" data-operation="overview"><i data-lucide="layout-dashboard"></i>总览</button>
+              <button data-operation="commercial"><i data-lucide="route"></i>商务拓展</button>
+              <button data-operation="delivery"><i data-lucide="briefcase-business"></i>履约交付</button>
+              <button data-operation="finance"><i data-lucide="badge-dollar-sign"></i>开票回款</button>
+              <button data-operation="resources"><i data-lucide="package-open"></i>资源资产</button>
+            </div>
           </div>
+          <div class="operation-content" id="operationContent"></div>
         </section>
 
-        <section class="view" id="relationsView">
+        <section class="view" id="dataView">
           <div class="page-heading">
             <div>
-              <span class="eyebrow">经营解释</span>
-              <h1>业务关系</h1>
-              <p>查看主体参与、业务形成、资源投入、知识资产和回款核销的事实链。</p>
+              <span class="eyebrow">高级数据视图</span>
+              <h1>全部数据</h1>
+              <p>按表格检查底层 Object 与 Relation；日常经营工作优先使用经营工作台。</p>
             </div>
             <button class="primary-button hidden" data-open-actions><i data-lucide="play"></i>业务操作</button>
           </div>
 
-          <div class="relation-summary" id="relationSummary"></div>
-
-          <div class="toolbar">
-            <div class="segmented type-filter-list" id="relationFilters" aria-label="关系类型筛选"></div>
-            <div class="toolbar-meta"><span id="relationResultCount">0 项</span></div>
+          <div class="data-kind-tabs">
+            <div class="segmented" id="dataKindTabs">
+              <button class="active" data-kind="object"><i data-lucide="boxes"></i>业务对象 <span id="objectNavCount">0</span></button>
+              <button data-kind="relation"><i data-lucide="git-branch"></i>业务关系 <span id="relationNavCount">0</span></button>
+            </div>
           </div>
 
-          <div class="data-surface">
-            <table>
-              <thead><tr><th>关系</th><th>From</th><th>方向</th><th>To</th><th>角色 / 数量 / 金额</th><th></th></tr></thead>
-              <tbody id="relationsTable"></tbody>
-            </table>
-            <div class="empty-state hidden" id="relationsEmpty"><i data-lucide="search-x"></i><strong>没有匹配的关系</strong><span>调整搜索词或关系筛选。</span></div>
+          <div id="dataObjectsPanel">
+            <div class="toolbar">
+              <div class="segmented type-filter-list" id="objectFilters" aria-label="对象类型筛选"></div>
+              <div class="toolbar-meta"><span id="objectResultCount">0 项</span></div>
+            </div>
+            <div class="data-surface">
+              <table>
+                <thead><tr><th>业务对象</th><th>类型</th><th>金额</th><th>业务日期</th><th>状态 / 标识</th><th>关系</th><th></th></tr></thead>
+                <tbody id="objectsTable"></tbody>
+              </table>
+              <div class="empty-state hidden" id="objectsEmpty"><i data-lucide="search-x"></i><strong>没有匹配的对象</strong><span>调整搜索词或类型筛选。</span></div>
+            </div>
+          </div>
+
+          <div class="hidden" id="dataRelationsPanel">
+            <div class="relation-summary" id="relationSummary"></div>
+            <div class="toolbar">
+              <div class="segmented type-filter-list" id="relationFilters" aria-label="关系类型筛选"></div>
+              <div class="toolbar-meta"><span id="relationResultCount">0 项</span></div>
+            </div>
+            <div class="data-surface">
+              <table id="relationsDataTable">
+                <thead><tr><th>关系</th><th>From</th><th>方向</th><th>To</th><th>角色 / 数量 / 金额</th><th></th></tr></thead>
+                <tbody id="relationsTable"></tbody>
+              </table>
+              <div class="empty-state hidden" id="relationsEmpty"><i data-lucide="search-x"></i><strong>没有匹配的关系</strong><span>调整搜索词或关系筛选。</span></div>
+            </div>
           </div>
         </section>
 
