@@ -17,7 +17,7 @@ from uom.workspace import ChangeValidationError
 ROOT = Path(__file__).resolve().parents[2]
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 AGENT = OagAgentRuntime(ROOT)
-SPATIAL = AGENT.get_resolver("spatial_view")
+SPATIAL = AGENT.get_service("spatial_view")
 
 
 class UomHandler(BaseHTTPRequestHandler):
@@ -79,40 +79,32 @@ class UomHandler(BaseHTTPRequestHandler):
                     order_by=body.get("order_by"),
                 ))
             elif path == "/api/changes/preview":
-                self._json(AGENT.call_domain(
-                    "preview_changes",
-                    operations=body.get("operations"),
-                ))
+                self._json(AGENT.workspace.preview_changes(body.get("operations")))
             elif path == "/api/changes/apply":
-                self._json(AGENT.call_domain(
-                    "apply_changes",
+                self._json(AGENT.apply_changes(
                     operations=body.get("operations"),
                     reason=str(body.get("reason", "")),
                     actor=str(body.get("actor", "web_user")),
                     channel="ui",
                 ))
             elif path == "/api/records/history":
-                self._json(AGENT.call_domain(
-                    "get_record_history",
+                self._json(AGENT.workspace.get_record_history(
                     kind=str(body.get("kind", "")),
                     record_id=str(body.get("record_id", "")),
                     limit=int(body.get("limit", 100)),
                 ))
             elif path == "/api/actions/available":
-                self._json(AGENT.call_domain(
-                    "get_available_actions",
+                self._json(AGENT.actions.list_actions(
                     context_id=str(body.get("context_id", "")),
                 ))
             elif path == "/api/actions/preview":
-                self._json(AGENT.call_domain(
-                    "preview_action",
+                self._json(AGENT.actions.preview_action(
                     action_id=str(body.get("action_id", "")),
                     inputs=body.get("inputs") or {},
                     context_id=str(body.get("context_id", "")),
                 ))
             elif path == "/api/actions/apply":
-                self._json(AGENT.call_domain(
-                    "apply_action",
+                self._json(AGENT.actions.execute_action(
                     preview_token=str(body.get("preview_token", "")),
                     reason=str(body.get("reason", "")),
                     actor=str(body.get("actor", "web_user")),

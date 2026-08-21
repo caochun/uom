@@ -29,12 +29,12 @@ class OagAgentRuntime:
 
     def _configure(self) -> None:
         try:
-            from oag.ontology.loader import load_domain
+            from uom.loader import load_domain
 
             self.ontology, self.repository, self.registry = load_domain(
                 self.domain_dir
             )
-            self.actions = self.registry.get_resolver("uom_actions")
+            self.actions = self.registry.get_action_runtime()
             if self.actions is None:
                 raise RuntimeError("UOM Action service 未注册")
             self.workspace = self.actions.workspace
@@ -66,7 +66,6 @@ class OagAgentRuntime:
             from oag.agent import Agent
             from oag.harness import Harness
             from oag.runtime import HarnessConfig
-            from highway.app.presentation_tools import register_presentation_tools
 
             client_args: dict[str, Any] = {"api_key": api_key}
             if base_url:
@@ -91,12 +90,6 @@ class OagAgentRuntime:
                     append_system_prompt="/no_think" if disable_reasoning else "",
                 ),
             )
-            register_presentation_tools(
-                harness,
-                self.ontology,
-                self.workspace,
-                self.actions,
-            )
             self._agent = Agent(
                 harness,
                 client,
@@ -116,6 +109,9 @@ class OagAgentRuntime:
             raise RuntimeError(self._error or "UOM domain 未初始化")
         return self.registry.call(name, **kwargs)
 
+    def apply_changes(self, **kwargs: Any) -> Any:
+        return self.workspace.apply_changes(**kwargs)
+
     def status(self) -> dict[str, Any]:
         return {
             "available": self._agent is not None,
@@ -123,8 +119,8 @@ class OagAgentRuntime:
             "message": "已连接" if self._agent is not None else self._error,
         }
 
-    def get_resolver(self, name: str) -> Any:
-        return self.registry.get_resolver(name) if self.registry is not None else None
+    def get_service(self, name: str) -> Any:
+        return self.registry.get_service(name) if self.registry is not None else None
 
     def chat(self, message: str, session_id: str) -> Iterator[dict[str, Any]]:
         if self._agent is None:

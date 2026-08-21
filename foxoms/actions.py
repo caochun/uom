@@ -35,7 +35,7 @@ class FoxOmsActionService(ModelActionService):
         self._validate_business_action(action_id, inputs)
         return super()._compile_action_effects(action_id, effects, inputs, context)
 
-    def apply_action(
+    def execute_action(
         self,
         preview_token: str,
         reason: str = "",
@@ -48,10 +48,10 @@ class FoxOmsActionService(ModelActionService):
                 self._validate_business_action(
                     preview["action_id"], preview["inputs"]
                 )
-            return super().apply_action(preview_token, reason, actor, channel)
+            return super().execute_action(preview_token, reason, actor, channel)
 
-    def get_available_actions(self, context_id: str = "") -> dict[str, Any]:
-        result = super().get_available_actions(context_id)
+    def list_actions(self, context_id: str = "") -> dict[str, Any]:
+        result = super().list_actions(context_id)
         context = result.get("context")
         if not context:
             return result
@@ -103,7 +103,7 @@ class FoxOmsActionService(ModelActionService):
             raise ChangeValidationError([
                 "action.inputs.participation_role: 核心角色应由对应业务操作建立"
             ])
-        for relation in self.workspace.repository.query("Relation"):
+        for relation in self.workspace.repository.query_relations("Relation"):
             if (
                 relation.get("type") == "participates_in"
                 and relation.get("from") == inputs["party_id"]
@@ -184,7 +184,7 @@ class FoxOmsActionService(ModelActionService):
             raise ChangeValidationError(["action.inputs.settled_amount: 发票将被超额核销"])
         current_invoice_ids = {
             relation.get("to")
-            for relation in self.workspace.repository.query("Relation")
+            for relation in self.workspace.repository.query_relations("Relation")
             if relation.get("type") == "settles"
             and relation.get("from") == receipt["id"]
         }
@@ -217,8 +217,8 @@ class FoxOmsActionService(ModelActionService):
 
     def _audit(self) -> dict[str, Any]:
         audit = audit_foxoms_records(
-            self.workspace.repository.query("Object"),
-            self.workspace.repository.query("Relation"),
+            self.workspace.repository.query_objects("Object"),
+            self.workspace.repository.query_relations("Relation"),
         )
         if not audit["valid"]:
             raise ChangeValidationError([
@@ -232,7 +232,7 @@ class FoxOmsActionService(ModelActionService):
         )
 
     def _transaction_parties(self, invoice_id: str) -> tuple[str, str] | None:
-        relations = self.workspace.repository.query("Relation")
+        relations = self.workspace.repository.query_relations("Relation")
         parent_ids = [
             relation.get("from")
             for relation in relations
@@ -267,11 +267,11 @@ class FoxOmsActionService(ModelActionService):
     def _downstream_count(self, bid_id: str) -> int:
         return sum(
             relation.get("type") == "derives" and relation.get("from") == bid_id
-            for relation in self.workspace.repository.query("Relation")
+            for relation in self.workspace.repository.query_relations("Relation")
         )
 
     def _object(self, object_id: str) -> dict[str, Any]:
-        record = self.workspace.repository.query_by_id("Object", object_id)
+        record = self.workspace.repository.get_object("Object", object_id)
         if not record:
             raise ChangeValidationError([f"action: 未找到对象 {object_id}"])
         return record

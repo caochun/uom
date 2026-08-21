@@ -1,0 +1,1185 @@
+schema: uom.action_plans.v1
+actions:
+  register_party:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: party
+        type: party
+        name: $input.name
+        properties:
+          category: $input.category
+          code: $input.code
+          status: $input.status
+          details: $input.details
+  register_user:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: user
+        type: user
+        name: $input.name
+        properties:
+          reference_no: $input.reference_no
+          status: $input.status
+          details: $input.details
+  register_vehicle:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: vehicle
+        type: vehicle
+        name: $input.name
+        properties:
+          plate_no: $input.plate_no
+          vehicle_type: $input.vehicle_type
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: associates
+        from: $context
+        to: $vehicle
+        properties:
+          role: owned_vehicle
+          status: active
+  issue_etc_card:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: card
+        type: etc_card
+        name: $input.name
+        properties:
+          category: $input.category
+          code: $input.code
+          status: $input.status
+          valid_from: $input.valid_from
+          valid_to: $input.valid_to
+          details: $input.details
+    - create_relation:
+        type: associates
+        from: $context
+        to: $card
+        properties:
+          role: bound_etc_card
+          status: active
+  install_obu:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: obu
+        type: obu
+        name: $input.name
+        properties:
+          category: $input.category
+          code: $input.code
+          status: $input.status
+          valid_from: $input.valid_from
+          valid_to: $input.valid_to
+          details: $input.details
+    - create_relation:
+        type: associates
+        from: $context
+        to: $obu
+        properties:
+          role: bound_obu
+          status: active
+  pair_obu_etc_card:
+    handler: changeset
+    effects:
+    - create_relation:
+        type: associates
+        from: $context
+        to: $input.card_id
+        properties:
+          role: paired_etc_card
+          status: active
+  record_customer_service:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: service_record
+        type: customer_service_record
+        name: $input.reference_no
+        properties:
+          category: $input.category
+          reference_no: $input.reference_no
+          occurred_on: $input.occurred_on
+          result: $input.result
+          channel: $input.channel
+          details: $input.details
+    - create_relation:
+        type: references
+        from: $service_record
+        to: $context
+        properties:
+          role: business_subject
+    - create_relation:
+        type: associates
+        from: $service_record
+        to: $input.handler_id
+        properties:
+          role: handled_by
+          status: confirmed
+  register_cpc_card:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: card
+        type: cpc_card
+        name: $input.name
+        properties:
+          code: $input.code
+          status: $input.status
+          valid_from: $input.valid_from
+          valid_to: $input.valid_to
+          details: $input.details
+  register_paper_ticket:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: ticket
+        type: paper_ticket
+        name: $input.name
+        properties:
+          code: $input.code
+          status: $input.status
+          valid_from: $input.valid_from
+          valid_to: $input.valid_to
+          details: $input.details
+  register_toll_road:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: road
+        type: toll_road
+        name: $input.name
+        properties:
+          code: $input.code
+          longitude: $input.longitude
+          latitude: $input.latitude
+          coordinate_system: $input.coordinate_system
+          status: $input.status
+          details: $input.details
+  register_section:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: section
+        type: section
+        name: $input.name
+        properties:
+          code: $input.code
+          mileage: $input.mileage
+          longitude: $input.longitude
+          latitude: $input.latitude
+          coordinate_system: $input.coordinate_system
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: contains
+        from: $context
+        to: $section
+        properties:
+          role: section
+  register_toll_interval:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: interval
+        type: toll_interval
+        name: $input.name
+        properties:
+          code: $input.code
+          direction: $input.direction
+          mileage: $input.mileage
+          longitude: $input.longitude
+          latitude: $input.latitude
+          coordinate_system: $input.coordinate_system
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: contains
+        from: $context
+        to: $interval
+        properties:
+          role: toll_interval
+  register_toll_station:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: station
+        type: toll_station
+        name: $input.name
+        properties:
+          code: $input.code
+          longitude: $input.longitude
+          latitude: $input.latitude
+          coordinate_system: $input.coordinate_system
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: contains
+        from: $context
+        to: $station
+        properties:
+          role: toll_station
+  register_toll_plaza:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: plaza
+        type: toll_plaza
+        name: $input.name
+        properties:
+          code: $input.code
+          direction: $input.direction
+          longitude: $input.longitude
+          latitude: $input.latitude
+          coordinate_system: $input.coordinate_system
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: contains
+        from: $context
+        to: $plaza
+        properties:
+          role: toll_plaza
+  register_toll_lane:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: lane
+        type: toll_lane
+        name: $input.name
+        properties:
+          code: $input.code
+          category: $input.category
+          direction: $input.direction
+          longitude: $input.longitude
+          latitude: $input.latitude
+          coordinate_system: $input.coordinate_system
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: contains
+        from: $context
+        to: $lane
+        properties:
+          role: toll_lane
+  register_toll_gantry:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: gantry
+        type: toll_gantry
+        name: $input.name
+        properties:
+          code: $input.code
+          direction: $input.direction
+          longitude: $input.longitude
+          latitude: $input.latitude
+          coordinate_system: $input.coordinate_system
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: contains
+        from: $context
+        to: $gantry
+        properties:
+          role: toll_gantry
+  connect_route_node:
+    handler: changeset
+    effects:
+    - create_relation:
+        type: route_next
+        from: $context
+        to: $input.next_id
+        properties:
+          direction: $input.direction
+          mileage: $input.mileage
+          status: $input.status
+  bind_interval_nodes:
+    handler: changeset
+    effects:
+    - create_relation:
+        type: references
+        from: $context
+        to: $input.start_id
+        properties:
+          role: start_node
+    - create_relation:
+        type: references
+        from: $context
+        to: $input.end_id
+        properties:
+          role: end_node
+  register_service_facility:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: facility
+        type: service_facility
+        name: $input.name
+        properties:
+          category: $input.category
+          code: $input.code
+          channel: $input.channel
+          longitude: $input.longitude
+          latitude: $input.latitude
+          coordinate_system: $input.coordinate_system
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: contains
+        from: $context
+        to: $facility
+        properties:
+          role: service_facility
+  register_business_device:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: device
+        type: business_device
+        name: $input.name
+        properties:
+          category: $input.category
+          code: $input.code
+          longitude: $input.longitude
+          latitude: $input.latitude
+          coordinate_system: $input.coordinate_system
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: contains
+        from: $context
+        to: $device
+        properties:
+          role: business_device
+  record_etc_passage:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: entry_transaction
+        type: toll_transaction
+        name: $input.entry_transaction_no
+        properties:
+          reference_no: $input.entry_transaction_no
+          stage: entry
+          occurred_at: $input.entry_at
+          transaction_type: $input.transaction_type
+          charged_vehicle_type: $input.charged_vehicle_type
+          axle_count: $input.axle_count
+          result: success
+          operation_channel: $input.operation_channel
+          status: recorded
+    - create_object:
+        ref: exit_transaction
+        type: toll_transaction
+        name: $input.exit_transaction_no
+        properties:
+          reference_no: $input.exit_transaction_no
+          stage: exit
+          occurred_at: $input.exit_at
+          transaction_type: $input.transaction_type
+          charged_vehicle_type: $input.charged_vehicle_type
+          axle_count: $input.axle_count
+          result: success
+          operation_channel: $input.operation_channel
+          receivable_amount: $input.receivable_amount
+          discount_amount: $input.discount_amount
+          paid_amount: $input.paid_amount
+          payment_type: $input.payment_type
+          fee_type: $input.fee_type
+          multi_province: $input.multi_province
+          status: recorded
+    - create_object:
+        ref: passage
+        type: passage
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          mode: etc
+          status: completed
+          details: $input.details
+    - create_relation:
+        type: associates
+        from: $passage
+        to: $context
+        properties:
+          role: passage_vehicle
+          status: confirmed
+    - create_relation:
+        type: references
+        from: $passage
+        to: $input.obu_id
+        properties:
+          role: used_obu
+    - create_relation:
+        type: references
+        from: $passage
+        to: $entry_transaction
+        properties:
+          role: entry_transaction
+    - create_relation:
+        type: references
+        from: $passage
+        to: $exit_transaction
+        properties:
+          role: exit_transaction
+    - create_relation:
+        type: references
+        from: $entry_transaction
+        to: $input.entry_lane_id
+        properties:
+          role: toll_lane
+    - create_relation:
+        type: references
+        from: $exit_transaction
+        to: $input.exit_lane_id
+        properties:
+          role: toll_lane
+  record_cpc_passage:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: entry_transaction
+        type: toll_transaction
+        name: $input.entry_transaction_no
+        properties:
+          reference_no: $input.entry_transaction_no
+          stage: entry
+          occurred_at: $input.entry_at
+          transaction_type: $input.transaction_type
+          charged_vehicle_type: $input.charged_vehicle_type
+          axle_count: $input.axle_count
+          result: success
+          operation_channel: $input.operation_channel
+          status: recorded
+    - create_object:
+        ref: exit_transaction
+        type: toll_transaction
+        name: $input.exit_transaction_no
+        properties:
+          reference_no: $input.exit_transaction_no
+          stage: exit
+          occurred_at: $input.exit_at
+          transaction_type: $input.transaction_type
+          charged_vehicle_type: $input.charged_vehicle_type
+          axle_count: $input.axle_count
+          result: success
+          operation_channel: $input.operation_channel
+          receivable_amount: $input.receivable_amount
+          discount_amount: $input.discount_amount
+          paid_amount: $input.paid_amount
+          payment_type: $input.payment_type
+          fee_type: $input.fee_type
+          multi_province: $input.multi_province
+          status: recorded
+    - create_object:
+        ref: passage
+        type: passage
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          mode: mtc
+          status: completed
+          details: $input.details
+    - create_relation:
+        type: associates
+        from: $passage
+        to: $context
+        properties:
+          role: passage_vehicle
+          status: confirmed
+    - create_relation:
+        type: references
+        from: $passage
+        to: $input.cpc_card_id
+        properties:
+          role: used_cpc_card
+    - create_relation:
+        type: references
+        from: $passage
+        to: $entry_transaction
+        properties:
+          role: entry_transaction
+    - create_relation:
+        type: references
+        from: $passage
+        to: $exit_transaction
+        properties:
+          role: exit_transaction
+    - create_relation:
+        type: references
+        from: $entry_transaction
+        to: $input.entry_lane_id
+        properties:
+          role: toll_lane
+    - create_relation:
+        type: references
+        from: $exit_transaction
+        to: $input.exit_lane_id
+        properties:
+          role: toll_lane
+    - create_relation:
+        type: references
+        from: $entry_transaction
+        to: $input.cpc_card_id
+        properties:
+          role: issued_cpc_card
+    - create_relation:
+        type: references
+        from: $exit_transaction
+        to: $input.cpc_card_id
+        properties:
+          role: recovered_cpc_card
+  record_paper_ticket_passage:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: entry_transaction
+        type: toll_transaction
+        name: $input.entry_transaction_no
+        properties:
+          reference_no: $input.entry_transaction_no
+          stage: entry
+          occurred_at: $input.entry_at
+          transaction_type: $input.transaction_type
+          charged_vehicle_type: $input.charged_vehicle_type
+          axle_count: $input.axle_count
+          result: success
+          operation_channel: $input.operation_channel
+          status: recorded
+    - create_object:
+        ref: exit_transaction
+        type: toll_transaction
+        name: $input.exit_transaction_no
+        properties:
+          reference_no: $input.exit_transaction_no
+          stage: exit
+          occurred_at: $input.exit_at
+          transaction_type: $input.transaction_type
+          charged_vehicle_type: $input.charged_vehicle_type
+          axle_count: $input.axle_count
+          result: success
+          operation_channel: $input.operation_channel
+          receivable_amount: $input.receivable_amount
+          discount_amount: $input.discount_amount
+          paid_amount: $input.paid_amount
+          payment_type: $input.payment_type
+          fee_type: $input.fee_type
+          multi_province: $input.multi_province
+          status: recorded
+    - create_object:
+        ref: passage
+        type: passage
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          mode: mtc
+          status: completed
+          details: $input.details
+    - create_relation:
+        type: associates
+        from: $passage
+        to: $context
+        properties:
+          role: passage_vehicle
+          status: confirmed
+    - create_relation:
+        type: references
+        from: $passage
+        to: $input.ticket_id
+        properties:
+          role: used_paper_ticket
+    - create_relation:
+        type: references
+        from: $passage
+        to: $entry_transaction
+        properties:
+          role: entry_transaction
+    - create_relation:
+        type: references
+        from: $passage
+        to: $exit_transaction
+        properties:
+          role: exit_transaction
+    - create_relation:
+        type: references
+        from: $entry_transaction
+        to: $input.entry_lane_id
+        properties:
+          role: toll_lane
+    - create_relation:
+        type: references
+        from: $exit_transaction
+        to: $input.exit_lane_id
+        properties:
+          role: toll_lane
+    - create_relation:
+        type: references
+        from: $entry_transaction
+        to: $input.ticket_id
+        properties:
+          role: issued_paper_ticket
+    - create_relation:
+        type: references
+        from: $exit_transaction
+        to: $input.ticket_id
+        properties:
+          role: presented_paper_ticket
+  record_gantry_transaction:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: transaction
+        type: toll_transaction
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          stage: gantry
+          occurred_at: $input.occurred_at
+          transaction_type: $input.transaction_type
+          charged_vehicle_type: $input.charged_vehicle_type
+          axle_count: $input.axle_count
+          result: $input.result
+          receivable_amount: $input.receivable_amount
+          discount_amount: $input.discount_amount
+          paid_amount: $input.paid_amount
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: references
+        from: $context
+        to: $transaction
+        properties:
+          role: gantry_transaction
+    - create_relation:
+        type: references
+        from: $transaction
+        to: $input.gantry_id
+        properties:
+          role: toll_gantry
+  record_vehicle_id:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: identification
+        type: vehicle_id_record
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          occurred_at: $input.occurred_at
+          plate_no: $input.plate_no
+          vehicle_type: $input.vehicle_type
+          direction: $input.direction
+          result: $input.result
+          details: $input.details
+    - create_relation:
+        type: references
+        from: $context
+        to: $identification
+        properties:
+          role: vehicle_identification
+  record_vehicle_check:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: check
+        type: vehicle_check_result
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          occurred_on: $input.occurred_on
+          result: $input.result
+          details: $input.details
+    - create_relation:
+        type: references
+        from: $context
+        to: $check
+        properties:
+          role: vehicle_check
+  record_second_charge:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: charge
+        type: second_charge_result
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          original_amount: $input.original_amount
+          amount: $input.amount
+          occurred_on: $input.occurred_on
+          result: $input.result
+          details: $input.details
+    - create_relation:
+        type: contains
+        from: $context
+        to: $charge
+        properties:
+          role: second_charge_result
+    - create_relation:
+        type: derives
+        from: $input.check_id
+        to: $charge
+        properties:
+          role: check_basis
+  create_split_record:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: split_record
+        type: split_record
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          amount: $input.amount
+          occurred_on: $input.occurred_on
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: derives
+        from: $context
+        to: $split_record
+        properties:
+          role: passage_split
+          amount: $input.amount
+  add_split_detail:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: detail
+        type: split_detail
+        name: $input.name
+        properties:
+          amount: $input.amount
+          details: $input.details
+    - create_relation:
+        type: contains
+        from: $context
+        to: $detail
+        properties:
+          role: split_detail
+    - create_relation:
+        type: references
+        from: $detail
+        to: $input.toll_interval_id
+        properties:
+          role: toll_interval
+          amount: $input.amount
+  add_split_basis:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: basis
+        type: split_basis
+        name: $input.name
+        properties:
+          version: $input.version
+          details: $input.details
+    - create_relation:
+        type: contains
+        from: $context
+        to: $basis
+        properties:
+          role: split_basis
+  produce_clearing_result:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: clearing
+        type: clearing_result
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          amount: $input.amount
+          period: $input.period
+          occurred_on: $input.occurred_on
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: derives
+        from: $context
+        to: $clearing
+        properties:
+          role: clearing_result
+          amount: $input.amount
+  produce_invoice_basis:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: invoice_basis
+        type: invoice_basis_data
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          amount: $input.amount
+          occurred_on: $input.occurred_on
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: derives
+        from: $context
+        to: $invoice_basis
+        properties:
+          role: invoice_basis
+          amount: $input.amount
+  open_user_account:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: account
+        type: user_account
+        name: $input.name
+        properties:
+          reference_no: $input.reference_no
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: associates
+        from: $account
+        to: $context
+        properties:
+          role: account_holder
+          status: active
+  open_card_account:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: account
+        type: card_account
+        name: $input.name
+        properties:
+          reference_no: $input.reference_no
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: associates
+        from: $account
+        to: $context
+        properties:
+          role: account_card
+          status: active
+  register_stock_account:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: account
+        type: stock_account
+        name: $input.name
+        properties:
+          category: $input.category
+          reference_no: $input.reference_no
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: associates
+        from: $account
+        to: $context
+        properties:
+          role: stock_holder
+          status: active
+  record_account_transaction:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: transaction
+        type: account_transaction
+        name: $input.name
+        properties:
+          category: $input.category
+          reference_no: $input.reference_no
+          amount: $input.amount
+          occurred_on: $input.occurred_on
+          status: $input.status
+          reason: $input.reason
+          details: $input.details
+    - create_relation:
+        type: associates
+        from: $transaction
+        to: $context
+        properties:
+          role: affected_account
+          status: confirmed
+  record_account_entry:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: entry
+        type: account_entry
+        name: $input.name
+        properties:
+          category: $input.category
+          reference_no: $input.reference_no
+          amount: $input.amount
+          occurred_on: $input.occurred_on
+          balance: $input.balance
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: derives
+        from: $context
+        to: $entry
+        properties:
+          role: bookkeeping_entry
+    - create_relation:
+        type: contains
+        from: $input.account_id
+        to: $entry
+        properties:
+          role: account_entry
+  record_stock_movement:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: movement
+        type: stock_movement
+        name: $input.reference_no
+        properties:
+          category: $input.category
+          reference_no: $input.reference_no
+          quantity: $input.quantity
+          occurred_on: $input.occurred_on
+          reason: $input.reason
+          details: $input.details
+    - create_relation:
+        type: associates
+        from: $movement
+        to: $context
+        properties:
+          role: affected_stock
+          status: confirmed
+    - create_relation:
+        type: references
+        from: $movement
+        to: $input.item_id
+        properties:
+          role: stock_item
+  record_consumption:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: consumption
+        type: consumption_detail
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          amount: $input.amount
+          occurred_on: $input.occurred_on
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: references
+        from: $consumption
+        to: $context
+        properties:
+          role: passage
+          amount: $input.amount
+    - create_relation:
+        type: associates
+        from: $consumption
+        to: $input.account_id
+        properties:
+          role: charged_account
+          status: confirmed
+  create_bill:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: bill
+        type: bill
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          amount: $input.amount
+          period: $input.period
+          status: $input.status
+          details: $input.details
+    - create_relation:
+        type: associates
+        from: $bill
+        to: $context
+        properties:
+          role: billed_user
+          status: active
+  include_consumption_in_bill:
+    handler: changeset
+    effects:
+    - create_relation:
+        type: derives
+        from: $input.consumption_id
+        to: $context
+        properties:
+          role: bill_source
+          amount: $input.amount
+  settle_bill:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: settlement
+        type: bill_settlement
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          amount: $input.amount
+          occurred_on: $input.occurred_on
+          result: $input.result
+          details: $input.details
+    - create_relation:
+        type: derives
+        from: $context
+        to: $settlement
+        properties:
+          role: bill_settlement
+          amount: $input.amount
+  record_reconciliation:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: reconciliation
+        type: reconciliation_result
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          occurred_on: $input.occurred_on
+          result: $input.result
+          details: $input.details
+    - create_relation:
+        type: derives
+        from: $context
+        to: $reconciliation
+        properties:
+          role: reconciliation_source
+  publish_fee_module:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: module
+        type: fee_module
+        name: $input.name
+        properties:
+          version: $input.version
+          valid_from: $input.valid_from
+          status: $input.status
+          details: $input.details
+  add_fee_rule:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: rule
+        type: fee_rule
+        name: $input.name
+        properties:
+          category: $input.category
+          code: $input.code
+          version: $input.version
+          valid_from: $input.valid_from
+          valid_to: $input.valid_to
+          details: $input.details
+    - create_relation:
+        type: contains
+        from: $context
+        to: $rule
+        properties:
+          role: fee_rule
+  add_fee_rule_basis:
+    handler: changeset
+    effects:
+    - create_relation:
+        type: references
+        from: $context
+        to: $input.basis_id
+        properties:
+          role: $input.role
+  derive_fee_rule:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: result_rule
+        type: fee_rule
+        name: $input.name
+        properties:
+          category: $input.category
+          code: $input.code
+          version: $input.version
+          valid_from: $input.valid_from
+          valid_to: $input.valid_to
+          details: $input.details
+    - create_relation:
+        type: derives
+        from: $context
+        to: $result_rule
+        properties:
+          role: calculation_source
+  add_control_record:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: control
+        type: control_record
+        name: $input.name
+        properties:
+          category: $input.category
+          code: $input.code
+          status: $input.status
+          version: $input.version
+          valid_from: $input.valid_from
+          valid_to: $input.valid_to
+          reason: $input.reason
+          details: $input.details
+    - create_relation:
+        type: references
+        from: $control
+        to: $context
+        properties:
+          role: controlled_object
+  promote_control_record:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: recovery
+        type: control_record
+        name: $input.name
+        properties:
+          category: recovery
+          code: $input.code
+          status: $input.status
+          version: $input.version
+          valid_from: $input.valid_from
+          valid_to: $input.valid_to
+          reason: $input.reason
+          details: $input.details
+    - create_relation:
+        type: derives
+        from: $context
+        to: $recovery
+        properties:
+          role: confirmed_recovery
+          reason: $input.reason
+  register_operating_parameter:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: parameter
+        type: operating_parameter
+        name: $input.name
+        properties:
+          category: $input.category
+          code: $input.code
+          status: $input.status
+          version: $input.version
+          valid_from: $input.valid_from
+          valid_to: $input.valid_to
+          details: $input.details
+  apply_operating_parameter:
+    handler: changeset
+    effects:
+    - create_relation:
+        type: references
+        from: $context
+        to: $input.target_id
+        properties:
+          role: $input.role

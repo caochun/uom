@@ -58,13 +58,14 @@
 核销中的 `payment_id` 和生成应收中的 `schedule_version_id`。`context_input` 只声明详情页当前对象应预填到哪个输入；
 它不会把 UI 上下文当作隐含的业务事实。因此 Agent 无需依赖详情页也能准确指定操作对象，而 UI 仍可自动预填。
 
-Action 的业务顺序由 `requires` 前置条件声明，而不是统一线性流程。当前支持 `object_status` 和
+Action 的业务顺序由公开 `model.yaml` 中的 `preconditions` 声明，而不是统一线性流程。当前支持 `object_status` 和
 `related_object` 两种条件：例如签约前方案必须有已通过的审批，核销前收款必须处于未核销或部分核销状态。
 前置条件在操作目录、预览和最终提交时都会评估；前端会锁定当前不可执行的操作并显示原因。
 
 状态是业务操作的结果，不由用户在表单中任意指定。审批推进方案状态，签约关闭方案，计划新版本显式替代
 旧版本，核销根据累计金额更新收款和应收/罚息状态；最终结清会检查未结债权、关闭合同和生效计划，并用
-`reverse_occupy` 流水释放合同占用授信。Action 编译为 Object/Relation ChangeSet，经过预览和用户确认后写入 SQLite。
+`reverse_occupy` 流水释放合同占用授信。具体执行模板位于私有 `action_plans.yaml`；Action 编译为
+Object/Relation ChangeSet，经过预览和用户确认后写入 SQLite。
 
 ## Web 工作台
 

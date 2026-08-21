@@ -14,13 +14,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "oag-agent"))
 
-from oag.ontology.loader import load_domain  # noqa: E402
 from leasing.business import audit_finance_records  # noqa: E402
-from uom.validation import ModelValidator, load_yaml  # noqa: E402
+from uom.loader import load_domain  # noqa: E402
+from uom.model import (  # noqa: E402
+    load_action_plans,
+    load_public_ontology,
+    storage_contract_payload,
+    workspace_model,
+)
+from uom.validation import ModelValidator  # noqa: E402
 
 
 DOMAIN_ROOT = Path(__file__).resolve().parents[1]
-CORE_ONTOLOGY = PROJECT_ROOT / "uom" / "ontology.yaml"
 
 
 def money(amount: float) -> dict[str, Any]:
@@ -448,17 +453,18 @@ def _add_zibo_settled_case(
 
 
 def validate_graph(objects: list[dict[str, Any]], relations: list[dict[str, Any]]) -> None:
-    model = load_yaml(DOMAIN_ROOT / "model.yaml")
+    public_model, _ = load_public_ontology(DOMAIN_ROOT)
+    model = workspace_model(public_model, load_action_plans(DOMAIN_ROOT))
     result = ModelValidator(
-        load_yaml(CORE_ONTOLOGY),
+        storage_contract_payload(),
         {"schema": "uom.data.objects.v1", "objects": objects},
         {"schema": "uom.data.relations.v1", "relations": relations},
         model,
     ).validate()
     if result.errors:
         raise ValueError("\n".join(result.errors))
-    missing_objects = set(model["object_types"]) - {item["type"] for item in objects}
-    missing_relations = set(model["relation_types"]) - {item["type"] for item in relations}
+    missing_objects = set(public_model["objects"]) - {item["type"] for item in objects}
+    missing_relations = set(public_model["relations"]) - {item["type"] for item in relations}
     if missing_objects or missing_relations:
         raise ValueError(
             f"seed coverage missing object types={sorted(missing_objects)}, "
@@ -481,9 +487,9 @@ def main() -> int:
         return 0
     _, repository, registry = load_domain(DOMAIN_ROOT)
     try:
-        adapter = repository.adapter_for("Object")
-        adapter.replace_graph(objects, relations)
-        with sqlite3.connect(adapter.database_path) as connection:
+        graph = registry.get_service("uom_graph")
+        graph.replace_graph(objects, relations)
+        with sqlite3.connect(graph.database_path) as connection:
             connection.execute("DELETE FROM action_log")
             connection.commit()
         consistency = registry.call("audit_finance_consistency")

@@ -1,0 +1,410 @@
+schema: uom.action_plans.v1
+actions:
+  register_customer:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: customer
+        type: customer
+        name: $input.name
+        properties:
+          reference_no: $input.reference_no
+          category: $input.category
+          status: active
+  start_approval:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: approval
+        type: approval
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          category: $input.category
+          occurred_on: $input.occurred_on
+          status: pending
+          details:
+            process: $input.process
+            history: []
+            result:
+              decision: pending
+    - create_relation:
+        type: references
+        from: $approval
+        to: $input.reviewed_object
+        properties:
+          role: reviewed_object
+    - create_relation:
+        type: associates
+        from: $approval
+        to: $input.submitted_by
+        properties:
+          role: submitted_by
+          status: submitted
+          sequence: 1
+          occurred_on: $input.occurred_on
+  record_approval_decision:
+    handler: changeset
+    effects:
+    - update_object:
+        id: $input.approval_id
+        changes:
+          properties:
+            status: $input.decision
+    - create_relation:
+        type: associates
+        from: $input.approval_id
+        to: $input.decided_by
+        properties:
+          role: decided_by
+          status: $input.decision
+          sequence: $input.sequence
+          occurred_on: $input.occurred_on
+          reason: $input.reason
+  create_lease_plan:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: plan
+        type: lease_plan
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          amount: $input.amount
+          occurred_on: $input.occurred_on
+          status: draft
+          details: $input.details
+    - create_relation:
+        type: references
+        from: $plan
+        to: $input.applicant_id
+        properties:
+          role: applicant
+    - create_relation:
+        type: references
+        from: $plan
+        to: $input.credit_id
+        properties:
+          role: reserved_credit
+    - create_object:
+        ref: credit_reservation
+        type: credit_entry
+        name: $input.reference_no
+        properties:
+          category: reserve
+          amount: $input.amount
+          occurred_on: $input.occurred_on
+          status: posted
+    - create_relation:
+        type: contains
+        from: $input.credit_id
+        to: $credit_reservation
+        properties:
+          role: credit_entry
+    - create_relation:
+        type: references
+        from: $credit_reservation
+        to: $plan
+        properties:
+          role: source_plan
+  grant_credit:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: credit
+        type: credit
+        name: $input.code
+        properties:
+          code: $input.code
+          category: $input.category
+          amount: $input.amount
+          valid_from: $input.valid_from
+          valid_to: $input.valid_to
+          status: active
+    - create_relation:
+        type: references
+        from: $credit
+        to: $input.customer_id
+        properties:
+          role: granted_customer
+  sign_contract:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: contract
+        type: contract
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          amount: $input.amount
+          occurred_on: $input.occurred_on
+          status: active
+    - update_object:
+        id: $input.lease_plan_id
+        changes:
+          properties:
+            status: contracted
+    - create_relation:
+        type: derives
+        from: $input.lease_plan_id
+        to: $contract
+        properties:
+          role: signed_contract
+    - create_object:
+        ref: lessor_participation
+        type: contract_participation
+        name: 出租方参与事实
+        properties:
+          role: lessor
+          status: active
+          valid_from: $input.occurred_on
+    - create_object:
+        ref: lessee_participation
+        type: contract_participation
+        name: 承租方参与事实
+        properties:
+          role: lessee
+          status: active
+          valid_from: $input.occurred_on
+    - create_relation:
+        type: contains
+        from: $contract
+        to: $lessor_participation
+        properties:
+          role: contract_party
+    - create_relation:
+        type: contains
+        from: $contract
+        to: $lessee_participation
+        properties:
+          role: contract_party
+    - create_relation:
+        type: references
+        from: $lessor_participation
+        to: $input.lessor_id
+        properties:
+          role: participant
+    - create_relation:
+        type: references
+        from: $lessee_participation
+        to: $input.lessee_id
+        properties:
+          role: participant
+    - create_object:
+        ref: credit_conversion
+        type: credit_entry
+        name: $input.reference_no
+        properties:
+          category: convert_reserve_to_used
+          amount: $input.amount
+          occurred_on: $input.occurred_on
+          status: posted
+    - create_relation:
+        type: contains
+        from: $input.credit_id
+        to: $credit_conversion
+        properties:
+          role: credit_entry
+    - create_relation:
+        type: references
+        from: $credit_conversion
+        to: $contract
+        properties:
+          role: source_contract
+  record_loan:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: loan
+        type: loan
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          amount: $input.amount
+          occurred_on: $input.occurred_on
+          status: paid
+    - create_relation:
+        type: derives
+        from: $input.contract_id
+        to: $loan
+        properties:
+          role: loan
+  create_schedule_version:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: schedule
+        type: schedule_version
+        name: $input.version
+        properties:
+          version: $input.version
+          valid_from: $input.valid_from
+          status: active
+          details: $input.details
+    - create_relation:
+        type: derives
+        from: $input.contract_id
+        to: $schedule
+        properties:
+          role: rent_schedule
+    - update_object:
+        id: $input.supersedes_id
+        changes:
+          properties:
+            status: inactive
+            valid_to: $input.valid_from
+    - create_relation:
+        type: supersedes
+        from: $schedule
+        to: $input.supersedes_id
+        properties:
+          occurred_on: $input.valid_from
+          reason: schedule_recalculation
+  create_receivable:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: receivable
+        type: receivable
+        name: $input.category
+        properties:
+          sequence: $input.sequence
+          category: $input.category
+          amount: $input.amount
+          due_on: $input.due_on
+          status: open
+    - create_relation:
+        type: derives
+        from: $input.schedule_version_id
+        to: $receivable
+        properties:
+          role: schedule_receivable
+  record_payment:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: payment
+        type: payment
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          amount: $input.amount
+          occurred_on: $input.occurred_on
+          category: $input.category
+          status: unallocated
+    - create_relation:
+        type: associates
+        from: $payment
+        to: $input.payer_id
+        properties:
+          role: payer
+          status: confirmed
+    - create_relation:
+        type: associates
+        from: $payment
+        to: $input.contract_id
+        properties:
+          role: intended_contract
+          status: pending
+  allocate_payment:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: allocation
+        type: allocation
+        name: 核销-$input.sequence
+        properties:
+          amount: $input.amount
+          occurred_on: $input.occurred_on
+          sequence: $input.sequence
+          status: applied
+    - create_relation:
+        type: derives
+        from: $input.payment_id
+        to: $allocation
+        properties:
+          role: allocation
+    - create_relation:
+        type: references
+        from: $allocation
+        to: $input.target_id
+        properties:
+          role: allocated_target
+  settle_contract:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: settlement
+        type: settlement
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          category: $input.category
+          amount: $input.amount
+          occurred_on: $input.occurred_on
+          status: settled
+    - create_relation:
+        type: derives
+        from: $input.contract_id
+        to: $settlement
+        properties:
+          role: settlement
+    - update_object:
+        id: $input.contract_id
+        changes:
+          properties:
+            status: settled
+            valid_to: $input.occurred_on
+  issue_voucher:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: voucher
+        type: voucher
+        name: $input.reference_no
+        properties:
+          reference_no: $input.reference_no
+          occurred_on: $input.occurred_on
+          period: $input.period
+          amount: $input.amount
+          status: posted
+    - create_object:
+        ref: debit_line
+        type: voucher_line
+        name: $input.debit_account
+        properties:
+          sequence: 1
+          category: debit
+          amount: $input.amount
+          status: posted
+          details:
+            account: $input.debit_account
+    - create_object:
+        ref: credit_line
+        type: voucher_line
+        name: $input.credit_account
+        properties:
+          sequence: 2
+          category: credit
+          amount: $input.amount
+          status: posted
+          details:
+            account: $input.credit_account
+    - create_relation:
+        type: references
+        from: $voucher
+        to: $input.accounting_source
+        properties:
+          role: accounting_source
+    - create_relation:
+        type: contains
+        from: $voucher
+        to: $debit_line
+        properties:
+          role: entry
+    - create_relation:
+        type: contains
+        from: $voucher
+        to: $credit_line
+        properties:
+          role: entry

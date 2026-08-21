@@ -10,28 +10,32 @@ DOMAIN_ROOT = ROOT / "foxoms"
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "oag-agent"))
 
-from oag.ontology import load_domain  # noqa: E402
 from foxoms.business import audit_foxoms_records  # noqa: E402
 from foxoms.scripts.seed import build_graph, validate_graph  # noqa: E402
+from uom.loader import load_domain  # noqa: E402
+from uom.model import load_action_plans, workspace_model  # noqa: E402
 from uom.validation import load_yaml, validate_model  # noqa: E402
 
 
 class FoxOmsDomainModelTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.model = load_yaml(DOMAIN_ROOT / "model.yaml")
+        cls.public_model = load_yaml(DOMAIN_ROOT / "model.yaml")
+        cls.action_plans = load_action_plans(DOMAIN_ROOT)
+        cls.model = workspace_model(cls.public_model, cls.action_plans)
 
     def test_domain_is_loadable(self) -> None:
         ontology, _, registry = load_domain(DOMAIN_ROOT)
 
         self.assertEqual("FoxOMS", ontology.name)
-        self.assertTrue(registry.has("get_model_vocabulary"))
+        self.assertEqual("oag.ontology.v1", self.public_model["schema"])
+        self.assertEqual(set(self.public_model["objects"]), set(ontology.objects))
 
     def test_model_and_graph_are_valid(self) -> None:
         self.assertEqual([], validate_model(DOMAIN_ROOT).errors)
 
     def test_model_defines_party_and_opportunity_semantics(self) -> None:
-        model = load_yaml(DOMAIN_ROOT / "model.yaml")
+        model = self.model
 
         self.assertEqual(
             {

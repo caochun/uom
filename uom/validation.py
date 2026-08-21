@@ -14,19 +14,19 @@ from typing import Any
 
 import yaml
 
-from oag.ontology.schema import FunctionDef, Ontology
 from pydantic import ValidationError
 
-from uom.composition import (
-    compose_ontology_payload,
-    domain_function_implementations,
+from uom.model import (
+    load_action_plans,
+    load_public_ontology,
+    storage_contract_payload,
+    workspace_model,
 )
 
 
 TYPE_ID = re.compile(r"^[a-z][a-z0-9_]*$")
 INSTANCE_ID = re.compile(r"^[a-z][a-z0-9_:/.-]*$")
 VALUE_TYPES = {"string", "number", "date", "datetime", "period", "money", "boolean", "json"}
-CORE_ONTOLOGY_PATH = Path(__file__).with_name("ontology.yaml")
 
 
 @dataclass
@@ -88,6 +88,7 @@ class ModelValidator:
         self.domain_model = domain_model
         self.result = ValidationResult()
         self.object_definitions = self._mapping(ontology.get("objects"))
+        self.relation_definitions = self._mapping(ontology.get("relations"))
         model = self._mapping(domain_model)
         self.property_definitions = self._mapping(model.get("property_definitions"))
         self.object_type_definitions = self._mapping(model.get("object_types"))
@@ -199,8 +200,8 @@ class ModelValidator:
 
     def _validate_domain_model(self) -> None:
         model = self.domain_model or {}
-        if model.get("schema") != "uom.domain_model.v1":
-            self.result.error("model.schema", "must be uom.domain_model.v1")
+        if model.get("schema") != "uom.runtime_model.v1":
+            self.result.error("model.schema", "must be uom.runtime_model.v1")
         metadata = self._mapping(model.get("model"))
         if not metadata.get("name") or not metadata.get("version"):
             self.result.error("model.model", "must contain name and version")
@@ -262,7 +263,6 @@ class ModelValidator:
                 if kind == "relation" and "acyclic" in definition and not isinstance(definition["acyclic"], bool):
                     self.result.error(f"{path}.acyclic", "must be a boolean")
 
-        self._validate_runtime(model)
         self._validate_actions(model.get("actions"))
 
     def _validate_evolution_metadata(self, definition: dict[str, Any], path: str) -> None:
@@ -277,34 +277,6 @@ class ModelValidator:
             self.result.error(f"{path}.aliases", "must be a list of non-empty strings")
         elif len(set(aliases)) != len(aliases):
             self.result.error(f"{path}.aliases", "must not contain duplicates")
-
-    def _validate_runtime(self, model: dict[str, Any]) -> None:
-        try:
-            effective = compose_ontology_payload(self.ontology, model)
-            implementations = domain_function_implementations(model)
-            Ontology.model_validate(effective)
-        except (TypeError, ValueError, ValidationError) as exc:
-            self.result.error("model.runtime", str(exc))
-            return
-
-        functions = self._mapping(self._mapping(model.get("runtime")).get("functions"))
-        allowed = set(FunctionDef.model_fields) | {"implementation"}
-        for name, definition in functions.items():
-            path = f"model.runtime.functions.{name}"
-            self._validate_type_id(name, path)
-            if not isinstance(definition, dict):
-                continue
-            unknown = set(definition) - allowed
-            if unknown:
-                self.result.error(
-                    path,
-                    f"contains unknown fields: {', '.join(sorted(unknown))}",
-                )
-            if name not in implementations:
-                self.result.error(
-                    f"{path}.implementation",
-                    "must be module:function",
-                )
 
     def _validate_actions(self, actions: Any) -> None:
         if not isinstance(actions, dict):
@@ -665,8 +637,8 @@ class ModelValidator:
             )
 
     def _validate_ontology(self) -> None:
-        if self.ontology.get("schema") != "uom.ontology.v1":
-            self.result.error("ontology.schema", "must be uom.ontology.v1")
+        if self.ontology.get("schema") != "uom.storage_contract.v1":
+            self.result.error("ontology.schema", "must be uom.storage_contract.v1")
         if not self.ontology.get("name") or not self.ontology.get("description"):
             self.result.error("ontology", "must contain OAG name and description")
 
@@ -691,27 +663,34 @@ class ModelValidator:
                 "lifecycle": ("dict", False),
             },
         }
-        if set(self.object_definitions) != set(expected_objects):
-            self.result.error("ontology.objects", "must contain only Object and Relation")
+        if set(self.object_definitions) != {"Object"}:
+            self.result.error("ontology.objects", "must contain only Object")
+        if set(self.relation_definitions) != {"Relation"}:
+            self.result.error("ontology.relations", "must contain only Relation")
         for object_name, expected_properties in expected_objects.items():
-            definition = self._mapping(self.object_definitions.get(object_name))
-            path = f"ontology.objects.{object_name}"
+            namespace = "objects" if object_name == "Object" else "relations"
+            definitions = (
+                self.object_definitions
+                if object_name == "Object"
+                else self.relation_definitions
+            )
+            definition = self._mapping(definitions.get(object_name))
+            path = f"ontology.{namespace}.{object_name}"
             if not definition.get("display_name") or not definition.get("description"):
                 self.result.error(path, "must contain display_name and description")
             if definition.get("type_policy") != "open":
                 self.result.error(f"{path}.type_policy", "must be open")
-            source = self._mapping(definition.get("source"))
-            source_config = self._mapping(source.get("config"))
+            binding = self._mapping(definition.get("binding"))
+            binding_selector = self._mapping(binding.get("selector"))
             expected_kind = "object" if object_name == "Object" else "relation"
-            if (
-                source.get("type") != "uom_sqlite"
-                or source.get("id_field") != "id"
-                or source_config.get("database") != "data/graph.db"
-                or source_config.get("kind") != expected_kind
-            ):
+            binding_valid = (
+                binding.get("source") == "uom_graph"
+                and binding_selector.get("kind") == expected_kind
+            )
+            if not binding_valid:
                 self.result.error(
-                    f"{path}.source",
-                    "must declare the matching UOM SQLite adapter source",
+                    f"{path}.binding",
+                    "must declare a matching named graph binding",
                 )
             properties = self._mapping(definition.get("properties"))
             if set(properties) != set(expected_properties):
@@ -830,7 +809,12 @@ class ModelValidator:
             self.result.error(path, f"contains unknown fields: {', '.join(sorted(unknown))}")
 
     def _record_contract(self, object_name: str) -> dict[str, list[str]]:
-        definition = self._mapping(self.object_definitions.get(object_name))
+        definitions = (
+            self.object_definitions
+            if object_name == "Object"
+            else self.relation_definitions
+        )
+        definition = self._mapping(definitions.get(object_name))
         properties = self._mapping(definition.get("properties"))
         required = [
             name
@@ -1000,14 +984,23 @@ class ModelValidator:
 
 
 def validate_model(root: Path) -> ValidationResult:
-    model_path = root / "model.yaml"
+    result = ValidationResult()
     object_data, relation_data = load_data(root)
-    return ModelValidator(
-        load_yaml(CORE_ONTOLOGY_PATH),
+    try:
+        public_model, _ = load_public_ontology(root)
+        action_plans = load_action_plans(root)
+        editor_model = workspace_model(public_model, action_plans)
+    except (TypeError, ValueError, ValidationError) as exc:
+        result.error("model", str(exc))
+        return result
+    validated = ModelValidator(
+        storage_contract_payload(),
         object_data,
         relation_data,
-        load_yaml(model_path) if model_path.exists() else None,
+        editor_model,
     ).validate()
+    result.errors.extend(validated.errors)
+    return result
 
 
 def main(default_root: Path | None = None) -> int:

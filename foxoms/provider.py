@@ -20,15 +20,9 @@ class FoxOmsDomainProvider:
 
     def register(self, context: DomainContext) -> None:
         self.uom.register(context)
-        workspace = context.registry.get_resolver("uom_workspace")
+        workspace = context.registry.get_service("uom_workspace")
         actions = FoxOmsActionService(workspace)
-        context.registry.register_resolver("uom_actions", actions)
-        for name, handler in (
-            ("get_available_actions", actions.get_available_actions),
-            ("preview_action", actions.preview_action),
-            ("apply_action", actions.apply_action),
-        ):
-            context.registry.register(name, handler, context.ontology.functions[name])
+        context.registry.register_action_runtime(actions)
 
 
 def create_domain(domain_dir: str | Path) -> FoxOmsDomainProvider:

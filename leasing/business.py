@@ -1,27 +1,28 @@
-"""Deterministic financing lease queries over the OAG ObjectRepository."""
+"""Deterministic financing lease queries over the OAG ontology repository."""
 
 from __future__ import annotations
 
 from collections import Counter
 from typing import Any
 
-from oag.ontology.repository import ObjectRepository
+from oag.ontology.repository import OntologyRepository
 from uom.graph import trace_object
 
 
-def get_finance_overview(repository: ObjectRepository) -> dict[str, Any]:
-    objects = repository.query("Object")
-    relations = repository.query("Relation")
+def get_finance_overview(repository: OntologyRepository) -> dict[str, Any]:
+    objects = repository.query_all_objects()
+    relations = repository.query_all_relations()
     amounts: dict[str, float] = {}
     for item in objects:
-        value = (item.get("properties") or {}).get("amount")
+        value = item.get("amount")
         if isinstance(value, dict) and isinstance(value.get("amount"), (int, float)):
-            amounts[item.get("type", "unknown")] = amounts.get(item.get("type", "unknown"), 0) + value["amount"]
+            kind = item.get("_object_type", "unknown")
+            amounts[kind] = amounts.get(kind, 0) + value["amount"]
     consistency = audit_finance_consistency(repository)
     return {
         "counts": {"objects": len(objects), "relations": len(relations)},
-        "object_types": dict(Counter(item.get("type", "unknown") for item in objects)),
-        "relation_types": dict(Counter(item.get("type", "unknown") for item in relations)),
+        "object_types": dict(Counter(item.get("_object_type", "unknown") for item in objects)),
+        "relation_types": dict(Counter(item.get("_object_type", "unknown") for item in relations)),
         "amount_totals": amounts,
         "unallocated_payment_count": len(find_unallocated_payments(repository)),
         "consistency": consistency,
@@ -29,38 +30,38 @@ def get_finance_overview(repository: ObjectRepository) -> dict[str, Any]:
 
 
 def get_contract_trace(
-    repository: ObjectRepository,
+    repository: OntologyRepository,
     contract_id: str,
     depth: int = 5,
 ) -> dict[str, Any]:
-    contract = repository.query_by_id("Object", contract_id)
-    if not contract or contract.get("type") != "contract":
+    contract = repository.get_object_any(contract_id)
+    if not contract:
         raise ValueError(f"未找到融资租赁合同: {contract_id}")
     graph = trace_object(repository, contract_id, depth)
     grouped: dict[str, list[dict[str, Any]]] = {}
     for item in graph["objects"]:
-        grouped.setdefault(str(item.get("type", "unknown")), []).append(item)
+        grouped.setdefault(str(item.get("_object_type", "unknown")), []).append(item)
     return {"contract": contract, "facts_by_type": grouped, "relations": graph["relations"]}
 
 
-def find_unallocated_payments(repository: ObjectRepository) -> list[dict[str, Any]]:
-    objects = {item["id"]: item for item in repository.query("Object") if isinstance(item.get("id"), str)}
+def find_unallocated_payments(repository: OntologyRepository) -> list[dict[str, Any]]:
+    objects = {item["id"]: item for item in repository.query_all_objects() if isinstance(item.get("id"), str)}
     allocated: set[str] = set()
-    for relation in repository.query("Relation"):
+    for relation in repository.query_all_relations():
         source = objects.get(relation.get("from"), {})
         target = objects.get(relation.get("to"), {})
-        if relation.get("type") == "derives" and source.get("type") == "payment" and target.get("type") == "allocation":
+        if relation.get("_object_type") == "derives" and source.get("_object_type") == "payment" and target.get("_object_type") == "allocation":
             allocated.add(source["id"])
     return [
         item for item in objects.values()
-        if item.get("type") == "payment" and item.get("id") not in allocated
+        if item.get("_object_type") == "payment" and item.get("id") not in allocated
     ]
 
 
-def audit_finance_consistency(repository: ObjectRepository) -> dict[str, Any]:
+def audit_finance_consistency(repository: OntologyRepository) -> dict[str, Any]:
     return audit_finance_records(
-        repository.query("Object"),
-        repository.query("Relation"),
+        repository.query_all_objects(),
+        repository.query_all_relations(),
     )
 
 
@@ -68,6 +69,8 @@ def audit_finance_records(
     object_records: list[dict[str, Any]],
     relations: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    object_records = [_raw_record(item, "object") for item in object_records]
+    relations = [_raw_record(item, "relation") for item in relations]
     objects = {
         item["id"]: item
         for item in object_records
@@ -211,3 +214,18 @@ def _money(item: dict[str, Any]) -> tuple[float | None, str | None]:
     if not isinstance(value, dict) or isinstance(value.get("amount"), bool) or not isinstance(value.get("amount"), (int, float)):
         return None, None
     return float(value["amount"]), value.get("currency")
+
+
+def _raw_record(item: dict[str, Any], kind: str) -> dict[str, Any]:
+    """Normalize OAG's flattened semantic record for existing audits."""
+    if "_object_type" not in item:
+        return item
+    base = {"id", "name"} if kind == "object" else {"id", "from", "to"}
+    return {
+        **{key: value for key, value in item.items() if key in base},
+        "type": item["_object_type"],
+        "properties": {
+            key: value for key, value in item.items()
+            if key not in base and key != "_object_type"
+        },
+    }

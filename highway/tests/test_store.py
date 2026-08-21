@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "oag-agent"))
 sys.path.insert(0, str(ROOT))
 
-from oag.ontology.loader import load_domain  # noqa: E402
+from uom.loader import load_domain  # noqa: E402
 from uom.workspace import UomWorkspaceService  # noqa: E402
 
 
@@ -26,7 +26,8 @@ class UomWorkspaceServiceTest(unittest.TestCase):
             ignore=shutil.ignore_patterns("__pycache__", "*.db", "*.db-*"),
         )
         self.ontology, self.repository, self.registry = load_domain(self.domain_root)
-        self.store = UomWorkspaceService(self.domain_root, self.repository)
+        self.graph = self.registry.get_service("uom_graph")
+        self.store = UomWorkspaceService(self.domain_root, self.graph)
 
     def tearDown(self) -> None:
         self.repository.close()
@@ -34,20 +35,26 @@ class UomWorkspaceServiceTest(unittest.TestCase):
 
     def test_bootstrap_contains_model_and_usage(self) -> None:
         data = self.store.bootstrap()
-        self.assertEqual({"Object", "Relation"}, set(data["ontology"]["objects"]))
+        self.assertEqual("oag.ontology.v1", data["ontology"]["schema"])
+        self.assertIn("passage", data["ontology"]["objects"])
+        self.assertIn("derives", data["ontology"]["relations"])
         self.assertIn("passage", data["model"]["object_types"])
         self.assertIn("clearing_result", data["model"]["object_types"])
+        self.assertTrue(data["model"]["actions"])
+        self.assertTrue(all(
+            "handler" not in action and "effects" not in action
+            for action in data["model"]["actions"].values()
+        ))
+        self.assertIn("effects", self.store.load_model()["actions"]["register_party"])
         self.assertEqual(0, data["stats"]["object_count"])
         self.assertEqual(0, data["stats"]["relation_count"])
         self.assertNotIn("passage", data["model_usage"]["object"])
 
     def test_summary_bootstrap_and_paged_query(self) -> None:
-        self.repository.insert_record(
-            "Object",
+        self.graph.create_object(
             {"id": "note:page-1", "type": "note", "name": "第一页"},
         )
-        self.repository.insert_record(
-            "Object",
+        self.graph.create_object(
             {"id": "note:page-2", "type": "note", "name": "第二页"},
         )
         summary = self.store.bootstrap(include_graph=False)
@@ -81,11 +88,9 @@ class UomWorkspaceServiceTest(unittest.TestCase):
 
     def test_missing_database_is_initialized_empty(self) -> None:
         empty_database = self.domain_root / "data" / "empty.db"
-        for object_name in ("Object", "Relation"):
-            self.ontology.objects[object_name].source.config["database"] = "data/empty.db"
-        self.repository.close()
-        self.repository._adapters.clear()
-        empty_store = UomWorkspaceService(self.domain_root, self.repository)
+        from uom.sqlite_adapter import UomGraphAccess
+        empty_graph = UomGraphAccess(self.domain_root, "data/empty.db")
+        empty_store = UomWorkspaceService(self.domain_root, empty_graph)
 
         self.assertEqual([], empty_store.list_objects())
         self.assertEqual([], empty_store.list_relations())
@@ -93,8 +98,7 @@ class UomWorkspaceServiceTest(unittest.TestCase):
 
     def test_sqlite_queries_filter_sort_page_and_count_without_full_graph(self) -> None:
         for index, name in enumerate(("Bravo", "Alpha", "Charlie"), start=1):
-            self.repository.insert_record(
-                "Object",
+            self.graph.create_object(
                 {
                     "id": f"note:query-{index}",
                     "type": "note",
@@ -103,23 +107,19 @@ class UomWorkspaceServiceTest(unittest.TestCase):
                 },
             )
 
-        adapter = self.repository.adapter_for("Object")
-        page = adapter.query(
-            "Object",
+        page = self.graph.query_objects("Object",
             filters={"type": "note", "properties.sequence__gte": 2},
             order_by="name",
             limit=1,
             offset=1,
         )
         self.assertEqual(["note:query-3"], [item["id"] for item in page])
-        self.assertEqual(2, adapter.count(
-            "Object",
+        self.assertEqual(2, self.graph.count_objects("Object",
             filters={"type": "note", "properties.sequence__gte": 2},
         ))
         self.assertEqual(
             ["note:query-2"],
-            [item["id"] for item in adapter.query(
-                "Object",
+            [item["id"] for item in self.graph.query_objects("Object",
                 filters={"name__like": "lph"},
             )],
         )
@@ -207,8 +207,10 @@ class UomWorkspaceServiceTest(unittest.TestCase):
         self.assertTrue(any(item["id"] == "commission:2026-08" for item in self.store.list_objects()))
         self.assertEqual(["data/graph.db", "model.yaml"], result["changed_files"])
 
-        reopened_ontology, reopened_repository, _ = load_domain(self.domain_root)
-        reopened = UomWorkspaceService(self.domain_root, reopened_repository)
+        reopened_ontology, reopened_repository, reopened_registry = load_domain(self.domain_root)
+        reopened = UomWorkspaceService(
+            self.domain_root, reopened_registry.get_service("uom_graph"),
+        )
         self.assertTrue(any(item["id"] == "commission:2026-08" for item in reopened.list_objects()))
         self.assertEqual(self.ontology.name, reopened_ontology.name)
         reopened_repository.close()
@@ -278,17 +280,15 @@ class UomWorkspaceServiceTest(unittest.TestCase):
         self.assertTrue(self.store.preview_changes(operations)["valid"])
         self.store.apply_changes(operations)
         self.assertIsNotNone(
-            self.repository.query_by_id("Relation", "rel:declared-first")
+            self.graph.get_relation("Relation", "rel:declared-first")
         )
 
     def test_acyclic_relation_is_rechecked_inside_write_transaction(self) -> None:
         for record_id in ("bill:cycle-a", "bill:cycle-b"):
-            self.repository.insert_record(
-                "Object",
+            self.graph.create_object(
                 {"id": record_id, "type": "bill", "name": record_id},
             )
-        self.repository.insert_record(
-            "Relation",
+        self.graph.create_relation(
             {
                 "id": "rel:cycle-concurrent",
                 "type": "derives",
@@ -305,9 +305,8 @@ class UomWorkspaceServiceTest(unittest.TestCase):
                 "to": "bill:cycle-a",
             },
         }]
-        adapter = self.repository.adapter_for("Object")
         with self.assertRaisesRegex(ValueError, "不允许形成环"):
-            adapter.apply_changeset(
+            self.graph.apply_changeset(
                 operation,
                 acyclic_relation_types={"derives"},
             )
@@ -361,7 +360,7 @@ class UomWorkspaceServiceTest(unittest.TestCase):
             actor="tester",
             channel="test",
         )
-        created = self.repository.query_by_id("Object", "note:lifecycle")
+        created = self.graph.get_object("Object", "note:lifecycle")
         self.assertEqual(1, created["lifecycle"]["revision"])
         self.assertEqual(
             created["lifecycle"]["created_at"],
@@ -380,7 +379,7 @@ class UomWorkspaceServiceTest(unittest.TestCase):
             actor="tester",
             channel="test",
         )
-        updated = self.repository.query_by_id("Object", "note:lifecycle")
+        updated = self.graph.get_object("Object", "note:lifecycle")
         self.assertEqual(2, updated["lifecycle"]["revision"])
         self.assertEqual(created["lifecycle"]["created_at"], updated["lifecycle"]["created_at"])
 
@@ -421,13 +420,12 @@ class UomWorkspaceServiceTest(unittest.TestCase):
             "changes": {"name": "目标更新"},
         }]
         self.assertTrue(self.store.preview_changes(update)["valid"])
-        self.repository.update_record(
-            "Object", "note:unrelated", {"name": "无关并发更新"},
+        self.graph.update_object( "note:unrelated", {"name": "无关并发更新"},
         )
         self.store.apply_changes(update)
         self.assertEqual(
             "目标更新",
-            self.repository.query_by_id("Object", "note:read-set")["name"],
+            self.graph.get_object("Object", "note:read-set")["name"],
         )
 
         second_update = [{
@@ -436,8 +434,7 @@ class UomWorkspaceServiceTest(unittest.TestCase):
             "changes": {"name": "不应提交"},
         }]
         self.assertTrue(self.store.preview_changes(second_update)["valid"])
-        self.repository.update_record(
-            "Object", "note:read-set", {"name": "并发目标更新"},
+        self.graph.update_object( "note:read-set", {"name": "并发目标更新"},
         )
         with self.assertRaisesRegex(ValueError, "其他操作修改"):
             self.store.apply_changes(second_update)
@@ -453,7 +450,7 @@ class UomWorkspaceServiceTest(unittest.TestCase):
         retire = [{"action": "delete_object", "id": "note:retired"}]
         self.assertTrue(self.store.preview_changes(retire)["valid"])
         self.store.apply_changes(retire, reason="记录不再有效")
-        self.assertIsNone(self.repository.query_by_id("Object", "note:retired"))
+        self.assertIsNone(self.graph.get_object("Object", "note:retired"))
         self.assertFalse(any(item["id"] == "note:retired" for item in self.store.list_objects()))
 
         with closing(sqlite3.connect(self.store.database_path)) as connection:
@@ -570,8 +567,7 @@ class UomWorkspaceServiceTest(unittest.TestCase):
         self.assertTrue(any("已弃用属性" in error for error in deprecated_property["errors"]))
 
     def test_highway_overview_reports_incomplete_passages(self) -> None:
-        self.repository.insert_record(
-            "Object",
+        self.graph.create_object(
             {
                 "id": "passage:test",
                 "type": "passage",

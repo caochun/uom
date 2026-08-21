@@ -17,7 +17,10 @@ class MemoryRepository:
     def __init__(self, objects, relations):
         self.records = {"Object": objects, "Relation": relations}
 
-    def query(self, object_type):
+    def query_objects(self, object_type):
+        return self.records[object_type]
+
+    def query_relations(self, object_type):
         return self.records[object_type]
 
 

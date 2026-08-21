@@ -1,4 +1,4 @@
-"""SQLite data-source adapter for UOM ontology objects."""
+"""SQLite data-source adapter for the UOM object-relation graph."""
 
 from __future__ import annotations
 
@@ -12,7 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from oag.ontology.schema import ObjectSourceDef, Ontology
+from oag.ontology.schema import (
+    DataBindingDef,
+    DataSourceDef,
+    Ontology,
+)
 
 
 _DATABASE_SCHEMA_VERSION = "4"
@@ -25,45 +29,26 @@ def _write_lock_for(path: Path) -> threading.RLock:
         return _WRITE_LOCKS.setdefault(path, threading.RLock())
 
 
-class UomSqliteAdapter:
-    """Expose a UOM Object/Relation graph through the OAG adapter contract."""
+class UomSqliteGraphStore:
+    """SQLite property-graph store used by the UOM source adapter."""
 
     def __init__(
         self,
-        ontology: Ontology,
-        object_type: str,
-        source: ObjectSourceDef,
+        kind: str,
+        database: str | Path,
         domain_dir: Path,
     ) -> None:
-        self.ontology = ontology
-        self.object_type = object_type
-        self.source = source
-        self.domain_dir = domain_dir
-        self.kind = str(source.config.get("kind") or "").lower()
-        expected_kind = {"Object": "object", "Relation": "relation"}.get(object_type)
-        if self.kind not in {"object", "relation"} or self.kind != expected_kind:
-            raise ValueError(f"{object_type} 的 uom_sqlite source.config.kind 无效")
+        self.kind = str(kind).lower()
+        self.object_type = "Object" if self.kind == "object" else "Relation"
+        if self.kind not in {"object", "relation"}:
+            raise ValueError("kind 必须是 object 或 relation")
         self.table = "objects" if self.kind == "object" else "relations"
-        self.id_field = source.id_field or ontology.get_id_column(object_type)
-        self.database_path = self._database_path()
+        path = Path(str(database))
+        self.database_path = path.resolve() if path.is_absolute() else (domain_dir / path).resolve()
         self._write_lock = _write_lock_for(self.database_path)
         self._ensure_database()
 
-    @classmethod
-    def factory(cls, domain_dir: str | Path):
-        base_dir = Path(domain_dir).resolve()
-
-        def build(
-            ontology: Ontology,
-            object_type: str,
-            source: ObjectSourceDef,
-            **_: Any,
-        ) -> "UomSqliteAdapter":
-            return cls(ontology, object_type, source, base_dir)
-
-        return build
-
-    def query(
+    def query_records(
         self,
         object_type: str,
         filters: dict[str, Any] | None = None,
@@ -92,7 +77,7 @@ class UomSqliteAdapter:
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
-    def count(
+    def count_records(
         self,
         object_type: str,
         filters: dict[str, Any] | None = None,
@@ -106,7 +91,7 @@ class UomSqliteAdapter:
             ).fetchone()
         return int(row["total"] if row else 0)
 
-    def query_by_id(self, object_type: str, id_value: Any) -> dict[str, Any] | None:
+    def query_record_by_id(self, object_type: str, id_value: Any) -> dict[str, Any] | None:
         self._assert_object_type(object_type)
         with self._connect() as connection:
             row = connection.execute(
@@ -116,22 +101,30 @@ class UomSqliteAdapter:
             ).fetchone()
         return self._row_to_record(row) if row else None
 
-    def search_text(
+    def search_records(
         self,
         keyword: str,
         object_types: list[str] | None = None,
         limit: int = 20,
+        *,
+        record_type: str | None = None,
     ) -> list[dict[str, Any]]:
         if not keyword or (object_types and self.object_type not in object_types):
             return []
         needle = keyword.lower()
         results = []
+        where = "retired_at IS NULL"
+        parameters: list[Any] = []
+        if record_type:
+            where += " AND type = ?"
+            parameters.append(record_type)
+        parameters.extend((f"%{needle}%", max(1, min(int(limit) * 4, 5000))))
         with self._connect() as connection:
             rows = connection.execute(
                 f"SELECT payload, revision, created_at, updated_at, retired_at "
-                f"FROM {self.table} WHERE retired_at IS NULL AND "
+                f"FROM {self.table} WHERE {where} AND "
                 "lower(CAST(payload AS TEXT)) LIKE ? ORDER BY rowid LIMIT ?",
-                (f"%{needle}%", max(1, min(int(limit) * 4, 5000))),
+                parameters,
             ).fetchall()
         for raw_row in rows:
             row = self._row_to_record(raw_row)
@@ -150,7 +143,7 @@ class UomSqliteAdapter:
                 break
         return results
 
-    def insert_record(self, object_type: str, data: dict[str, Any]) -> dict[str, Any]:
+    def create_record(self, object_type: str, data: dict[str, Any]) -> dict[str, Any]:
         self._assert_object_type(object_type)
         record = deepcopy(data)
         with self._write_lock, self._connect() as connection:
@@ -193,7 +186,7 @@ class UomSqliteAdapter:
             connection.commit()
         return {"updated": 1}
 
-    def delete_record(self, object_type: str, id_value: Any) -> dict[str, Any]:
+    def retire_record(self, object_type: str, id_value: Any) -> dict[str, Any]:
         self._assert_object_type(object_type)
         with self._write_lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -216,13 +209,6 @@ class UomSqliteAdapter:
             connection.commit()
         return {"deleted": cursor.rowcount}
 
-    def table_count(self, object_type: str) -> int:
-        self._assert_object_type(object_type)
-        with self._connect() as connection:
-            return int(connection.execute(
-                f"SELECT COUNT(*) FROM {self.table} WHERE retired_at IS NULL"
-            ).fetchone()[0])
-
     def type_counts(self) -> dict[str, int]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -241,7 +227,7 @@ class UomSqliteAdapter:
                 (record_id,),
             ).fetchone() is not None
 
-    def get_revision(self, kind: str, record_id: str) -> dict[str, Any] | None:
+    def get_record_version(self, kind: str, record_id: str) -> dict[str, Any] | None:
         if kind not in {"object", "relation"}:
             raise ValueError("kind 必须是 object 或 relation")
         table = "objects" if kind == "object" else "relations"
@@ -439,17 +425,6 @@ class UomSqliteAdapter:
 
     def close(self) -> None:
         """Connections are scoped to individual operations."""
-
-    def _database_path(self) -> Path:
-        raw = (
-            self.source.config.get("database")
-            or self.source.config.get("db_path")
-            or self.source.config.get("path")
-        )
-        if not raw:
-            raise ValueError(f"{self.object_type} 的 uom_sqlite source 需要 config.database")
-        path = Path(str(raw))
-        return path.resolve() if path.is_absolute() else (self.domain_dir / path).resolve()
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -709,13 +684,13 @@ class UomSqliteAdapter:
         record: dict[str, Any],
     ) -> None:
         lifecycle = record.get("lifecycle") if isinstance(record.get("lifecycle"), dict) else {}
-        now = UomSqliteAdapter._now()
+        now = UomSqliteGraphStore._now()
         revision = int(lifecycle.get("revision") or 1)
         created_at = str(lifecycle.get("created_at") or now)
         updated_at = str(lifecycle.get("updated_at") or created_at)
         retired_at = lifecycle.get("retired_at")
-        payload = UomSqliteAdapter._encode_record(
-            UomSqliteAdapter._without_lifecycle(record)
+        payload = UomSqliteGraphStore._encode_record(
+            UomSqliteGraphStore._without_lifecycle(record)
         )
         if kind == "object":
             connection.execute(
@@ -748,8 +723,8 @@ class UomSqliteAdapter:
         updated_at: str,
         retired_at: str | None,
     ) -> None:
-        payload = UomSqliteAdapter._encode_record(
-            UomSqliteAdapter._without_lifecycle(record)
+        payload = UomSqliteGraphStore._encode_record(
+            UomSqliteGraphStore._without_lifecycle(record)
         )
         if kind == "object":
             connection.execute(
@@ -788,7 +763,7 @@ class UomSqliteAdapter:
                 entry["actor"],
                 entry["channel"],
                 entry["created_at"],
-                UomSqliteAdapter._encode_record(entry["payload"]),
+                UomSqliteGraphStore._encode_record(entry["payload"]),
             ),
         )
         changes = entry["payload"].get("changes", [])
@@ -810,8 +785,8 @@ class UomSqliteAdapter:
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     entry["id"], change_index, kind, record_id, operation,
-                    UomSqliteAdapter._encode_record(before) if before is not None else None,
-                    UomSqliteAdapter._encode_record(after) if after is not None else None,
+                    UomSqliteGraphStore._encode_record(before) if before is not None else None,
+                    UomSqliteGraphStore._encode_record(after) if after is not None else None,
                 ),
             )
 
@@ -970,3 +945,421 @@ class UomSqliteAdapter:
         field = order_by[1:] if descending else order_by
         direction = "DESC" if descending else "ASC"
         return f" ORDER BY {self._field_expression(field)} {direction}, rowid ASC"
+
+
+class UomSqliteGraphSource:
+    """Source-level OAG adapter for a pre-existing UOM SQLite property graph."""
+
+    def __init__(
+        self,
+        ontology: Ontology,
+        source_name: str,
+        source: DataSourceDef,
+        domain_dir: Path,
+    ) -> None:
+        config = deepcopy(source.config)
+        database = config.get("database") or config.get("db_path") or config.get("path")
+        if not database:
+            raise ValueError(f"数据源 {source_name} 缺少 config.database")
+        self._object_store = UomSqliteGraphStore("object", database, domain_dir)
+        self._relation_store = UomSqliteGraphStore("relation", database, domain_dir)
+        if self._object_store.database_path != self._relation_store.database_path:
+            raise ValueError("UOM Object 和 Relation 必须绑定到同一个图数据库")
+        self.location = self._object_store.database_path
+
+    @classmethod
+    def factory(cls, domain_dir: str | Path):
+        base_dir = Path(domain_dir).resolve()
+
+        def build(
+            ontology: Ontology,
+            source_name: str,
+            source: DataSourceDef,
+            **_: Any,
+        ) -> "UomSqliteGraphSource":
+            return cls(ontology, source_name, source, base_dir)
+
+        return build
+
+    def query_records(
+        self,
+        kind: str,
+        type_name: str,
+        binding: DataBindingDef,
+        filters: dict[str, Any] | None = None,
+        limit: int | None = None,
+        order_by: str | None = None,
+        offset: int | None = None,
+    ) -> list[dict[str, Any]]:
+        physical_type = self._physical_type(kind)
+        selector_type = self._selector_type(binding, kind)
+        rows = self._store(kind).query_records(
+            physical_type,
+            self._physical_filters(filters, selector_type),
+            limit,
+            self._physical_field(order_by),
+            offset,
+        )
+        return [self._to_logical(row, type_name, kind) for row in rows]
+
+    def count_records(
+        self,
+        kind: str,
+        type_name: str,
+        binding: DataBindingDef,
+        filters: dict[str, Any] | None = None,
+    ) -> int:
+        selector_type = self._selector_type(binding, kind)
+        return self._store(kind).count_records(
+            self._physical_type(kind),
+            self._physical_filters(filters, selector_type),
+        )
+
+    def query_record_by_id(
+        self,
+        kind: str,
+        type_name: str,
+        binding: DataBindingDef,
+        id_value: Any,
+    ) -> dict[str, Any] | None:
+        selector_type = self._selector_type(binding, kind)
+        row = self._store(kind).query_record_by_id(self._physical_type(kind), id_value)
+        if row is None or row.get("type") != selector_type:
+            return None
+        return self._to_logical(row, type_name, kind)
+
+    def query_relations(
+        self,
+        relation_type: str,
+        binding: DataBindingDef,
+        *,
+        filters: dict[str, Any] | None = None,
+        from_id: Any = None,
+        to_id: Any = None,
+        direction: str = "out",
+        limit: int | None = None,
+        order_by: str | None = None,
+        offset: int | None = None,
+    ) -> list[dict[str, Any]]:
+        selector_type = self._selector_type(binding, "relation")
+        physical_filters = self._physical_filters(filters, selector_type)
+        if direction == "both" and from_id is not None and to_id is None:
+            outgoing = self._relation_store.query_records(
+                "Relation", {**physical_filters, "from": from_id},
+                order_by=self._physical_field(order_by),
+            )
+            incoming = self._relation_store.query_records(
+                "Relation", {**physical_filters, "to": from_id},
+                order_by=self._physical_field(order_by),
+            )
+            rows = list({row["id"]: row for row in [*outgoing, *incoming]}.values())
+            start = max(0, int(offset or 0))
+            end = None if limit is None else start + max(0, int(limit))
+            return [self._to_logical(row, relation_type, "relation") for row in rows[start:end]]
+        endpoint_filters = physical_filters
+        if from_id is not None:
+            endpoint_filters["to" if direction == "in" else "from"] = from_id
+        if to_id is not None:
+            endpoint_filters["to"] = to_id
+        rows = self._relation_store.query_records(
+            "Relation", endpoint_filters, limit, self._physical_field(order_by), offset,
+        )
+        return [
+            self._to_logical(row, relation_type, "relation")
+            for row in rows
+        ]
+
+    def search_records(
+        self,
+        kind: str,
+        type_name: str,
+        binding: DataBindingDef,
+        keyword: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        selector_type = self._selector_type(binding, kind)
+        rows = self._store(kind).search_records(
+            keyword,
+            [self._physical_type(kind)],
+            limit,
+            record_type=selector_type,
+        )
+        return [
+            self._to_logical(row, type_name, kind)
+            for row in rows if row.get("type") == selector_type
+        ][:limit]
+
+    def create_record(
+        self, kind: str, type_name: str, binding: DataBindingDef, data: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._store(kind).create_record(
+            self._physical_type(kind),
+            self._to_physical(data, self._selector_type(binding, kind), kind),
+        )
+
+    def update_record(
+        self, kind: str, type_name: str, binding: DataBindingDef,
+        id_value: Any, data: dict[str, Any],
+    ) -> dict[str, Any]:
+        current = self._store(kind).query_record_by_id(self._physical_type(kind), id_value)
+        if current is None or current.get("type") != self._selector_type(binding, kind):
+            raise ValueError(f"未找到 {type_name}: {id_value}")
+        return self._store(kind).update_record(
+            self._physical_type(kind), id_value, self._logical_changes(data, kind),
+        )
+
+    def retire_record(
+        self, kind: str, type_name: str, binding: DataBindingDef, id_value: Any,
+    ) -> dict[str, Any]:
+        current = self._store(kind).query_record_by_id(self._physical_type(kind), id_value)
+        if current is None or current.get("type") != self._selector_type(binding, kind):
+            raise ValueError(f"未找到 {type_name}: {id_value}")
+        return self._store(kind).retire_record(self._physical_type(kind), id_value)
+
+    def query_by_ids(
+        self, kind: str, type_name: str, binding: DataBindingDef, ids,
+        *, include_retired: bool = False,
+    ) -> list[dict[str, Any]]:
+        selector_type = self._selector_type(binding, kind)
+        return [
+            self._to_logical(row, type_name, kind)
+            for row in self._store(kind).query_by_ids(ids, include_retired=include_retired)
+            if row.get("type") == selector_type
+        ]
+
+    def query_adjacent(
+        self, relation_type: str, binding: DataBindingDef, object_ids,
+        *, include_retired: bool = False,
+    ) -> list[dict[str, Any]]:
+        selector_type = self._selector_type(binding, "relation")
+        return [
+            self._to_logical(row, relation_type, "relation")
+            for row in self._relation_store.query_adjacent(object_ids, include_retired=include_retired)
+            if row.get("type") == selector_type
+        ]
+
+    def type_counts(
+        self, kind: str, type_name: str, binding: DataBindingDef,
+    ) -> dict[str, int]:
+        return {type_name: self.count_records(kind, type_name, binding)}
+
+    def record_exists(
+        self, kind: str, type_name: str, binding: DataBindingDef, record_id: str,
+    ) -> bool:
+        row = self._store(kind).query_record_by_id(self._physical_type(kind), record_id)
+        return bool(row and row.get("type") == self._selector_type(binding, kind))
+
+    def get_record_version(
+        self, kind: str, type_name: str, binding: DataBindingDef, record_id: str,
+    ) -> dict[str, Any] | None:
+        if not self.record_exists(kind, type_name, binding, record_id):
+            return None
+        return self._store(kind).get_record_version(kind, record_id)
+
+    def apply_changeset(
+        self,
+        operations: list[dict[str, Any]],
+        *,
+        object_binding: DataBindingDef,
+        relation_binding: DataBindingDef,
+        **kwargs: Any,
+    ) -> None:
+        self._assert_binding("object", object_binding)
+        self._assert_binding("relation", relation_binding)
+        self._object_store.apply_changeset(operations, **kwargs)
+
+    def replace_graph(self, objects, relations, **kwargs: Any) -> None:
+        self._object_store.replace_graph(objects, relations, **kwargs)
+
+    def list_action_log(self, limit: int = 100):
+        return self._object_store.list_action_log(limit)
+
+    def list_record_history(self, kind: str, record_id: str, limit: int = 100):
+        return self._object_store.list_record_history(kind, record_id, limit)
+
+    def close(self) -> None:
+        self._object_store.close()
+        self._relation_store.close()
+
+    def _store(self, kind: str) -> UomSqliteGraphStore:
+        if kind == "object":
+            return self._object_store
+        if kind == "relation":
+            return self._relation_store
+        raise ValueError("kind 必须是 object 或 relation")
+
+    @staticmethod
+    def _assert_binding(kind: str, binding: DataBindingDef) -> None:
+        selected_kind = str(binding.selector.get("kind") or kind)
+        if selected_kind != kind:
+            raise ValueError(f"binding selector.kind 应为 {kind}")
+
+    def _selector_type(self, binding: DataBindingDef, expected_kind: str) -> str:
+        self._assert_binding(expected_kind, binding)
+        value = binding.selector.get("type")
+        if not isinstance(value, str) or not value:
+            raise ValueError("UOM semantic binding requires selector.type")
+        return value
+
+    @staticmethod
+    def _physical_type(kind: str) -> str:
+        return "Object" if kind == "object" else "Relation"
+
+    @staticmethod
+    def _physical_field(field: str | None) -> str | None:
+        if not field:
+            return field
+        prefix = "-" if field.startswith("-") else ""
+        name = field[1:] if prefix else field
+        if name in {"id", "name", "from", "to", "revision", "created_at", "updated_at"}:
+            return field
+        return prefix + "properties." + name
+
+    @classmethod
+    def _physical_filters(
+        cls, filters: dict[str, Any] | None, selector_type: str,
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {"type": selector_type}
+        for field, value in (filters or {}).items():
+            name, suffix = field.rsplit("__", 1) if "__" in field else (field, "")
+            physical = name if name in {"id", "name", "from", "to"} else f"properties.{name}"
+            result[physical + (f"__{suffix}" if suffix else "")] = value
+        return result
+
+    @staticmethod
+    def _to_logical(record: dict[str, Any], type_name: str, kind: str) -> dict[str, Any]:
+        base_keys = ("id", "name") if kind == "object" else ("id", "from", "to")
+        result = {key: deepcopy(record.get(key)) for key in base_keys}
+        result.update(deepcopy(record.get("properties") or {}))
+        result["_object_type"] = type_name
+        for key in ("_matched_field",):
+            if key in record:
+                result[key] = record[key]
+        return result
+
+    @staticmethod
+    def _to_physical(data: dict[str, Any], selector_type: str, kind: str) -> dict[str, Any]:
+        base_keys = {"id", "name"} if kind == "object" else {"id", "from", "to"}
+        record = {key: deepcopy(value) for key, value in data.items() if key in base_keys}
+        record["type"] = selector_type
+        record["properties"] = {
+            key: deepcopy(value) for key, value in data.items()
+            if key not in base_keys and not key.startswith("_")
+        }
+        return record
+
+    @staticmethod
+    def _logical_changes(data: dict[str, Any], kind: str) -> dict[str, Any]:
+        base_keys = {"name"} if kind == "object" else set()
+        changes = {key: deepcopy(value) for key, value in data.items() if key in base_keys}
+        properties = {
+            key: deepcopy(value) for key, value in data.items()
+            if key not in base_keys and key not in {"id", "from", "to"} and not key.startswith("_")
+        }
+        if properties:
+            changes["properties"] = properties
+        return changes
+
+
+class UomGraphAccess:
+    """Internal raw graph access used by UOM ChangeSets and domain services."""
+
+    def __init__(self, domain_dir: str | Path, database: str | Path) -> None:
+        base = Path(domain_dir).resolve()
+        self._objects = UomSqliteGraphStore("object", database, base)
+        self._relations = UomSqliteGraphStore("relation", database, base)
+        self.database_path = self._objects.database_path
+
+    def query_objects(self, object_type: str = "Object", filters=None, limit=None,
+                      order_by=None, offset=None):
+        return self._objects.query_records(object_type, filters, limit, order_by, offset)
+
+    def query_relations(self, relation_type: str = "Relation", filters=None, *,
+                        from_id=None, to_id=None, direction="out", limit=None,
+                        order_by=None, offset=None):
+        endpoint_filters = dict(filters or {})
+        if direction == "both" and from_id is not None and to_id is None:
+            outgoing = self._relations.query_records(
+                relation_type, {**endpoint_filters, "from": from_id}, order_by=order_by,
+            )
+            incoming = self._relations.query_records(
+                relation_type, {**endpoint_filters, "to": from_id}, order_by=order_by,
+            )
+            rows = list({row["id"]: row for row in [*outgoing, *incoming]}.values())
+            start = max(0, int(offset or 0))
+            end = None if limit is None else start + max(0, int(limit))
+            return rows[start:end]
+        if from_id is not None:
+            endpoint_filters["to" if direction == "in" else "from"] = from_id
+        if to_id is not None:
+            endpoint_filters["to"] = to_id
+        return self._relations.query_records(
+            relation_type, endpoint_filters, limit, order_by, offset,
+        )
+
+    def count_objects(self, object_type: str = "Object", filters=None) -> int:
+        return self._objects.count_records(object_type, filters)
+
+    def count_relations(self, relation_type: str = "Relation", filters=None) -> int:
+        return self._relations.count_records(relation_type, filters)
+
+    def get_object(self, object_type: str, record_id: Any):
+        return self._objects.query_record_by_id(object_type, record_id)
+
+    def get_relation(self, relation_type: str, record_id: Any):
+        return self._relations.query_record_by_id(relation_type, record_id)
+
+    def create_object(self, record: dict[str, Any]) -> dict[str, Any]:
+        return self._objects.create_record("Object", record)
+
+    def update_object(self, record_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        return self._objects.update_record("Object", record_id, changes)
+
+    def retire_object(self, record_id: str) -> dict[str, Any]:
+        return self._objects.retire_record("Object", record_id)
+
+    def create_relation(self, record: dict[str, Any]) -> dict[str, Any]:
+        return self._relations.create_record("Relation", record)
+
+    def update_relation(self, record_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        return self._relations.update_record("Relation", record_id, changes)
+
+    def retire_relation(self, record_id: str) -> dict[str, Any]:
+        return self._relations.retire_record("Relation", record_id)
+
+    def query_by_ids(self, kind: str, type_name: str, ids, *, include_retired=False):
+        return self._store(kind).query_by_ids(ids, include_retired=include_retired)
+
+    def query_adjacent(self, relation_type: str, object_ids, *, include_retired=False):
+        return self._relations.query_adjacent(object_ids, include_retired=include_retired)
+
+    def type_counts(self, kind: str, type_name: str) -> dict[str, int]:
+        return self._store(kind).type_counts()
+
+    def record_exists(self, kind: str, type_name: str, record_id: str) -> bool:
+        return self._store(kind).record_exists(kind, record_id)
+
+    def get_record_version(self, kind: str, type_name: str, record_id: str):
+        return self._store(kind).get_record_version(kind, record_id)
+
+    def apply_changeset(self, operations, **kwargs) -> None:
+        self._objects.apply_changeset(operations, **kwargs)
+
+    def replace_graph(self, objects, relations, **kwargs) -> None:
+        self._objects.replace_graph(objects, relations, **kwargs)
+
+    def source_location(self, kind: str = "object", type_name: str = "Object") -> Path:
+        return self.database_path
+
+    def list_action_log(self, limit: int = 100):
+        return self._objects.list_action_log(limit)
+
+    def list_record_history(self, kind: str, record_id: str, limit: int = 100):
+        return self._objects.list_record_history(kind, record_id, limit)
+
+    def _store(self, kind: str) -> UomSqliteGraphStore:
+        if kind == "object":
+            return self._objects
+        if kind == "relation":
+            return self._relations
+        raise ValueError("kind 必须是 object 或 relation")

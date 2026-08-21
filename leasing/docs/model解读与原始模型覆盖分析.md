@@ -135,7 +135,7 @@ payment ->derives-> allocation ->references-> receivable / penalty
 ## 4. 业务操作模型
 
 对象和关系说明“业务世界中有什么”，Action 说明“用户可以做什么”。当前 13 个 Action 中，
-11 个声明了共 18 条 `requires` 前置条件；登记客户和发起审批没有前置业务状态要求。Action 清单是：
+11 个声明了共 18 条 `preconditions` 前置条件；登记客户和发起审批没有前置业务状态要求。Action 清单是：
 
 | Action | 业务含义 | 显式业务对象 |
 | --- | --- | --- |
@@ -156,7 +156,7 @@ payment ->derives-> allocation ->references-> receivable / penalty
 当前有 `subject_matter`、`guarantee`、`penalty`、`change_order` 和 `invoice` 等对象类型，但尚未为它们定义
 专门 Action。因此，这些概念已经可以被模型和图数据表达，但还不能都通过领域化业务表单完成。
 
-Action 的 Effects 使用三个与领域无关的最小写操作：
+私有 Action plan 的 `effects` 使用三个与领域无关的最小写操作：
 
 | Effect | 含义 | 当前用途 |
 | --- | --- | --- |
@@ -164,13 +164,14 @@ Action 的 Effects 使用三个与领域无关的最小写操作：
 | `create_relation` | 在两个对象之间建立有角色的业务联系 | 方案引用客户、合同派生放款、核销指向应收等 |
 | `update_object` | 更新已有对象的属性 | 推进审批、方案、合同、计划、收款和应收等业务状态 |
 
-`model.yaml` 只声明操作的输入、前置条件和基础 Effects。融资租赁领域处理器只保留确实属于领域的补充逻辑：
-审批决定追加历史、区分阶段与最终决定，以及在预览阶段执行资金一致性审计。
+公开的 `model.yaml` 声明操作输入、`preconditions` 和 `side_effects` 摘要，供 OAG、LLM 和前端理解；
+准确的 ChangeSet 模板位于私有 `action_plans.yaml`，不会进入 LLM 本体或前端 bootstrap。融资租赁领域处理器
+只保留确实属于领域的补充逻辑：审批决定追加历史、区分阶段与最终决定，以及在预览阶段执行资金一致性审计。
 
-### 4.1 用 `requires` 表达操作依赖图
+### 4.1 用 `preconditions` 表达操作依赖图
 
 一笔融资租赁业务不是唯一的线性工作流：放款和租金计划都可以依赖合同，收款又可能早于应收到账。
-因此 `model.yaml` 不使用“步骤 1、步骤 2”规定唯一顺序，而是为 Action 声明 `requires` 前置条件。
+因此 `model.yaml` 不使用“步骤 1、步骤 2”规定唯一顺序，而是为 Action 声明 `preconditions` 前置条件。
 所有 Action 的前置条件合起来形成一张操作依赖图。
 
 当前 DSL 支持两种最小条件：
@@ -183,7 +184,7 @@ Action 的 Effects 使用三个与领域无关的最小写操作：
 例如签约前的审批条件直接定义在 `sign_contract` 下：
 
 ```yaml
-requires:
+preconditions:
   - related_object:
       from_type: approval
       to: $input.lease_plan_id

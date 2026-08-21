@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "oag-agent"))
 
-from oag.ontology.loader import load_domain  # noqa: E402
+from uom.loader import load_domain  # noqa: E402
 from uom.workspace import ChangeValidationError  # noqa: E402
 
 
@@ -25,6 +25,8 @@ class LeasingOagIntegrationTest(unittest.TestCase):
             ignore=shutil.ignore_patterns("__pycache__", "*.db", "*.db-*"),
         )
         self.ontology, self.repository, self.registry = load_domain(self.domain_root)
+        self.actions = self.registry.get_action_runtime()
+        self.graph = self.registry.get_service("uom_graph")
 
     def tearDown(self) -> None:
         self.repository.close()
@@ -36,15 +38,13 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         inputs: dict,
         context_id: str = "",
     ) -> dict:
-        preview = self.registry.call(
-            "preview_action",
+        preview = self.actions.preview_action(
             action_id=action_id,
             inputs=inputs,
             context_id=context_id,
         )
         self.assertTrue(preview["valid"], preview["errors"])
-        applied = self.registry.call(
-            "apply_action",
+        applied = self.actions.execute_action(
             preview_token=preview["preview_token"],
             reason="端到端业务测试",
         )
@@ -60,13 +60,13 @@ class LeasingOagIntegrationTest(unittest.TestCase):
             and operation["record"]["type"] == object_type
         )
 
-    def test_provider_loads_effective_leasing_ontology(self) -> None:
+    def test_provider_loads_public_leasing_ontology(self) -> None:
         self.assertEqual("UOM 融资租赁领域模型", self.ontology.name)
         self.assertIn("get_contract_trace", self.ontology.functions)
         self.assertIn("audit_finance_consistency", self.ontology.functions)
         self.assertEqual(
             "LeasingActionService",
-            type(self.registry.get_resolver("uom_actions")).__name__,
+            type(self.actions).__name__,
         )
 
     def test_complete_business_actions_close_the_lifecycle(self) -> None:
@@ -84,7 +84,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
                 "properties": {"category": "risk", "status": "active"},
             },
         ):
-            self.repository.insert_record("Object", record)
+            self.graph.create_object( record)
 
         customer_preview = self.apply_business_action(
             "register_customer",
@@ -129,7 +129,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         approval_id = self.created_object_id(approval_preview, "approval")
         self.assertEqual(
             "pending_approval",
-            self.repository.query_by_id("Object", plan_id)["properties"]["status"],
+            self.graph.get_object("Object", plan_id)["properties"]["status"],
         )
 
         self.apply_business_action(
@@ -146,7 +146,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(
             "approved",
-            self.repository.query_by_id("Object", plan_id)["properties"]["status"],
+            self.graph.get_object("Object", plan_id)["properties"]["status"],
         )
 
         contract_preview = self.apply_business_action(
@@ -164,7 +164,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         contract_id = self.created_object_id(contract_preview, "contract")
         self.assertEqual(
             "contracted",
-            self.repository.query_by_id("Object", plan_id)["properties"]["status"],
+            self.graph.get_object("Object", plan_id)["properties"]["status"],
         )
 
         schedule_v1_preview = self.apply_business_action(
@@ -180,8 +180,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
             schedule_v1_preview, "schedule_version"
         )
         with self.assertRaisesRegex(ChangeValidationError, "被替代"):
-            self.registry.call(
-                "preview_action",
+            self.actions.preview_action(
                 action_id="create_schedule_version",
                 context_id=contract_id,
                 inputs={
@@ -205,7 +204,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(
             "inactive",
-            self.repository.query_by_id("Object", schedule_v1_id)["properties"]["status"],
+            self.graph.get_object("Object", schedule_v1_id)["properties"]["status"],
         )
 
         receivable_preview = self.apply_business_action(
@@ -244,11 +243,10 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(
             "partial",
-            self.repository.query_by_id("Object", payment_id)["properties"]["status"],
+            self.graph.get_object("Object", payment_id)["properties"]["status"],
         )
         with self.assertRaisesRegex(ChangeValidationError, "未结清应收"):
-            self.registry.call(
-                "preview_action",
+            self.actions.preview_action(
                 action_id="settle_contract",
                 context_id=contract_id,
                 inputs={
@@ -270,11 +268,11 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(
             "allocated",
-            self.repository.query_by_id("Object", payment_id)["properties"]["status"],
+            self.graph.get_object("Object", payment_id)["properties"]["status"],
         )
         self.assertEqual(
             "settled",
-            self.repository.query_by_id("Object", receivable_id)["properties"]["status"],
+            self.graph.get_object("Object", receivable_id)["properties"]["status"],
         )
 
         settlement_preview = self.apply_business_action(
@@ -290,11 +288,11 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         settlement_id = self.created_object_id(settlement_preview, "settlement")
         self.assertEqual(
             "settled",
-            self.repository.query_by_id("Object", contract_id)["properties"]["status"],
+            self.graph.get_object("Object", contract_id)["properties"]["status"],
         )
         self.assertEqual(
             "inactive",
-            self.repository.query_by_id("Object", schedule_v2_id)["properties"]["status"],
+            self.graph.get_object("Object", schedule_v2_id)["properties"]["status"],
         )
         audit = self.registry.call("audit_finance_consistency")
         self.assertTrue(audit["valid"], audit["errors"])
@@ -306,7 +304,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
             relation.get("type") == "references"
             and relation.get("to") == settlement_id
             and relation.get("properties", {}).get("role") == "source_settlement"
-            for relation in self.repository.query("Relation")
+            for relation in self.graph.query_relations()
         ))
 
     def test_rejected_plan_releases_reserved_credit(self) -> None:
@@ -357,7 +355,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
                 "properties": {"category": "risk", "status": "active"},
             },
         ):
-            self.repository.insert_record("Object", record)
+            self.graph.create_object( record)
         for relation in (
             {
                 "id": "rel:rejection-credit-customer",
@@ -395,7 +393,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
                 "properties": {"role": "source_plan"},
             },
         ):
-            self.repository.insert_record("Relation", relation)
+            self.graph.create_relation( relation)
 
         approval_preview = self.apply_business_action(
             "start_approval",
@@ -423,7 +421,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(
             "rejected",
-            self.repository.query_by_id("Object", "lease_plan:rejection")["properties"]["status"],
+            self.graph.get_object("Object", "lease_plan:rejection")["properties"]["status"],
         )
         audit = self.registry.call("audit_finance_consistency")
         self.assertTrue(audit["valid"], audit["errors"])
@@ -433,8 +431,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         )
 
     def test_customer_action_writes_through_uom_repository(self) -> None:
-        preview = self.registry.call(
-            "preview_action",
+        preview = self.actions.preview_action(
             action_id="register_customer",
             inputs={
                 "name": "测试承租人",
@@ -442,16 +439,15 @@ class LeasingOagIntegrationTest(unittest.TestCase):
             },
         )
         self.assertTrue(preview["valid"], preview["errors"])
-        applied = self.registry.call(
-            "apply_action",
+        applied = self.actions.execute_action(
             preview_token=preview["preview_token"],
             reason="领域集成测试",
         )
         self.assertTrue(applied["applied"])
-        self.assertEqual("测试承租人", self.repository.query("Object")[0]["name"])
+        self.assertEqual("测试承租人", self.graph.query_objects()[0]["name"])
 
     def test_approval_decision_updates_one_fact_and_unblocks_contract(self) -> None:
-        self.repository.insert_record("Object", {
+        self.graph.create_object( {
             "id": "lease_plan:approval-test",
             "type": "lease_plan",
             "name": "待审批方案",
@@ -462,39 +458,38 @@ class LeasingOagIntegrationTest(unittest.TestCase):
                 "status": "draft",
             },
         })
-        self.repository.insert_record("Object", {
+        self.graph.create_object( {
             "id": "customer:approval-test", "type": "customer", "name": "测试承租方",
             "properties": {"reference_no": "CUSTOMER-APPROVAL-TEST", "status": "active"},
         })
-        self.repository.insert_record("Object", {
+        self.graph.create_object( {
             "id": "credit:approval-test", "type": "credit", "name": "测试授信",
             "properties": {"code": "CREDIT-APPROVAL-TEST", "category": "finance_lease", "amount": {"amount": 100, "currency": "CNY"}, "status": "active"},
         })
-        self.repository.insert_record("Object", {
+        self.graph.create_object( {
             "id": "credit_entry:approval-test", "type": "credit_entry", "name": "测试额度预占",
             "properties": {"category": "reserve", "amount": {"amount": 100, "currency": "CNY"}, "occurred_on": "2026-08-13", "status": "posted"},
         })
-        self.repository.insert_record("Relation", {
+        self.graph.create_relation( {
             "id": "rel:credit-entry-approval-test", "type": "contains",
             "from": "credit:approval-test", "to": "credit_entry:approval-test", "properties": {"role": "credit_entry"},
         })
-        self.repository.insert_record("Relation", {
+        self.graph.create_relation( {
             "id": "rel:plan-credit-approval-test", "type": "references",
             "from": "lease_plan:approval-test", "to": "credit:approval-test", "properties": {"role": "reserved_credit"},
         })
-        self.repository.insert_record("Relation", {
+        self.graph.create_relation( {
             "id": "rel:plan-customer-approval-test", "type": "references",
             "from": "lease_plan:approval-test", "to": "customer:approval-test", "properties": {"role": "applicant"},
         })
-        self.repository.insert_record("Object", {
+        self.graph.create_object( {
             "id": "party:approver",
             "type": "party",
             "name": "风险审批人",
             "properties": {"category": "risk", "status": "active"},
         })
         with self.assertRaisesRegex(ChangeValidationError, "审批"):
-            self.registry.call(
-                "preview_action",
+            self.actions.preview_action(
                 action_id="sign_contract",
                 context_id="lease_plan:approval-test",
                 inputs={
@@ -507,8 +502,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
                 },
             )
 
-        approval = self.registry.call(
-            "preview_action",
+        approval = self.actions.preview_action(
             action_id="start_approval",
             context_id="lease_plan:approval-test",
             inputs={
@@ -520,16 +514,15 @@ class LeasingOagIntegrationTest(unittest.TestCase):
             },
         )
         self.assertTrue(approval["valid"], approval["errors"])
-        applied = self.registry.call("apply_action", preview_token=approval["preview_token"])
+        applied = self.actions.execute_action(preview_token=approval["preview_token"])
         self.assertTrue(applied["applied"])
         approval_id = next(item["record"]["id"] for item in approval["operations"] if item["action"] == "create_object")
         self.assertEqual(
             "pending_approval",
-            self.repository.query_by_id("Object", "lease_plan:approval-test")["properties"]["status"],
+            self.graph.get_object("Object", "lease_plan:approval-test")["properties"]["status"],
         )
 
-        decision = self.registry.call(
-            "preview_action",
+        decision = self.actions.preview_action(
             action_id="record_approval_decision",
             context_id=approval_id,
             inputs={
@@ -541,18 +534,17 @@ class LeasingOagIntegrationTest(unittest.TestCase):
             },
         )
         self.assertTrue(decision["valid"], decision["errors"])
-        self.registry.call("apply_action", preview_token=decision["preview_token"])
-        updated = self.repository.query_by_id("Object", approval_id)
+        self.actions.execute_action(preview_token=decision["preview_token"])
+        updated = self.graph.get_object("Object", approval_id)
         self.assertEqual("pending", updated["properties"]["status"])
         self.assertEqual("pending", updated["properties"]["details"]["result"]["decision"])
         self.assertEqual(1, len(updated["properties"]["details"]["history"]))
         self.assertEqual(
             "pending_approval",
-            self.repository.query_by_id("Object", "lease_plan:approval-test")["properties"]["status"],
+            self.graph.get_object("Object", "lease_plan:approval-test")["properties"]["status"],
         )
 
-        final_decision = self.registry.call(
-            "preview_action",
+        final_decision = self.actions.preview_action(
             action_id="record_approval_decision",
             context_id=approval_id,
             inputs={
@@ -565,18 +557,17 @@ class LeasingOagIntegrationTest(unittest.TestCase):
             },
         )
         self.assertTrue(final_decision["valid"], final_decision["errors"])
-        self.registry.call("apply_action", preview_token=final_decision["preview_token"])
-        updated = self.repository.query_by_id("Object", approval_id)
+        self.actions.execute_action(preview_token=final_decision["preview_token"])
+        updated = self.graph.get_object("Object", approval_id)
         self.assertEqual("approved", updated["properties"]["status"])
         self.assertEqual("approved", updated["properties"]["details"]["result"]["decision"])
         self.assertEqual(2, len(updated["properties"]["details"]["history"]))
         self.assertEqual(
             "approved",
-            self.repository.query_by_id("Object", "lease_plan:approval-test")["properties"]["status"],
+            self.graph.get_object("Object", "lease_plan:approval-test")["properties"]["status"],
         )
 
-        signed = self.registry.call(
-            "preview_action",
+        signed = self.actions.preview_action(
             action_id="sign_contract",
             context_id="lease_plan:approval-test",
             inputs={
@@ -589,13 +580,12 @@ class LeasingOagIntegrationTest(unittest.TestCase):
             },
         )
         self.assertTrue(signed["valid"], signed["errors"])
-        self.registry.call("apply_action", preview_token=signed["preview_token"])
+        self.actions.execute_action(preview_token=signed["preview_token"])
         self.assertEqual(
             "contracted",
-            self.repository.query_by_id("Object", "lease_plan:approval-test")["properties"]["status"],
+            self.graph.get_object("Object", "lease_plan:approval-test")["properties"]["status"],
         )
-        available = self.registry.call(
-            "get_available_actions",
+        available = self.actions.list_actions(
             context_id="lease_plan:approval-test",
         )
         sign_again = next(
@@ -615,9 +605,9 @@ class LeasingOagIntegrationTest(unittest.TestCase):
                 "properties": {"category": "business", "status": "active"},
             },
         ):
-            self.repository.insert_record("Object", record)
+            self.graph.create_object( record)
 
-        prepared = self.registry.get_resolver("uom_actions").prepare_action_form(
+        prepared = self.actions.prepare_action(
             "start_approval",
             context_id="lease_plan:explicit-review",
         )
@@ -626,8 +616,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
             prepared["initial_inputs"]["reviewed_object"],
         )
 
-        preview = self.registry.call(
-            "preview_action",
+        preview = self.actions.preview_action(
             action_id="start_approval",
             inputs={
                 "reviewed_object": "lease_plan:explicit-review",
@@ -648,17 +637,16 @@ class LeasingOagIntegrationTest(unittest.TestCase):
 
     def test_action_rejects_conflicting_ui_context_and_business_object(self) -> None:
         for plan_id in ("lease_plan:context-a", "lease_plan:context-b"):
-            self.repository.insert_record("Object", {
+            self.graph.create_object( {
                 "id": plan_id, "type": "lease_plan", "name": plan_id,
                 "properties": {"reference_no": plan_id, "amount": {"amount": 100, "currency": "CNY"}, "occurred_on": "2026-08-13", "status": "draft"},
             })
-        self.repository.insert_record("Object", {
+        self.graph.create_object( {
             "id": "party:context-test", "type": "party", "name": "提交人",
             "properties": {"category": "business", "status": "active"},
         })
         with self.assertRaisesRegex(ChangeValidationError, "与当前操作对象不一致"):
-            self.registry.call(
-                "preview_action",
+            self.actions.preview_action(
                 action_id="start_approval",
                 context_id="lease_plan:context-a",
                 inputs={
@@ -672,12 +660,11 @@ class LeasingOagIntegrationTest(unittest.TestCase):
             )
 
     def test_available_actions_explain_unsatisfied_preconditions(self) -> None:
-        self.repository.insert_record("Object", {
+        self.graph.create_object( {
             "id": "lease_plan:blocked-signing", "type": "lease_plan", "name": "未审批方案",
             "properties": {"reference_no": "PLAN-BLOCKED", "amount": {"amount": 100, "currency": "CNY"}, "occurred_on": "2026-08-13", "status": "draft"},
         })
-        available = self.registry.call(
-            "get_available_actions",
+        available = self.actions.list_actions(
             context_id="lease_plan:blocked-signing",
         )
         sign_contract = next(
@@ -704,9 +691,8 @@ class LeasingOagIntegrationTest(unittest.TestCase):
                 "properties": {"sequence": 1, "category": "rent", "amount": {"amount": 100, "currency": "CNY"}, "due_on": "2026-08-13", "status": "open"},
             },
         ):
-            self.repository.insert_record("Object", record)
-        preview = self.registry.call(
-            "preview_action",
+            self.graph.create_object( record)
+        preview = self.actions.preview_action(
             action_id="allocate_payment",
             context_id="payment:precondition-apply",
             inputs={
@@ -716,14 +702,13 @@ class LeasingOagIntegrationTest(unittest.TestCase):
                 "sequence": 1,
             },
         )
-        payment = self.repository.query_by_id("Object", "payment:precondition-apply")
-        self.repository.update_record(
-            "Object",
+        payment = self.graph.get_object("Object", "payment:precondition-apply")
+        self.graph.update_object(
             payment["id"],
             {"properties": {"status": "allocated"}},
         )
         with self.assertRaisesRegex(ChangeValidationError, "未核销或部分核销"):
-            self.registry.call("apply_action", preview_token=preview["preview_token"])
+            self.actions.execute_action(preview_token=preview["preview_token"])
 
     def test_penalty_can_be_a_payment_allocation_target(self) -> None:
         for record in (
@@ -736,9 +721,8 @@ class LeasingOagIntegrationTest(unittest.TestCase):
                 "properties": {"amount": {"amount": 20, "currency": "CNY"}, "occurred_on": "2026-08-13", "status": "open"},
             },
         ):
-            self.repository.insert_record("Object", record)
-        preview = self.registry.call(
-            "preview_action",
+            self.graph.create_object( record)
+        preview = self.actions.preview_action(
             action_id="allocate_payment",
             context_id="payment:penalty-test",
             inputs={"target_id": "penalty:test", "amount": {"amount": 20, "currency": "CNY"}, "occurred_on": "2026-08-13", "sequence": 1},
@@ -773,9 +757,8 @@ class LeasingOagIntegrationTest(unittest.TestCase):
                 },
             },
         ):
-            self.repository.insert_record("Object", record)
-        preview = self.registry.call(
-            "preview_action",
+            self.graph.create_object( record)
+        preview = self.actions.preview_action(
             action_id="allocate_payment",
             context_id="payment:test",
             inputs={
@@ -796,18 +779,17 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         ]
         self.assertEqual("allocation", object_operations[0]["record"]["type"])
         self.assertEqual(2, len(relation_operations))
-        self.registry.call("apply_action", preview_token=preview["preview_token"])
+        self.actions.execute_action(preview_token=preview["preview_token"])
         self.assertEqual(
             "partial",
-            self.repository.query_by_id("Object", "payment:test")["properties"]["status"],
+            self.graph.get_object("Object", "payment:test")["properties"]["status"],
         )
         self.assertEqual(
             "partial",
-            self.repository.query_by_id("Object", "receivable:test")["properties"]["status"],
+            self.graph.get_object("Object", "receivable:test")["properties"]["status"],
         )
 
-        final = self.registry.call(
-            "preview_action",
+        final = self.actions.preview_action(
             action_id="allocate_payment",
             context_id="payment:test",
             inputs={
@@ -818,18 +800,18 @@ class LeasingOagIntegrationTest(unittest.TestCase):
             },
         )
         self.assertTrue(final["valid"], final["errors"])
-        self.registry.call("apply_action", preview_token=final["preview_token"])
+        self.actions.execute_action(preview_token=final["preview_token"])
         self.assertEqual(
             "allocated",
-            self.repository.query_by_id("Object", "payment:test")["properties"]["status"],
+            self.graph.get_object("Object", "payment:test")["properties"]["status"],
         )
         self.assertEqual(
             "settled",
-            self.repository.query_by_id("Object", "receivable:test")["properties"]["status"],
+            self.graph.get_object("Object", "receivable:test")["properties"]["status"],
         )
 
     def test_voucher_action_generates_balanced_entries(self) -> None:
-        self.repository.insert_record("Object", {
+        self.graph.create_object( {
             "id": "contract:test",
             "type": "contract",
             "name": "测试合同",
@@ -840,8 +822,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
                 "status": "active",
             },
         })
-        preview = self.registry.call(
-            "preview_action",
+        preview = self.actions.preview_action(
             action_id="issue_voucher",
             context_id="contract:test",
             inputs={
@@ -889,9 +870,8 @@ class LeasingOagIntegrationTest(unittest.TestCase):
                 },
             },
         ):
-            self.repository.insert_record("Object", record)
-        preview = self.registry.call(
-            "preview_action",
+            self.graph.create_object( record)
+        preview = self.actions.preview_action(
             action_id="allocate_payment",
             context_id="payment:limit",
             inputs={

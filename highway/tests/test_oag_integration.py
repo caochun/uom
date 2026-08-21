@@ -13,10 +13,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "oag-agent"))
 sys.path.insert(0, str(ROOT))
 
-from oag.ontology.loader import load_domain  # noqa: E402
-from oag.tools.registry import ToolRegistry  # noqa: E402
-from highway.app.presentation_tools import register_presentation_tools  # noqa: E402
-from uom.workspace import UomWorkspaceService  # noqa: E402
+from uom.loader import load_domain  # noqa: E402
+from oag.ontology.schema import DataBindingDef  # noqa: E402
+from oag.harness import Harness  # noqa: E402
 
 
 class OagIntegrationTest(unittest.TestCase):
@@ -29,6 +28,9 @@ class OagIntegrationTest(unittest.TestCase):
             ignore=shutil.ignore_patterns("__pycache__", "*.db", "*.db-*"),
         )
         self.ontology, self.repository, self.registry = load_domain(self.domain_root)
+        self.actions = self.registry.get_action_runtime()
+        self.graph = self.registry.get_service("uom_graph")
+        self.workspace = self.registry.get_service("uom_workspace")
 
     def tearDown(self) -> None:
         self.repository.close()
@@ -70,9 +72,8 @@ class OagIntegrationTest(unittest.TestCase):
                 },
             },
         ):
-            self.repository.insert_record("Object", record)
-        self.repository.insert_record(
-            "Relation",
+            self.graph.create_object( record)
+        self.graph.create_relation(
             {
                 "id": "rel:test-passage-split",
                 "type": "derives",
@@ -80,8 +81,7 @@ class OagIntegrationTest(unittest.TestCase):
                 "to": "split:test",
             },
         )
-        self.repository.insert_record(
-            "Relation",
+        self.graph.create_relation(
             {
                 "id": "rel:test-split-clearing",
                 "type": "derives",
@@ -91,30 +91,25 @@ class OagIntegrationTest(unittest.TestCase):
         )
 
     def test_empty_sqlite_data_is_exposed_through_repository_adapters(self) -> None:
-        self.assertEqual([], self.repository.query("Object"))
-        self.assertEqual([], self.repository.query("Relation"))
-        self.assertEqual("uom_sqlite", self.ontology.objects["Object"].source.type)
-        self.assertEqual("uom_sqlite", self.ontology.objects["Relation"].source.type)
-        self.assertEqual(
-            "UomSqliteAdapter",
-            type(self.repository.adapter_for("Object")).__name__,
-        )
+        self.assertEqual([], self.repository.query_all_objects())
+        self.assertEqual([], self.repository.query_all_relations())
+        self.assertEqual("uom_graph", self.ontology.objects["passage"].binding.source)
+        self.assertEqual("passage", self.ontology.objects["passage"].binding.selector["type"])
+        self.assertEqual("uom_sqlite_graph", self.ontology.data_sources["uom_graph"].type)
 
-    def test_provider_builds_one_effective_ontology_for_the_runtime(self) -> None:
+    def test_provider_loads_the_public_oag_ontology(self) -> None:
         self.assertEqual("OMS 高速联网收费领域模型", self.ontology.name)
         self.assertIs(self.ontology, self.repository.ontology)
-        self.assertIn("trace_object", self.ontology.functions)
         self.assertIn("get_passage_trace", self.ontology.functions)
         instructions = self.ontology.interaction_policies["user_chat"].instructions
-        self.assertTrue(any("properties" in item for item in instructions))
         self.assertTrue(any("通行、收费和清分" in item for item in instructions))
-        self.assertIsNotNone(self.registry.get_resolver("uom_workspace"))
-        self.assertIsNotNone(self.registry.get_resolver("uom_actions"))
+        self.assertIsNotNone(self.registry.get_service("uom_workspace"))
+        self.assertIsNotNone(self.actions)
         self.assertEqual(
             "SpatialViewService",
-            type(self.registry.get_resolver("spatial_view")).__name__,
+            type(self.registry.get_service("spatial_view")).__name__,
         )
-        self.assertIsNone(self.registry.get_resolver("oms_actions"))
+        self.assertIsNone(self.registry.get_service("oms_actions"))
 
     def test_domain_functions_keep_graph_queries_outside_the_llm(self) -> None:
         self.seed_passage_example()
@@ -125,45 +120,65 @@ class OagIntegrationTest(unittest.TestCase):
         )
 
         self.assertEqual("passage:test", trace["passage"]["id"])
-        self.assertTrue(any(item["type"] == "derives" for item in trace["relations"]))
+        self.assertTrue(any(item["_object_type"] == "derives" for item in trace["relations"]))
         self.assertIn("mutate", self.ontology.excluded_tools)
 
     def test_repository_crud_is_persisted_in_sqlite(self) -> None:
-        self.repository.insert_record(
-            "Object",
-            {"id": "note:oag", "type": "note", "name": "OAG adapter 记录"},
+        self.repository.create_object("party",
+            {"id": "party:oag", "name": "OAG adapter 记录"},
         )
-        self.repository.insert_record(
-            "Object",
-            {"id": "context:oag", "type": "context", "name": "OAG 上下文"},
+        self.repository.create_object("passage",
+            {"id": "passage:oag", "name": "OAG 上下文"},
         )
-        self.repository.insert_record(
-            "Relation",
+        self.repository.create_relation("associates",
             {
                 "id": "rel:oag-context",
-                "type": "observed_by",
-                "from": "note:oag",
-                "to": "context:oag",
+                "from": "party:oag",
+                "to": "passage:oag",
             },
         )
 
-        record = self.repository.query_by_id("Object", "note:oag")
-        relation = self.repository.query_by_id("Relation", "rel:oag-context")
-        self.assertEqual("note", record["type"])
-        self.assertEqual("note:oag", relation["from"])
+        record = self.repository.get_object("party", "party:oag")
+        relation = self.repository.get_relation("associates", "rel:oag-context")
+        self.assertEqual("party", record["_object_type"])
+        self.assertEqual("party:oag", relation["from"])
+
+    def test_source_rejects_binding_with_the_wrong_record_kind(self) -> None:
+        source = self.repository._source_for("object", "party")
+        wrong_binding = DataBindingDef(
+            source="uom_graph",
+            selector={"kind": "relation", "type": "party"},
+        )
+
+        with self.assertRaisesRegex(ValueError, "selector.kind"):
+            source.query_records("object", "party", wrong_binding)
 
     def test_repository_search_returns_oag_result_metadata(self) -> None:
-        self.repository.insert_record(
-            "Object",
-            {"id": "party:search", "type": "party", "name": "检索客户"},
+        self.repository.create_object("party",
+            {"id": "party:search", "name": "检索客户"},
         )
-        results = self.repository.search_text("检索客户", ["Object"])
+        results = self.repository.search_text("检索客户", ["party"])
 
         self.assertTrue(results)
-        self.assertEqual("Object", results[0]["_object_type"])
+        self.assertEqual("party", results[0]["_object_type"])
         self.assertIn("name", results[0]["_matched_field"])
 
-    def test_changeset_functions_write_through_the_loaded_repository(self) -> None:
+    def test_repository_search_filters_physical_type_before_limit(self) -> None:
+        for index in range(5):
+            self.repository.create_object("passage", {
+                "id": f"passage:search-{index}",
+                "name": f"同一关键词通行 {index}",
+            })
+        self.repository.create_object("party", {
+            "id": "party:search-after-other-types",
+            "name": "同一关键词客户",
+        })
+
+        results = self.repository.search_text("同一关键词", ["party"], limit=1)
+
+        self.assertEqual(["party:search-after-other-types"], [row["id"] for row in results])
+
+    def test_workspace_changesets_write_through_the_loaded_repository(self) -> None:
         operations = [{
             "action": "create_object",
             "record": {
@@ -173,39 +188,36 @@ class OagIntegrationTest(unittest.TestCase):
             },
         }]
 
-        preview = self.registry.call("preview_changes", operations=operations)
-        applied = self.registry.call("apply_changes", operations=operations)
+        preview = self.workspace.preview_changes(operations)
+        applied = self.workspace.apply_changes(operations)
 
         self.assertTrue(preview["valid"])
         self.assertTrue(applied["applied"])
         self.assertEqual(
             "Repository ChangeSet 记录",
-            self.repository.query_by_id("Object", "note:changeset")["name"],
+            self.graph.get_object("Object", "note:changeset")["name"],
         )
 
     def test_business_action_functions_share_the_repository(self) -> None:
-        available = self.registry.call("get_available_actions")
+        available = self.actions.list_actions()
         self.assertTrue(any(item["id"] == "register_party" for item in available["actions"]))
 
-        preview = self.registry.call(
-            "preview_action",
+        preview = self.actions.preview_action(
             action_id="register_party",
             inputs={"name": "测试客户", "category": "issuer"},
         )
-        applied = self.registry.call(
-            "apply_action",
+        applied = self.actions.execute_action(
             preview_token=preview["preview_token"],
             reason="测试动作接口",
         )
         self.assertTrue(applied["applied"])
-        self.assertTrue(any(item["name"] == "测试客户" for item in self.repository.query("Object")))
+        self.assertTrue(any(item["name"] == "测试客户" for item in self.repository.query_objects("party")))
 
     def test_action_form_is_a_bound_presentation_tool(self) -> None:
-        workspace = UomWorkspaceService(self.domain_root, self.repository)
-        actions = self.registry.get_resolver("uom_actions")
-        harness = SimpleNamespace(tools=ToolRegistry())
-
-        register_presentation_tools(harness, self.ontology, workspace, actions)
+        harness = Harness(
+            self.ontology, self.repository, self.registry,
+            SimpleNamespace(), "test-model",
+        )
 
         tool = harness.tools.get("ui_open_action_form")
         self.assertIsNotNone(tool)
@@ -219,8 +231,9 @@ class OagIntegrationTest(unittest.TestCase):
             {"name": "济青高速", "code": "G35"},
             result["presentation"]["initial_inputs"],
         )
-        self.assertFalse(self.ontology.functions["preview_action"].user_visible)
-        self.assertFalse(self.ontology.functions["apply_action"].user_visible)
+        self.assertIn("register_toll_road", self.ontology.actions)
+        self.assertNotIn("preview_action", self.ontology.functions)
+        self.assertNotIn("apply_action", self.ontology.functions)
 
 
 if __name__ == "__main__":

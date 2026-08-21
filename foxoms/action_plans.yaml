@@ -1,0 +1,264 @@
+schema: uom.action_plans.v1
+actions:
+  register_party:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: party
+        type: party
+        name: $input.name
+        properties:
+          is_managed: $input.is_managed
+  register_personnel:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: personnel
+        type: personnel
+        name: $input.name
+  register_software_resource:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: software
+        type: software_resource
+        name: $input.name
+  register_hardware_resource:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: hardware
+        type: hardware_resource
+        name: $input.name
+  create_opportunity:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: opportunity
+        type: opportunity
+        name: $input.name
+    - create_relation:
+        type: participates_in
+        from: $input.operating_party_id
+        to: $opportunity
+        properties:
+          participation_role: operating_party
+    - create_relation:
+        type: participates_in
+        from: $input.potential_customer_id
+        to: $opportunity
+        properties:
+          participation_role: potential_customer
+  register_tender:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: tender
+        type: tender
+        name: $input.name
+    - create_relation:
+        type: contains
+        from: $input.opportunity_id
+        to: $tender
+    - create_relation:
+        type: participates_in
+        from: $input.tenderer_id
+        to: $tender
+        properties:
+          participation_role: tenderer
+    - create_relation:
+        type: participates_in
+        from: $input.tender_agent_id
+        to: $tender
+        properties:
+          participation_role: tender_agent
+  register_bid:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: bid
+        type: bid
+        name: $input.name
+    - create_relation:
+        type: contains
+        from: $input.tender_id
+        to: $bid
+    - create_relation:
+        type: participates_in
+        from: $input.lead_bidder_id
+        to: $bid
+        properties:
+          participation_role: lead_bidder
+  add_business_participant:
+    handler: changeset
+    effects:
+    - create_relation:
+        type: participates_in
+        from: $input.party_id
+        to: $input.business_object_id
+        properties:
+          participation_role: $input.participation_role
+  record_bid_result:
+    handler: changeset
+    effects:
+    - update_object:
+        id: $input.bid_id
+        changes:
+          properties:
+            bid_result: $input.bid_result
+  sign_framework_agreement:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: agreement
+        type: framework_agreement
+        name: $input.name
+    - create_relation:
+        type: derives
+        from: $input.bid_id
+        to: $agreement
+    - create_relation:
+        type: participates_in
+        from: $input.service_provider_id
+        to: $agreement
+        properties:
+          participation_role: service_provider
+    - create_relation:
+        type: participates_in
+        from: $input.customer_id
+        to: $agreement
+        properties:
+          participation_role: customer
+  issue_order:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: order
+        type: order
+        name: $input.name
+    - create_relation:
+        type: contains
+        from: $input.framework_agreement_id
+        to: $order
+  sign_project_contract:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: contract
+        type: contract
+        name: $input.name
+    - create_relation:
+        type: derives
+        from: $input.bid_id
+        to: $contract
+    - create_relation:
+        type: participates_in
+        from: $input.service_provider_id
+        to: $contract
+        properties:
+          participation_role: service_provider
+    - create_relation:
+        type: participates_in
+        from: $input.customer_id
+        to: $contract
+        properties:
+          participation_role: customer
+  define_work_item:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: work_item
+        type: work_item
+        name: $input.name
+    - create_relation:
+        type: contains
+        from: $input.contract_id
+        to: $work_item
+  allocate_personnel:
+    handler: changeset
+    effects:
+    - create_relation:
+        type: allocated_to
+        from: $input.resource_id
+        to: $input.target_id
+        properties:
+          quantity: $input.quantity
+          unit: $input.unit
+          start_date: $input.start_date
+          end_date: $input.end_date
+  allocate_software:
+    handler: changeset
+    effects:
+    - create_relation:
+        type: allocated_to
+        from: $input.resource_id
+        to: $input.target_id
+        properties:
+          quantity: $input.quantity
+          unit: $input.unit
+          start_date: $input.start_date
+          end_date: $input.end_date
+  allocate_hardware:
+    handler: changeset
+    effects:
+    - create_relation:
+        type: allocated_to
+        from: $input.resource_id
+        to: $input.target_id
+        properties:
+          quantity: $input.quantity
+          unit: $input.unit
+          start_date: $input.start_date
+          end_date: $input.end_date
+  register_intellectual_asset:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: intellectual_asset
+        type: intellectual_asset
+        name: $input.name
+    - create_relation:
+        type: involves_ip
+        from: $input.target_id
+        to: $intellectual_asset
+        properties:
+          ip_role: $input.ip_role
+  issue_invoice:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: invoice
+        type: invoice
+        name: $input.name
+        properties:
+          amount: $input.amount
+          issued_date: $input.issued_date
+    - create_relation:
+        type: contains
+        from: $input.parent_id
+        to: $invoice
+  record_receipt:
+    handler: changeset
+    effects:
+    - create_object:
+        ref: receipt
+        type: receipt
+        name: $input.name
+        properties:
+          amount: $input.amount
+          received_date: $input.received_date
+    - create_relation:
+        type: settles
+        from: $receipt
+        to: $input.invoice_id
+        properties:
+          settled_amount: $input.settled_amount
+  settle_receipt:
+    handler: changeset
+    effects:
+    - create_relation:
+        type: settles
+        from: $input.receipt_id
+        to: $input.invoice_id
+        properties:
+          settled_amount: $input.settled_amount

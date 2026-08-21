@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "oag-agent"))
 
 from foxoms.business import audit_foxoms_records  # noqa: E402
-from oag.ontology.loader import load_domain  # noqa: E402
+from uom.loader import load_domain  # noqa: E402
 from uom.workspace import ChangeValidationError  # noqa: E402
 
 
@@ -26,26 +26,26 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
             ignore=shutil.ignore_patterns("__pycache__", "*.db", "*.db-*"),
         )
         self.ontology, self.repository, self.registry = load_domain(self.domain_root)
+        self.actions = self.registry.get_action_runtime()
+        self.graph = self.registry.get_service("uom_graph")
 
     def tearDown(self) -> None:
         self.repository.close()
         self.temp_dir.cleanup()
 
-    def apply_action(
+    def execute_action(
         self,
         action_id: str,
         inputs: dict,
         context_id: str = "",
     ) -> dict:
-        preview = self.registry.call(
-            "preview_action",
+        preview = self.actions.preview_action(
             action_id=action_id,
             inputs=inputs,
             context_id=context_id,
         )
         self.assertTrue(preview["valid"], preview["errors"])
-        result = self.registry.call(
-            "apply_action",
+        result = self.actions.execute_action(
             preview_token=preview["preview_token"],
             reason="FoxOMS 领域集成测试",
         )
@@ -62,7 +62,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
         )
 
     def register_party(self, name: str, is_managed: bool) -> str:
-        preview = self.apply_action(
+        preview = self.execute_action(
             "register_party", {"name": name, "is_managed": is_managed}
         )
         return self.created_object_id(preview, "party")
@@ -71,7 +71,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
         self.assertEqual("FoxOMS", self.ontology.name)
         self.assertEqual(
             "FoxOmsActionService",
-            type(self.registry.get_resolver("uom_actions")).__name__,
+            type(self.actions).__name__,
         )
 
     def test_framework_business_path_and_open_opportunity(self) -> None:
@@ -79,7 +79,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
         customer_id = self.register_party("测试客户", False)
         agent_id = self.register_party("测试招标代理", False)
 
-        open_opportunity = self.apply_action(
+        open_opportunity = self.execute_action(
             "create_opportunity",
             {
                 "name": "暂未推进的商机",
@@ -89,7 +89,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
         )
         self.created_object_id(open_opportunity, "opportunity")
 
-        opportunity = self.apply_action(
+        opportunity = self.execute_action(
             "create_opportunity",
             {
                 "name": "进入招投标的商机",
@@ -98,7 +98,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
             },
         )
         opportunity_id = self.created_object_id(opportunity, "opportunity")
-        tender = self.apply_action(
+        tender = self.execute_action(
             "register_tender",
             {
                 "name": "测试招标事项",
@@ -108,7 +108,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
             opportunity_id,
         )
         tender_id = self.created_object_id(tender, "tender")
-        bid = self.apply_action(
+        bid = self.execute_action(
             "register_bid",
             {"name": "测试投标", "lead_bidder_id": provider_id},
             tender_id,
@@ -116,8 +116,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
         bid_id = self.created_object_id(bid, "bid")
 
         with self.assertRaisesRegex(ChangeValidationError, "只有中标"):
-            self.registry.call(
-                "preview_action",
+            self.actions.preview_action(
                 action_id="sign_framework_agreement",
                 context_id=bid_id,
                 inputs={
@@ -127,10 +126,10 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
                 },
             )
 
-        self.apply_action(
+        self.execute_action(
             "record_bid_result", {"bid_result": "awarded"}, bid_id
         )
-        agreement = self.apply_action(
+        agreement = self.execute_action(
             "sign_framework_agreement",
             {
                 "name": "测试框架协议",
@@ -142,8 +141,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
         agreement_id = self.created_object_id(agreement, "framework_agreement")
 
         with self.assertRaisesRegex(ChangeValidationError, "已经形成"):
-            self.registry.call(
-                "preview_action",
+            self.actions.preview_action(
                 action_id="sign_project_contract",
                 context_id=bid_id,
                 inputs={
@@ -153,13 +151,13 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
                 },
             )
 
-        order = self.apply_action(
+        order = self.execute_action(
             "issue_order", {"name": "测试订单"}, agreement_id
         )
         order_id = self.created_object_id(order, "order")
-        personnel = self.apply_action("register_personnel", {"name": "测试工程师"})
+        personnel = self.execute_action("register_personnel", {"name": "测试工程师"})
         personnel_id = self.created_object_id(personnel, "personnel")
-        self.apply_action(
+        self.execute_action(
             "allocate_personnel",
             {
                 "resource_id": personnel_id,
@@ -170,12 +168,12 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
             },
             order_id,
         )
-        self.apply_action(
+        self.execute_action(
             "register_intellectual_asset",
             {"name": "测试技术报告", "ip_role": "produced"},
             order_id,
         )
-        invoice = self.apply_action(
+        invoice = self.execute_action(
             "issue_invoice",
             {
                 "name": "测试发票",
@@ -185,7 +183,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
             order_id,
         )
         invoice_id = self.created_object_id(invoice, "invoice")
-        receipt = self.apply_action(
+        receipt = self.execute_action(
             "record_receipt",
             {
                 "name": "测试回款",
@@ -196,7 +194,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
             invoice_id,
         )
         receipt_id = self.created_object_id(receipt, "receipt")
-        self.apply_action(
+        self.execute_action(
             "settle_receipt",
             {
                 "invoice_id": invoice_id,
@@ -206,7 +204,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
         )
 
         audit = audit_foxoms_records(
-            self.repository.query("Object"), self.repository.query("Relation")
+            self.graph.query_objects(), self.graph.query_relations()
         )
         self.assertTrue(audit["valid"], audit["errors"])
         self.assertEqual(
@@ -216,7 +214,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
             100, audit["settled_by_invoice"][invoice_id]
         )
         self.assertGreaterEqual(
-            len(self.registry.get_resolver("uom_workspace").bootstrap()["recent_actions"]),
+            len(self.registry.get_service("uom_workspace").bootstrap()["recent_actions"]),
             15,
         )
 
@@ -224,8 +222,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
         managed_id = self.register_party("受管企业", True)
         external_id = self.register_party("外部企业", False)
         with self.assertRaisesRegex(ChangeValidationError, "经营方必须是受管"):
-            self.registry.call(
-                "preview_action",
+            self.actions.preview_action(
                 action_id="create_opportunity",
                 inputs={
                     "name": "无效商机",
@@ -234,7 +231,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
                 },
             )
 
-        opportunity = self.apply_action(
+        opportunity = self.execute_action(
             "create_opportunity",
             {
                 "name": "约束测试商机",
@@ -243,13 +240,13 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
             },
         )
         opportunity_id = self.created_object_id(opportunity, "opportunity")
-        tender = self.apply_action(
+        tender = self.execute_action(
             "register_tender",
             {"name": "约束测试招标", "tenderer_id": external_id},
             opportunity_id,
         )
         tender_id = self.created_object_id(tender, "tender")
-        bid = self.apply_action(
+        bid = self.execute_action(
             "register_bid",
             {"name": "约束测试投标", "lead_bidder_id": managed_id},
             tender_id,
@@ -257,16 +254,15 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
         bid_id = self.created_object_id(bid, "bid")
 
         with self.assertRaisesRegex(ChangeValidationError, "只能是 awarded"):
-            self.registry.call(
-                "preview_action",
+            self.actions.preview_action(
                 action_id="record_bid_result",
                 context_id=bid_id,
                 inputs={"bid_result": "unknown"},
             )
-        self.apply_action(
+        self.execute_action(
             "record_bid_result", {"bid_result": "not_awarded"}, bid_id
         )
-        available = self.registry.call("get_available_actions", context_id=bid_id)
+        available = self.actions.list_actions(context_id=bid_id)
         signing = {
             action["id"]: action
             for action in available["actions"]
@@ -285,11 +281,10 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
             "type": "personnel",
             "name": "投入约束测试人员",
         }
-        self.repository.insert_record("Object", work_target)
-        self.repository.insert_record("Object", resource)
+        self.graph.create_object( work_target)
+        self.graph.create_object( resource)
         with self.assertRaisesRegex(ChangeValidationError, "不能早于"):
-            self.registry.call(
-                "preview_action",
+            self.actions.preview_action(
                 action_id="allocate_personnel",
                 context_id=work_target["id"],
                 inputs={
@@ -305,7 +300,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
         provider_id = self.register_party("项目服务企业", True)
         customer_id = self.register_party("项目客户", False)
         partner_id = self.register_party("项目合作伙伴", False)
-        opportunity = self.apply_action(
+        opportunity = self.execute_action(
             "create_opportunity",
             {
                 "name": "项目合同路径商机",
@@ -314,26 +309,25 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
             },
         )
         opportunity_id = self.created_object_id(opportunity, "opportunity")
-        tender = self.apply_action(
+        tender = self.execute_action(
             "register_tender",
             {"name": "项目合同路径招标", "tenderer_id": customer_id},
             opportunity_id,
         )
         tender_id = self.created_object_id(tender, "tender")
-        bid = self.apply_action(
+        bid = self.execute_action(
             "register_bid",
             {"name": "项目合同路径投标", "lead_bidder_id": provider_id},
             tender_id,
         )
         bid_id = self.created_object_id(bid, "bid")
-        self.apply_action(
+        self.execute_action(
             "add_business_participant",
             {"party_id": partner_id, "participation_role": "technical_partner"},
             bid_id,
         )
         with self.assertRaisesRegex(ChangeValidationError, "相同角色"):
-            self.registry.call(
-                "preview_action",
+            self.actions.preview_action(
                 action_id="add_business_participant",
                 context_id=bid_id,
                 inputs={
@@ -341,10 +335,10 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
                     "participation_role": "technical_partner",
                 },
             )
-        self.apply_action(
+        self.execute_action(
             "record_bid_result", {"bid_result": "awarded"}, bid_id
         )
-        contract = self.apply_action(
+        contract = self.execute_action(
             "sign_project_contract",
             {
                 "name": "项目合同路径合同",
@@ -354,17 +348,17 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
             bid_id,
         )
         contract_id = self.created_object_id(contract, "contract")
-        work_item = self.apply_action(
+        work_item = self.execute_action(
             "define_work_item", {"name": "项目合同路径任务"}, contract_id
         )
         work_item_id = self.created_object_id(work_item, "work_item")
-        software = self.apply_action(
+        software = self.execute_action(
             "register_software_resource", {"name": "项目测试软件许可"}
         )
-        hardware = self.apply_action(
+        hardware = self.execute_action(
             "register_hardware_resource", {"name": "项目测试设备"}
         )
-        self.apply_action(
+        self.execute_action(
             "allocate_software",
             {
                 "resource_id": self.created_object_id(software, "software_resource"),
@@ -373,7 +367,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
             },
             work_item_id,
         )
-        self.apply_action(
+        self.execute_action(
             "allocate_hardware",
             {
                 "resource_id": self.created_object_id(hardware, "hardware_resource"),
@@ -383,7 +377,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
             work_item_id,
         )
         audit = audit_foxoms_records(
-            self.repository.query("Object"), self.repository.query("Relation")
+            self.graph.query_objects(), self.graph.query_relations()
         )
         self.assertTrue(audit["valid"], audit["errors"])
 

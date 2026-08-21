@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "oag-agent"))
 sys.path.insert(0, str(ROOT))
 
-from oag.ontology.loader import load_domain  # noqa: E402
+from uom.loader import load_domain  # noqa: E402
 from uom.actions import ModelActionService  # noqa: E402
 from uom.workspace import ChangeValidationError, UomWorkspaceService  # noqa: E402
 
@@ -25,8 +25,9 @@ class ModelActionServiceTest(unittest.TestCase):
             self.domain_root,
             ignore=shutil.ignore_patterns("__pycache__", "*.db", "*.db-*"),
         )
-        self.ontology, self.repository, _ = load_domain(self.domain_root)
-        self.workspace = UomWorkspaceService(self.domain_root, self.repository)
+        self.ontology, self.repository, self.registry = load_domain(self.domain_root)
+        self.graph = self.registry.get_service("uom_graph")
+        self.workspace = UomWorkspaceService(self.domain_root, self.graph)
         self.actions = ModelActionService(self.workspace)
 
     def tearDown(self) -> None:
@@ -34,10 +35,10 @@ class ModelActionServiceTest(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def insert_object(self, record: dict) -> None:
-        self.repository.insert_record("Object", record)
+        self.graph.create_object( record)
 
     def test_global_and_context_actions_are_selected_from_the_model(self) -> None:
-        global_ids = {item["id"] for item in self.actions.get_available_actions()["actions"]}
+        global_ids = {item["id"] for item in self.actions.list_actions()["actions"]}
         self.assertEqual(
             {
                 "register_party", "register_user", "register_toll_road",
@@ -46,6 +47,10 @@ class ModelActionServiceTest(unittest.TestCase):
             },
             global_ids,
         )
+        self.assertTrue(all(
+            "effects" not in item and "handler" not in item
+            for item in self.actions.list_actions()["actions"]
+        ))
 
         self.insert_object({
             "id": "road:test",
@@ -55,13 +60,13 @@ class ModelActionServiceTest(unittest.TestCase):
         })
         context_ids = {
             item["id"]
-            for item in self.actions.get_available_actions("road:test")["actions"]
+            for item in self.actions.list_actions("road:test")["actions"]
         }
         self.assertIn("register_section", context_ids)
         self.assertNotIn("record_etc_passage", context_ids)
 
     def test_action_form_accepts_partial_prefill_without_required_inputs(self) -> None:
-        prepared = self.actions.prepare_action_form(
+        prepared = self.actions.prepare_action(
             "register_toll_road",
             {"name": "济青高速"},
         )
@@ -72,9 +77,9 @@ class ModelActionServiceTest(unittest.TestCase):
 
     def test_action_form_rejects_unknown_or_invalid_prefill(self) -> None:
         with self.assertRaisesRegex(ChangeValidationError, "未定义的输入"):
-            self.actions.prepare_action_form("register_toll_road", {"unknown": "value"})
+            self.actions.prepare_action("register_toll_road", {"unknown": "value"})
         with self.assertRaisesRegex(ChangeValidationError, "必须是文本"):
-            self.actions.prepare_action_form("register_toll_road", {"code": 99})
+            self.actions.prepare_action("register_toll_road", {"code": 99})
 
     def test_register_road_and_section_compile_to_contains_graph(self) -> None:
         road = self.actions.preview_action(
@@ -83,7 +88,7 @@ class ModelActionServiceTest(unittest.TestCase):
         )
         self.assertTrue(road["valid"])
         self.assertEqual(1, len(road["operations"]))
-        self.actions.apply_action(road["preview_token"])
+        self.actions.execute_action(road["preview_token"])
         road_id = road["operations"][0]["record"]["id"]
 
         section = self.actions.preview_action(
@@ -175,7 +180,7 @@ class ModelActionServiceTest(unittest.TestCase):
         ]
         self.assertEqual(3, len(cpc_relations))
         self.assertNotIn("vehicle:test", {item["from"] for item in cpc_relations})
-        self.actions.apply_action(preview["preview_token"])
+        self.actions.execute_action(preview["preview_token"])
         self.assertEqual(
             1,
             len([item for item in self.workspace.list_objects() if item["type"] == "passage"]),

@@ -133,8 +133,8 @@ class SpatialViewService:
         }
 
     def get_view(self, object_id: str) -> dict[str, Any]:
-        objects = self.repository.query("Object")
-        relations = self.repository.query("Relation")
+        objects = self.repository.query_objects("Object")
+        relations = self.repository.query_relations("Relation")
         index = {item["id"]: item for item in objects}
         selected = index.get(object_id)
         if selected is None:

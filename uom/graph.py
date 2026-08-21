@@ -4,33 +4,25 @@ from __future__ import annotations
 
 from typing import Any
 
-from oag.ontology.repository import ObjectRepository
+from oag.ontology.repository import OntologyRepository
 
 
 def trace_object(
-    repository: ObjectRepository,
+    repository: OntologyRepository,
     object_id: str,
     depth: int = 2,
 ) -> dict[str, Any]:
-    root = repository.query_by_id("Object", object_id)
+    root = repository.get_object_any(object_id)
     if not root:
         raise ValueError(f"未知对象: {object_id}")
 
-    adapter_for = getattr(repository, "adapter_for", None)
-    relation_adapter = adapter_for("Relation") if callable(adapter_for) else None
-    object_adapter = adapter_for("Object") if callable(adapter_for) else None
     seen = {object_id}
     frontier = {object_id}
     matched_relations: list[dict[str, Any]] = []
     seen_relations: set[str] = set()
     for _ in range(max(0, min(depth, 5))):
         next_frontier: set[str] = set()
-        query_adjacent = getattr(relation_adapter, "query_adjacent", None)
-        relations = (
-            query_adjacent(frontier)
-            if callable(query_adjacent)
-            else repository.query("Relation")
-        )
+        relations = repository.query_all_relations()
         for relation in relations:
             source, target = relation.get("from"), relation.get("to")
             if source not in frontier and target not in frontier:
@@ -46,12 +38,7 @@ def trace_object(
         frontier = next_frontier
         if not frontier:
             break
-    query_by_ids = getattr(object_adapter, "query_by_ids", None)
-    object_rows = (
-        query_by_ids(seen)
-        if callable(query_by_ids)
-        else repository.query("Object")
-    )
+    object_rows = repository.query_all_objects()
     object_index = {
         item["id"]: item
         for item in object_rows

@@ -22,7 +22,7 @@ class MemoryRepository:
     def __init__(self, objects, relations):
         self.records = {"Object": objects, "Relation": relations}
 
-    def query(self, object_type, filters=None):
+    def query_objects(self, object_type, filters=None):
         records = self.records[object_type]
         if not filters:
             return records
@@ -31,11 +31,50 @@ class MemoryRepository:
             if all(item.get(key) == value for key, value in filters.items())
         ]
 
-    def query_by_id(self, object_type, record_id):
+    def get_object(self, object_type, record_id):
         return next(
             (item for item in self.records[object_type] if item.get("id") == record_id),
             None,
         )
+
+    def query_relations(self, relation_type, filters=None, **kwargs):
+        records = self.records[relation_type]
+        if not filters:
+            return records
+        return [item for item in records if all(item.get(key) == value for key, value in filters.items())]
+
+    def query_by_ids(self, kind, object_type, ids, **kwargs):
+        return [item for item in self.records[object_type] if item.get("id") in ids]
+
+    def query_adjacent(self, relation_type, object_ids, **kwargs):
+        return [
+            item for item in self.records[relation_type]
+            if item.get("from") in object_ids or item.get("to") in object_ids
+        ]
+
+    def query_all_objects(self):
+        return [
+            {
+                "id": item["id"], "name": item["name"],
+                **item.get("properties", {}), "_object_type": item["type"],
+            }
+            for item in self.records["Object"]
+        ]
+
+    def query_all_relations(self):
+        return [
+            {
+                "id": item["id"], "from": item["from"], "to": item["to"],
+                **item.get("properties", {}), "_object_type": item["type"],
+            }
+            for item in self.records["Relation"]
+        ]
+
+    def get_object_any(self, record_id):
+        item = self.get_object("Object", record_id)
+        if item is None:
+            return None
+        return {"id": item["id"], "name": item["name"], **item.get("properties", {}), "_object_type": item["type"]}
 
 
 class LeasingBusinessTest(unittest.TestCase):

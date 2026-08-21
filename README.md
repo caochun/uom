@@ -2,27 +2,32 @@
 
 本项目提供 UOM（Unified Ontology Modeling）运行时，以及基于它实现的高速联网收费、融资租赁和企业日常运营领域。
 
-UOM 只有两个固定本体概念：
+UOM 的持久化图只有两个固定元概念：
 
 ```text
 Object   可独立识别和追溯的业务对象
 Relation 两个 Object 之间有方向、可携带事实的业务关系
 ```
 
+领域 `model.yaml` 本身就是符合 OAG `Ontology` schema 的公开本体，OAG 直接加载其中的对象、关系、
+Function 和 Action 契约，不再经过 UOM 语义编译。例如 OAG 查询 `contract` 时，存储适配器把它映射到 SQLite 对象表中的
+`type=contract`，并将物理记录的 `properties` 展平成语义属性。Action 不是第三种图记录，
+而是创建或改变 Object/Relation 的有副作用业务操作。
+
 项目按职责分为三层：
 
 ```text
-oag-agent/  通用 Agent 运行时和 DomainProvider 协议
-uom/        Object / Relation、Action、ChangeSet、SQLite 和模型校验运行时
+oag-agent/  Object / Relation / Function / Action schema、Agent 和 Repository 运行时
+uom/        SQLite 图适配、Action 执行、ChangeSet、审计和模型编辑运行时
 highway/    高速领域模型、数据、函数、空间能力和 Web 应用
 leasing/    融资租赁模型、数据、Action、确定性函数、领域资料和 Web 应用
 foxoms/     企业日常运营模型、Mock 数据、Agent 和 Web 应用
 ```
 
-核心图语义由 [`uom/ontology.yaml`](uom/ontology.yaml) 定义。具体高速业务语义由
-[`highway/model.yaml`](highway/model.yaml) 中的 `type`、`properties`、关系、Action 和领域函数表达。
-`highway/provider.py` 复用 UOM provider 形成最终运行时 Ontology，并通过 `oag-agent` 的
-`DomainProvider` 协议加载。OAG 不关心本体是否经过组合。当前模型基于
+每个领域只用一个公开本体文件，例如 [`highway/model.yaml`](highway/model.yaml)，其中直接定义具体对象、
+关系、只读 Function、业务 Action 和 Agent 策略。Action 的公开契约包含输入、适用上下文、前置条件和
+副作用摘要；具体 ChangeSet 模板放在领域私有的 `action_plans.yaml`，不会进入 LLM 本体或浏览器 bootstrap。
+可选的 `provider.py` 只负责绑定 Python Function 实现和领域运行时服务。当前高速模型基于
 [`highway/docs/高速联网收费领域本体模型 V3.1.md`](highway/docs/高速联网收费领域本体模型%20V3.1.md) 做了面向 LLM 的抽象，
 没有把设备、名单和运行参数逐表展开。
 
@@ -81,8 +86,12 @@ journalctl --user -u highway-oms.service -f
 SQLite 事务中同时写入对象、关系和操作审计。模型扩展使用相同的预览/提交机制。
 
 ```text
-业务意图 -> Action 表单 -> preview -> 用户确认 -> apply -> highway/data/graph.db
+业务意图 -> Action 表单 -> preview_action -> 用户确认 -> execute_action -> data/graph.db
 ```
+
+OAG 中 `Function` 专指无领域副作用的查询、计算或校验能力；它始终按只读工具注册。
+UOM 内部的 Workspace 负责模型维护和 ChangeSet，ActionRuntime 负责业务 Action 生命周期，
+两者都不通过伪装成 Function 的方式向 LLM 暴露写操作。
 
 ### 对象和关系的变化
 

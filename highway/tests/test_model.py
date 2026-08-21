@@ -7,19 +7,25 @@ from pathlib import Path
 
 
 DOMAIN_ROOT = Path(__file__).resolve().parents[1]
-CORE_ONTOLOGY = DOMAIN_ROOT.parent / "uom" / "ontology.yaml"
 sys.path.insert(0, str(DOMAIN_ROOT / "scripts"))
 
+from uom.loader import load_domain  # noqa: E402
+from uom.model import (  # noqa: E402
+    load_action_plans,
+    storage_contract_payload,
+    workspace_model,
+)
 from uom.validation import ModelValidator, load_data, load_yaml, validate_model  # noqa: E402
-from uom.composition import compose_ontology_payload  # noqa: E402
 from seed_shandong import build_graph  # noqa: E402
 
 
 class UomDomainModelTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.ontology = load_yaml(CORE_ONTOLOGY)
-        cls.domain_model = load_yaml(DOMAIN_ROOT / "model.yaml")
+        cls.ontology = storage_contract_payload()
+        cls.public_model = load_yaml(DOMAIN_ROOT / "model.yaml")
+        cls.action_plans = load_action_plans(DOMAIN_ROOT)
+        cls.domain_model = workspace_model(cls.public_model, cls.action_plans)
         cls.current_objects, cls.current_relations = load_data(DOMAIN_ROOT)
 
     def setUp(self) -> None:
@@ -253,11 +259,12 @@ class UomDomainModelTest(unittest.TestCase):
         self.assertIsInstance(self.current_objects["objects"], list)
         self.assertIsInstance(self.current_relations["relations"], list)
 
-    def test_ontology_defines_only_object_and_relation(self) -> None:
-        self.assertEqual({"Object", "Relation"}, set(self.ontology["objects"]))
-        self.assertEqual("open", self.ontology["objects"]["Object"]["type_policy"])
-        self.assertNotIn("get_passage_trace", self.ontology["functions"])
-        self.assertNotIn("高速", CORE_ONTOLOGY.read_text(encoding="utf-8"))
+    def test_model_is_an_oag_native_ontology(self) -> None:
+        self.assertEqual("oag.ontology.v1", self.public_model["schema"])
+        self.assertEqual(42, len(self.public_model["objects"]))
+        self.assertEqual(5, len(self.public_model["relations"]))
+        self.assertIn("get_passage_trace", self.public_model["functions"])
+        self.assertFalse((DOMAIN_ROOT.parent / "uom" / "ontology.yaml").exists())
         self.assertFalse((DOMAIN_ROOT / "metamodel.yaml").exists())
 
     def test_v3_model_keeps_the_core_domains(self) -> None:
@@ -460,32 +467,24 @@ class UomDomainModelTest(unittest.TestCase):
         result = self.validate(model=invalid_model)
         self.assertTrue(any("only create_object and create_relation" in error for error in result.errors))
 
-    def test_runtime_functions_require_implementations_and_cannot_override_core(self) -> None:
-        missing_implementation = copy.deepcopy(self.domain_model)
-        del missing_implementation["runtime"]["functions"]["get_passage_trace"]["implementation"]
-        result = self.validate(model=missing_implementation)
-        self.assertTrue(any("implementation must be module:function" in error for error in result.errors))
+    def test_model_functions_are_oag_native_and_provider_bound(self) -> None:
+        definition = self.public_model["functions"]["get_passage_trace"]
+        self.assertNotIn("implementation", definition)
+        ontology, repository, registry = load_domain(DOMAIN_ROOT)
+        try:
+            self.assertEqual(set(ontology.functions), {
+                "get_business_overview",
+                "get_passage_trace",
+                "find_incomplete_passages",
+            })
+            self.assertTrue(all(registry.has(name) for name in ontology.functions))
+        finally:
+            repository.close()
 
-        override = copy.deepcopy(self.domain_model)
-        override["runtime"]["functions"]["trace_object"] = {
-            "summary": "非法覆盖核心函数",
-            "implementation": "highway.business:get_passage_trace",
-        }
-        result = self.validate(model=override)
-        self.assertTrue(any("cannot override core definitions" in error for error in result.errors))
-
-    def test_domain_policy_extends_without_disabling_the_core_policy(self) -> None:
-        domain_model = copy.deepcopy(self.domain_model)
-        domain_model["runtime"]["interaction_policies"]["user_chat"][
-            "include_in_system_prompt"
-        ] = False
-        effective = compose_ontology_payload(self.ontology, domain_model)
-        policy = effective["interaction_policies"]["user_chat"]
+    def test_domain_policy_is_defined_directly_in_the_oag_model(self) -> None:
+        policy = self.public_model["interaction_policies"]["user_chat"]
         self.assertTrue(policy["include_in_system_prompt"])
-        self.assertGreater(
-            len(policy["instructions"]),
-            len(self.ontology["interaction_policies"]["user_chat"]["instructions"]),
-        )
+        self.assertTrue(any("通行、收费和清分" in item for item in policy["instructions"]))
 
     def test_business_property_type_is_enforced(self) -> None:
         object_data = copy.deepcopy(self.objects)

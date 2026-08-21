@@ -8,27 +8,32 @@ from oag.ontology.domain import DomainContext
 from oag.ontology.schema import Ontology
 
 from leasing.actions import LeasingActionService
+from leasing.business import (
+    audit_finance_consistency,
+    find_unallocated_payments,
+    get_contract_trace,
+    get_finance_overview,
+)
 from uom.provider import UomDomainProvider
 
 
 class LeasingDomainProvider:
     def __init__(self, domain_dir: str | Path):
-        self.uom = UomDomainProvider(domain_dir)
+        self.uom = UomDomainProvider(domain_dir, function_handlers={
+            "get_finance_overview": get_finance_overview,
+            "get_contract_trace": get_contract_trace,
+            "find_unallocated_payments": find_unallocated_payments,
+            "audit_finance_consistency": audit_finance_consistency,
+        })
 
     def load_ontology(self) -> Ontology:
         return self.uom.load_ontology()
 
     def register(self, context: DomainContext) -> None:
         self.uom.register(context)
-        workspace = context.registry.get_resolver("uom_workspace")
+        workspace = context.registry.get_service("uom_workspace")
         actions = LeasingActionService(workspace)
-        context.registry.register_resolver("uom_actions", actions)
-        for name, handler in (
-            ("get_available_actions", actions.get_available_actions),
-            ("preview_action", actions.preview_action),
-            ("apply_action", actions.apply_action),
-        ):
-            context.registry.register(name, handler, context.ontology.functions[name])
+        context.registry.register_action_runtime(actions)
 
 
 def create_domain(domain_dir: str | Path) -> LeasingDomainProvider:
