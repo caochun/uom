@@ -1,2163 +1,595 @@
-schema: oag.ontology.v1
+schema: uom.domain.v1
 name: OMS 高速联网收费领域模型
 version: 3.4.0
 description: 面向高速联网收费业务追溯的精简对象关系模型。模型保留路网、车辆与通行介质、 通行交易、拆分清分、客服资金、费率和运行控制的核心语义。来源数据中的业务对象标识 通过关系表达，可沿关系推导的对象联系不重复保存，模型不复刻业务系统表结构。
-tool_preferences:
-  generic_search: fallback_only
-excluded_tools:
-- describe
-- mutate
-- summarize_progress
-- dispatch_workers
-data_sources:
-  uom_graph:
-    type: uom_sqlite_graph
+repositories:
+  graph:
+    type: sqlite_graph
     mode: writable
-    capabilities:
-    - object_query
-    - relation_query
-    - adjacency_query
-    - versioned_changeset
-    - history
     config:
       database: data/graph.db
+default_repository: graph
+properties:
+  category:
+    name: 类别
+    type: string
+    description: 同一对象类型下的业务分类，例如主体角色、设备种类或资金交易种类。
+  code:
+    name: 编码
+    type: string
+    description: 来源系统或行业规范中的稳定业务编码。
+  status:
+    name: 状态
+    type: string
+    description: 对象或关系当前所处的业务状态。
+  details:
+    name: 补充信息
+    type: json
+    description: 尚未稳定为公共属性的结构化业务事实。
+  reference_no:
+    name: 业务流水号
+    type: string
+    description: 通行、交易、拆分、账单或清分结果的来源流水号。
+  plate_no:
+    name: 车牌号
+    type: string
+    description: 车辆或牌识事实使用的车牌标识，展示时应按权限脱敏。
+  vehicle_type:
+    name: 车型
+    type: string
+    description: 车辆档案或识别事实中的车辆类型。
+  valid_from:
+    name: 生效日期
+    type: date
+    description: 规则、名单、介质或设施开始有效的日期。
+  valid_to:
+    name: 失效日期
+    type: date
+    description: 规则、名单、介质或设施结束有效的日期。
+  longitude:
+    name: 经度
+    type: number
+    description: 空间对象在所声明坐标系中的经度，取值范围为 -180 至 180。
+  latitude:
+    name: 纬度
+    type: number
+    description: 空间对象在所声明坐标系中的纬度，取值范围为 -90 至 90。
+  coordinate_system:
+    name: 坐标系
+    type: string
+    description: 经纬度采用的坐标系；高德地图坐标使用 GCJ-02。
+  mileage:
+    name: 里程
+    type: number
+    description: 路段、收费单元或路径的里程。
+  direction:
+    name: 方向
+    type: string
+    description: 上行、下行、入口或出口等业务方向。
+  channel:
+    name: 办理渠道
+    type: string
+    description: 网点、终端、线上或其他业务办理渠道。
+  mode:
+    name: 通行方式
+    type: string
+    description: ETC 或 MTC 通行收费方式；实际使用的 OBU、CPC 卡或纸券由关系表达。
+  stage:
+    name: 通行阶段
+    type: string
+    description: 入口、门架或出口等通行交易和牌识阶段。
+  occurred_at:
+    name: 发生时间
+    type: datetime
+    description: 交易、识别等时序事实实际发生的 ISO 日期时间。
+  transaction_type:
+    name: 交易类型
+    type: string
+    description: 正常、车队、闯关或其他交易业务类型。
+  charged_vehicle_type:
+    name: 计费车型
+    type: string
+    description: 某笔通行交易实际采用的联网收费车型，不由车辆档案值替代。
+  axle_count:
+    name: 计费轴数
+    type: number
+    description: 某笔通行交易实际采用的车辆轴数。
+  result:
+    name: 处理结果
+    type: string
+    description: 查验、计费、结算或对账形成的业务结论。
+  operation_channel:
+    name: 作业渠道
+    type: string
+    description: 车道终端、手持终端或其他完成交易的现场作业渠道。
+  receivable_amount:
+    name: 应收金额
+    type: money
+    description: 按计费规则计算的应收通行费。
+  discount_amount:
+    name: 优惠金额
+    type: money
+    description: 本次交易相对应收金额减免的金额。
+  paid_amount:
+    name: 实收金额
+    type: money
+    description: 本次交易实际收取或记账的金额。
+  payment_type:
+    name: 支付类型
+    type: string
+    description: ETC 记账、储值、现金、移动支付或其他支付方式。
+  fee_type:
+    name: 计费类型
+    type: string
+    description: 本次出口交易采用的计费业务口径。
+  multi_province:
+    name: 跨省交易
+    type: boolean
+    description: 本次通行交易是否涉及多个省份。
+  occurred_on:
+    name: 发生日期
+    type: date
+    description: 业务事实实际发生的日期。
+  original_amount:
+    name: 原金额
+    type: money
+    description: 调整、退补或二次计费前的原始金额。
+  amount:
+    name: 金额
+    type: money
+    description: 由数值和 ISO 币种组成的金额。
+  version:
+    name: 版本
+    type: string
+    description: 费率、名单或运行参数的业务版本。
+  period:
+    name: 业务期间
+    type: period
+    description: 汇总事实所属月份，格式为 YYYY-MM。
+  balance:
+    name: 余额
+    type: money
+    description: 资金账户或记账完成后的业务余额。
+  reason:
+    name: 原因
+    type: string
+    description: 调整、冲正、名单纳入或异常处理的业务原因。
+  quantity:
+    name: 数量
+    type: number
+    description: 库存或业务汇总中的数量。
+  role:
+    name: 关系角色
+    type: string
+    description: 关系端点在当前业务联系中承担的角色。
 objects:
   party:
-    display_name: 业务主体
-    summary: 参与联网收费运营的组织或人员；通过 category 区分收费公路业主、发行服务机构、 省联网中心、部联网中心、客服合作机构或操作员。ETC 开户客户单独使用 user 表达。
+    name: 业务主体
     description: 参与联网收费运营的组织或人员；通过 category 区分收费公路业主、发行服务机构、 省联网中心、部联网中心、客服合作机构或操作员。ETC 开户客户单独使用 user
       表达。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: party
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: false
-        display_name: 类别
-        description: 同一对象类型下的业务分类，例如主体角色、设备种类或资金交易种类。
-      code:
-        type: string
-        required: false
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      category: optional
+      code: optional
+      status: optional
+      details: optional
   user:
-    display_name: 客户
-    summary: ETC 发行服务中的开户客户，是户、车、卡、签关系的客户侧起点。
+    name: 客户
     description: ETC 发行服务中的开户客户，是户、车、卡、签关系的客户侧起点。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: user
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      status: optional
+      details: optional
   vehicle:
-    display_name: 车辆
-    summary: 高速公路通行和收费识别的核心业务主体。
+    name: 车辆
     description: 高速公路通行和收费识别的核心业务主体。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: vehicle
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      plate_no:
-        type: string
-        required: true
-        display_name: 车牌号
-        description: 车辆或牌识事实使用的车牌标识，展示时应按权限脱敏。
-      vehicle_type:
-        type: string
-        required: true
-        display_name: 车型
-        description: 车辆档案或识别事实中的车辆类型。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      plate_no: required
+      vehicle_type: required
+      status: optional
+      details: optional
   obu:
-    display_name: OBU 电子标签
-    summary: 安装在车辆上的 ETC 识别与交易认证设备，与车辆形成长期绑定关系。
+    name: OBU 电子标签
     description: 安装在车辆上的 ETC 识别与交易认证设备，与车辆形成长期绑定关系。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: obu
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: false
-        display_name: 类别
-        description: 同一对象类型下的业务分类，例如主体角色、设备种类或资金交易种类。
-      code:
-        type: string
-        required: true
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      valid_from:
-        type: date
-        required: false
-        display_name: 生效日期
-        description: 规则、名单、介质或设施开始有效的日期。
-      valid_to:
-        type: date
-        required: false
-        display_name: 失效日期
-        description: 规则、名单、介质或设施结束有效的日期。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      category: optional
+      code: required
+      status: optional
+      valid_from: optional
+      valid_to: optional
+      details: optional
   etc_card:
-    display_name: ETC 卡
-    summary: ETC 用户身份和支付凭证，与车辆及卡资金账户形成长期业务关系。
+    name: ETC 卡
     description: ETC 用户身份和支付凭证，与车辆及卡资金账户形成长期业务关系。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: etc_card
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: false
-        display_name: 类别
-        description: 同一对象类型下的业务分类，例如主体角色、设备种类或资金交易种类。
-      code:
-        type: string
-        required: true
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      valid_from:
-        type: date
-        required: false
-        display_name: 生效日期
-        description: 规则、名单、介质或设施开始有效的日期。
-      valid_to:
-        type: date
-        required: false
-        display_name: 失效日期
-        description: 规则、名单、介质或设施结束有效的日期。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      category: optional
+      code: required
+      status: optional
+      valid_from: optional
+      valid_to: optional
+      details: optional
   cpc_card:
-    display_name: CPC 卡
-    summary: MTC 车辆入口领取、出口交回的可重复使用通行介质，只与一次通行临时关联。
+    name: CPC 卡
     description: MTC 车辆入口领取、出口交回的可重复使用通行介质，只与一次通行临时关联。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: cpc_card
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      code:
-        type: string
-        required: true
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      valid_from:
-        type: date
-        required: false
-        display_name: 生效日期
-        description: 规则、名单、介质或设施开始有效的日期。
-      valid_to:
-        type: date
-        required: false
-        display_name: 失效日期
-        description: 规则、名单、介质或设施结束有效的日期。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      code: required
+      status: optional
+      valid_from: optional
+      valid_to: optional
+      details: optional
   paper_ticket:
-    display_name: 纸券
-    summary: 入口临时发放、出口凭券计费溯源的纸质通行凭证，只与一次通行临时关联。
+    name: 纸券
     description: 入口临时发放、出口凭券计费溯源的纸质通行凭证，只与一次通行临时关联。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: paper_ticket
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      code:
-        type: string
-        required: true
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      valid_from:
-        type: date
-        required: false
-        display_name: 生效日期
-        description: 规则、名单、介质或设施开始有效的日期。
-      valid_to:
-        type: date
-        required: false
-        display_name: 失效日期
-        description: 规则、名单、介质或设施结束有效的日期。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      code: required
+      status: optional
+      valid_from: optional
+      valid_to: optional
+      details: optional
   toll_road:
-    display_name: 收费公路
-    summary: 聚合收费路段并承载全路基本信息的顶层道路资源。
+    name: 收费公路
     description: 聚合收费路段并承载全路基本信息的顶层道路资源。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: toll_road
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      code:
-        type: string
-        required: true
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      longitude:
-        type: number
-        required: false
-        display_name: 经度
-        description: 空间对象在所声明坐标系中的经度，取值范围为 -180 至 180。
-      latitude:
-        type: number
-        required: false
-        display_name: 纬度
-        description: 空间对象在所声明坐标系中的纬度，取值范围为 -90 至 90。
-      coordinate_system:
-        type: string
-        required: false
-        display_name: 坐标系
-        description: 经纬度采用的坐标系；高德地图坐标使用 GCJ-02。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      code: required
+      longitude: optional
+      latitude: optional
+      coordinate_system: optional
+      status: optional
+      details: optional
   section:
-    display_name: 收费路段
-    summary: 具有统一经营管理主体和收费性质的连续路段区间。
+    name: 收费路段
     description: 具有统一经营管理主体和收费性质的连续路段区间。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: section
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      code:
-        type: string
-        required: true
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      mileage:
-        type: number
-        required: false
-        display_name: 里程
-        description: 路段、收费单元或路径的里程。
-      longitude:
-        type: number
-        required: false
-        display_name: 经度
-        description: 空间对象在所声明坐标系中的经度，取值范围为 -180 至 180。
-      latitude:
-        type: number
-        required: false
-        display_name: 纬度
-        description: 空间对象在所声明坐标系中的纬度，取值范围为 -90 至 90。
-      coordinate_system:
-        type: string
-        required: false
-        display_name: 坐标系
-        description: 经纬度采用的坐标系；高德地图坐标使用 GCJ-02。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      code: required
+      mileage: optional
+      longitude: optional
+      latitude: optional
+      coordinate_system: optional
+      status: optional
+      details: optional
   toll_interval:
-    display_name: 收费单元
-    summary: 按方向承载费率、执行分段计费和费用拆分的最小路网单元。
+    name: 收费单元
     description: 按方向承载费率、执行分段计费和费用拆分的最小路网单元。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: toll_interval
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      code:
-        type: string
-        required: true
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      direction:
-        type: string
-        required: false
-        display_name: 方向
-        description: 上行、下行、入口或出口等业务方向。
-      mileage:
-        type: number
-        required: false
-        display_name: 里程
-        description: 路段、收费单元或路径的里程。
-      longitude:
-        type: number
-        required: false
-        display_name: 经度
-        description: 空间对象在所声明坐标系中的经度，取值范围为 -180 至 180。
-      latitude:
-        type: number
-        required: false
-        display_name: 纬度
-        description: 空间对象在所声明坐标系中的纬度，取值范围为 -90 至 90。
-      coordinate_system:
-        type: string
-        required: false
-        display_name: 坐标系
-        description: 经纬度采用的坐标系；高德地图坐标使用 GCJ-02。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      code: required
+      direction: optional
+      mileage: optional
+      longitude: optional
+      latitude: optional
+      coordinate_system: optional
+      status: optional
+      details: optional
   toll_station:
-    display_name: 收费站
-    summary: 车辆进出收费公路并完成介质处理、交易和查验的服务节点。
+    name: 收费站
     description: 车辆进出收费公路并完成介质处理、交易和查验的服务节点。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: toll_station
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      code:
-        type: string
-        required: true
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      longitude:
-        type: number
-        required: false
-        display_name: 经度
-        description: 空间对象在所声明坐标系中的经度，取值范围为 -180 至 180。
-      latitude:
-        type: number
-        required: false
-        display_name: 纬度
-        description: 空间对象在所声明坐标系中的纬度，取值范围为 -90 至 90。
-      coordinate_system:
-        type: string
-        required: false
-        display_name: 坐标系
-        description: 经纬度采用的坐标系；高德地图坐标使用 GCJ-02。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      code: required
+      longitude: optional
+      latitude: optional
+      coordinate_system: optional
+      status: optional
+      details: optional
   toll_plaza:
-    display_name: 收费广场
-    summary: 收费站内连接道路与收费车道的车辆组织区域。
+    name: 收费广场
     description: 收费站内连接道路与收费车道的车辆组织区域。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: toll_plaza
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      code:
-        type: string
-        required: true
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      direction:
-        type: string
-        required: false
-        display_name: 方向
-        description: 上行、下行、入口或出口等业务方向。
-      longitude:
-        type: number
-        required: false
-        display_name: 经度
-        description: 空间对象在所声明坐标系中的经度，取值范围为 -180 至 180。
-      latitude:
-        type: number
-        required: false
-        display_name: 纬度
-        description: 空间对象在所声明坐标系中的纬度，取值范围为 -90 至 90。
-      coordinate_system:
-        type: string
-        required: false
-        display_name: 坐标系
-        description: 经纬度采用的坐标系；高德地图坐标使用 GCJ-02。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      code: required
+      direction: optional
+      longitude: optional
+      latitude: optional
+      coordinate_system: optional
+      status: optional
+      details: optional
   toll_lane:
-    display_name: 收费车道
-    summary: ETC、MTC、混合或自助收费交易的最终执行点。
+    name: 收费车道
     description: ETC、MTC、混合或自助收费交易的最终执行点。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: toll_lane
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      code:
-        type: string
-        required: true
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类，例如主体角色、设备种类或资金交易种类。
-      direction:
-        type: string
-        required: false
-        display_name: 方向
-        description: 上行、下行、入口或出口等业务方向。
-      longitude:
-        type: number
-        required: false
-        display_name: 经度
-        description: 空间对象在所声明坐标系中的经度，取值范围为 -180 至 180。
-      latitude:
-        type: number
-        required: false
-        display_name: 纬度
-        description: 空间对象在所声明坐标系中的纬度，取值范围为 -90 至 90。
-      coordinate_system:
-        type: string
-        required: false
-        display_name: 坐标系
-        description: 经纬度采用的坐标系；高德地图坐标使用 GCJ-02。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      code: required
+      category: required
+      direction: optional
+      longitude: optional
+      latitude: optional
+      coordinate_system: optional
+      status: optional
+      details: optional
   toll_gantry:
-    display_name: 收费门架
-    summary: 沿线执行分段计费、介质读写和车辆识别的门架系统。
+    name: 收费门架
     description: 沿线执行分段计费、介质读写和车辆识别的门架系统。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: toll_gantry
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      code:
-        type: string
-        required: true
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      direction:
-        type: string
-        required: false
-        display_name: 方向
-        description: 上行、下行、入口或出口等业务方向。
-      longitude:
-        type: number
-        required: false
-        display_name: 经度
-        description: 空间对象在所声明坐标系中的经度，取值范围为 -180 至 180。
-      latitude:
-        type: number
-        required: false
-        display_name: 纬度
-        description: 空间对象在所声明坐标系中的纬度，取值范围为 -90 至 90。
-      coordinate_system:
-        type: string
-        required: false
-        display_name: 坐标系
-        description: 经纬度采用的坐标系；高德地图坐标使用 GCJ-02。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      code: required
+      direction: optional
+      longitude: optional
+      latitude: optional
+      coordinate_system: optional
+      status: optional
+      details: optional
   service_facility:
-    display_name: 服务设施或渠道
-    summary: 发行服务和拓展支付的设施；通过 category 区分服务区、停车场、加油站、 站前预交易设施、营业网点、流动服务点、自助终端和线上渠道。
+    name: 服务设施或渠道
     description: 发行服务和拓展支付的设施；通过 category 区分服务区、停车场、加油站、 站前预交易设施、营业网点、流动服务点、自助终端和线上渠道。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: service_facility
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类，例如主体角色、设备种类或资金交易种类。
-      code:
-        type: string
-        required: false
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      channel:
-        type: string
-        required: false
-        display_name: 办理渠道
-        description: 网点、终端、线上或其他业务办理渠道。
-      longitude:
-        type: number
-        required: false
-        display_name: 经度
-        description: 空间对象在所声明坐标系中的经度，取值范围为 -180 至 180。
-      latitude:
-        type: number
-        required: false
-        display_name: 纬度
-        description: 空间对象在所声明坐标系中的纬度，取值范围为 -90 至 90。
-      coordinate_system:
-        type: string
-        required: false
-        display_name: 坐标系
-        description: 经纬度采用的坐标系；高德地图坐标使用 GCJ-02。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      category: required
+      code: optional
+      channel: optional
+      longitude: optional
+      latitude: optional
+      coordinate_system: optional
+      status: optional
+      details: optional
   business_device:
-    display_name: 业务设备
-    summary: 部署于中心、收费站、车道或门架的设备；设备类别、技术参数和运行信息保存在 category 与 details 中，不为每种硬件建立独立对象类型。
+    name: 业务设备
     description: 部署于中心、收费站、车道或门架的设备；设备类别、技术参数和运行信息保存在 category 与 details 中，不为每种硬件建立独立对象类型。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: business_device
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类，例如主体角色、设备种类或资金交易种类。
-      code:
-        type: string
-        required: true
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      longitude:
-        type: number
-        required: false
-        display_name: 经度
-        description: 空间对象在所声明坐标系中的经度，取值范围为 -180 至 180。
-      latitude:
-        type: number
-        required: false
-        display_name: 纬度
-        description: 空间对象在所声明坐标系中的纬度，取值范围为 -90 至 90。
-      coordinate_system:
-        type: string
-        required: false
-        display_name: 坐标系
-        description: 经纬度采用的坐标系；高德地图坐标使用 GCJ-02。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      category: required
+      code: required
+      longitude: optional
+      latitude: optional
+      coordinate_system: optional
+      status: optional
+      details: optional
   passage:
-    display_name: 通行记录
-    summary: 一次车辆通行过程的追溯起点，关联车辆、实际使用的介质以及入口、门架和出口事实； 通行时间、位置、车型和金额从所关联的事实中取得，不在此重复保存。
+    name: 通行记录
     description: 一次车辆通行过程的追溯起点，关联车辆、实际使用的介质以及入口、门架和出口事实； 通行时间、位置、车型和金额从所关联的事实中取得，不在此重复保存。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: passage
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      mode:
-        type: string
-        required: true
-        display_name: 通行方式
-        description: ETC 或 MTC 通行收费方式；实际使用的 OBU、CPC 卡或纸券由关系表达。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      mode: required
+      status: optional
+      details: optional
   toll_transaction:
-    display_name: 通行交易记录
-    summary: 入口、门架或出口产生的交易事实。交易通过关系归属于一次通行并指向实际车道或门架； 车辆、介质、收费站等可由该关系链推导，不作为交易属性或重复关系保存。
+    name: 通行交易记录
     description: 入口、门架或出口产生的交易事实。交易通过关系归属于一次通行并指向实际车道或门架； 车辆、介质、收费站等可由该关系链推导，不作为交易属性或重复关系保存。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: toll_transaction
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      stage:
-        type: string
-        required: true
-        display_name: 通行阶段
-        description: 入口、门架或出口等通行交易和牌识阶段。
-      occurred_at:
-        type: datetime
-        required: true
-        display_name: 发生时间
-        description: 交易、识别等时序事实实际发生的 ISO 日期时间。
-      transaction_type:
-        type: string
-        required: false
-        display_name: 交易类型
-        description: 正常、车队、闯关或其他交易业务类型。
-      charged_vehicle_type:
-        type: string
-        required: false
-        display_name: 计费车型
-        description: 某笔通行交易实际采用的联网收费车型，不由车辆档案值替代。
-      axle_count:
-        type: number
-        required: false
-        display_name: 计费轴数
-        description: 某笔通行交易实际采用的车辆轴数。
-      result:
-        type: string
-        required: false
-        display_name: 处理结果
-        description: 查验、计费、结算或对账形成的业务结论。
-      operation_channel:
-        type: string
-        required: false
-        display_name: 作业渠道
-        description: 车道终端、手持终端或其他完成交易的现场作业渠道。
-      receivable_amount:
-        type: money
-        required: false
-        display_name: 应收金额
-        description: 按计费规则计算的应收通行费。
-      discount_amount:
-        type: money
-        required: false
-        display_name: 优惠金额
-        description: 本次交易相对应收金额减免的金额。
-      paid_amount:
-        type: money
-        required: false
-        display_name: 实收金额
-        description: 本次交易实际收取或记账的金额。
-      payment_type:
-        type: string
-        required: false
-        display_name: 支付类型
-        description: ETC 记账、储值、现金、移动支付或其他支付方式。
-      fee_type:
-        type: string
-        required: false
-        display_name: 计费类型
-        description: 本次出口交易采用的计费业务口径。
-      multi_province:
-        type: boolean
-        required: false
-        display_name: 跨省交易
-        description: 本次通行交易是否涉及多个省份。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      stage: required
+      occurred_at: required
+      transaction_type: optional
+      charged_vehicle_type: optional
+      axle_count: optional
+      result: optional
+      operation_channel: optional
+      receivable_amount: optional
+      discount_amount: optional
+      paid_amount: optional
+      payment_type: optional
+      fee_type: optional
+      multi_province: optional
+      status: optional
+      details: optional
   vehicle_id_record:
-    display_name: 车辆识别记录
-    summary: 某笔通行交易在特定时点观察到的车辆识别事实。识别车牌和车型保留原始观察值， 即使它们与通行所关联车辆的档案值不同；识别位置由所属交易关联的车道或门架推导。
+    name: 车辆识别记录
     description: 某笔通行交易在特定时点观察到的车辆识别事实。识别车牌和车型保留原始观察值， 即使它们与通行所关联车辆的档案值不同；识别位置由所属交易关联的车道或门架推导。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: vehicle_id_record
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      occurred_at:
-        type: datetime
-        required: true
-        display_name: 发生时间
-        description: 交易、识别等时序事实实际发生的 ISO 日期时间。
-      plate_no:
-        type: string
-        required: false
-        display_name: 车牌号
-        description: 车辆或牌识事实使用的车牌标识，展示时应按权限脱敏。
-      vehicle_type:
-        type: string
-        required: false
-        display_name: 车型
-        description: 车辆档案或识别事实中的车辆类型。
-      direction:
-        type: string
-        required: false
-        display_name: 方向
-        description: 上行、下行、入口或出口等业务方向。
-      result:
-        type: string
-        required: false
-        display_name: 处理结果
-        description: 查验、计费、结算或对账形成的业务结论。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      occurred_at: required
+      plate_no: optional
+      vehicle_type: optional
+      direction: optional
+      result: optional
+      details: optional
   vehicle_check_result:
-    display_name: 预约车辆查验结果
-    summary: 绿通、大件运输等预约车辆在出口形成的查验结论。
+    name: 预约车辆查验结果
     description: 绿通、大件运输等预约车辆在出口形成的查验结论。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: vehicle_check_result
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 发生日期
-        description: 业务事实实际发生的日期。
-      result:
-        type: string
-        required: true
-        display_name: 处理结果
-        description: 查验、计费、结算或对账形成的业务结论。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      occurred_on: required
+      result: required
+      details: optional
   second_charge_result:
-    display_name: 二次计费结果
-    summary: 特殊通行在查验或省级优惠处理后重新计算形成的费额结果。
+    name: 二次计费结果
     description: 特殊通行在查验或省级优惠处理后重新计算形成的费额结果。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: second_charge_result
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      original_amount:
-        type: money
-        required: false
-        display_name: 原金额
-        description: 调整、退补或二次计费前的原始金额。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 由数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 发生日期
-        description: 业务事实实际发生的日期。
-      result:
-        type: string
-        required: true
-        display_name: 处理结果
-        description: 查验、计费、结算或对账形成的业务结论。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      original_amount: optional
+      amount: required
+      occurred_on: required
+      result: required
+      details: optional
   split_record:
-    display_name: 省内拆分记录
-    summary: 按通行路径和收费单元对一次通行费进行拆分计算的结果。
+    name: 省内拆分记录
     description: 按通行路径和收费单元对一次通行费进行拆分计算的结果。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: split_record
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 由数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 发生日期
-        description: 业务事实实际发生的日期。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      amount: required
+      occurred_on: required
+      status: optional
+      details: optional
   split_basis:
-    display_name: 拆分依据
-    summary: 一项拆分所采用的路径、费率版本和计算规则。
+    name: 拆分依据
     description: 一项拆分所采用的路径、费率版本和计算规则。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: split_basis
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      version:
-        type: string
-        required: false
-        display_name: 版本
-        description: 费率、名单或运行参数的业务版本。
-      details:
-        type: json
-        required: true
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      version: optional
+      details: required
   split_detail:
-    display_name: 拆分明细
-    summary: 一项拆分中归属于具体收费单元或业主的金额明细。
+    name: 拆分明细
     description: 一项拆分中归属于具体收费单元或业主的金额明细。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: split_detail
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 由数值和 ISO 币种组成的金额。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      amount: required
+      details: optional
   clearing_result:
-    display_name: 清分结果
-    summary: 按收费公路业主汇总、用于结算的清分业务结果。
+    name: 清分结果
     description: 按收费公路业主汇总、用于结算的清分业务结果。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: clearing_result
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 由数值和 ISO 币种组成的金额。
-      period:
-        type: period
-        required: true
-        display_name: 业务期间
-        description: 汇总事实所属月份，格式为 YYYY-MM。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 发生日期
-        description: 业务事实实际发生的日期。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      amount: required
+      period: required
+      occurred_on: required
+      status: optional
+      details: optional
   invoice_basis_data:
-    display_name: 发票基础数据
-    summary: 由通行和拆分结果生成、用于开具通行费发票的基础事实。
+    name: 发票基础数据
     description: 由通行和拆分结果生成、用于开具通行费发票的基础事实。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: invoice_basis_data
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 由数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 发生日期
-        description: 业务事实实际发生的日期。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      amount: required
+      occurred_on: required
+      status: optional
+      details: optional
   customer_service_record:
-    display_name: 客服业务记录
-    summary: 客户、车辆、ETC 卡或 OBU 的开户、发行、变更、挂失、激活和注销等办理结果。
+    name: 客服业务记录
     description: 客户、车辆、ETC 卡或 OBU 的开户、发行、变更、挂失、激活和注销等办理结果。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: customer_service_record
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类，例如主体角色、设备种类或资金交易种类。
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 发生日期
-        description: 业务事实实际发生的日期。
-      result:
-        type: string
-        required: true
-        display_name: 处理结果
-        description: 查验、计费、结算或对账形成的业务结论。
-      channel:
-        type: string
-        required: false
-        display_name: 办理渠道
-        description: 网点、终端、线上或其他业务办理渠道。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      category: required
+      reference_no: required
+      occurred_on: required
+      result: required
+      channel: optional
+      details: optional
   user_account:
-    display_name: 用户资金账户
-    summary: 客户级资金账户，不依赖具体 ETC 卡，用于充值资金挂账和向卡账户划转。
+    name: 用户资金账户
     description: 客户级资金账户，不依赖具体 ETC 卡，用于充值资金挂账和向卡账户划转。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: user_account
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      balance:
-        type: money
-        required: false
-        display_name: 余额
-        description: 资金账户或记账完成后的业务余额。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      balance: optional
+      status: optional
+      details: optional
   card_account:
-    display_name: 卡资金账户
-    summary: ETC 卡对应的资金账户，用于记录充值、圈存、消费扣款、冲正和退款。
+    name: 卡资金账户
     description: ETC 卡对应的资金账户，用于记录充值、圈存、消费扣款、冲正和退款。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: card_account
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      balance:
-        type: money
-        required: false
-        display_name: 余额
-        description: 资金账户或记账完成后的业务余额。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      balance: optional
+      status: optional
+      details: optional
   account_entry:
-    display_name: 账户记账明细
-    summary: 用户账户或卡账户的一笔余额变动，是充值、圈存、冲正、消费、退款或缴费等来源事实 实际记入账户后的结果；通过 category 区分记账类型。
+    name: 账户记账明细
     description: 用户账户或卡账户的一笔余额变动，是充值、圈存、冲正、消费、退款或缴费等来源事实 实际记入账户后的结果；通过 category 区分记账类型。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: account_entry
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类，例如主体角色、设备种类或资金交易种类。
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 由数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 发生日期
-        description: 业务事实实际发生的日期。
-      balance:
-        type: money
-        required: false
-        display_name: 余额
-        description: 资金账户或记账完成后的业务余额。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      category: required
+      reference_no: required
+      amount: required
+      occurred_on: required
+      balance: optional
+      status: required
+      details: optional
   stock_account:
-    display_name: 库存账户
-    summary: 机构或操作员管理 ETC 卡、OBU、CPC 卡和票据实物库存的数量账本。
+    name: 库存账户
     description: 机构或操作员管理 ETC 卡、OBU、CPC 卡和票据实物库存的数量账本。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: stock_account
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类，例如主体角色、设备种类或资金交易种类。
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      category: required
+      reference_no: required
+      status: optional
+      details: optional
   account_transaction:
-    display_name: 账户交易
-    summary: 引起资金账户余额变化的交易；通过 category 区分充值、圈存、冲正、退费、 退款、补交和账单缴费。
+    name: 账户交易
     description: 引起资金账户余额变化的交易；通过 category 区分充值、圈存、冲正、退费、 退款、补交和账单缴费。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: account_transaction
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类，例如主体角色、设备种类或资金交易种类。
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 由数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 发生日期
-        description: 业务事实实际发生的日期。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      reason:
-        type: string
-        required: false
-        display_name: 原因
-        description: 调整、冲正、名单纳入或异常处理的业务原因。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      category: required
+      reference_no: required
+      amount: required
+      occurred_on: required
+      status: required
+      reason: optional
+      details: optional
   consumption_detail:
-    display_name: ETC 消费明细
-    summary: ETC 卡消费形成的逐笔应收、实收、优惠和记账事实。
+    name: ETC 消费明细
     description: ETC 卡消费形成的逐笔应收、实收、优惠和记账事实。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: consumption_detail
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 由数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 发生日期
-        description: 业务事实实际发生的日期。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      amount: required
+      occurred_on: required
+      status: required
+      details: optional
   bill:
-    display_name: 账单
-    summary: 对一定期间内消费明细汇总形成的客户应结算结果。
+    name: 账单
     description: 对一定期间内消费明细汇总形成的客户应结算结果。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: bill
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 由数值和 ISO 币种组成的金额。
-      period:
-        type: period
-        required: true
-        display_name: 业务期间
-        description: 汇总事实所属月份，格式为 YYYY-MM。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      amount: required
+      period: required
+      status: required
+      details: optional
   bill_settlement:
-    display_name: 账单结算结果
-    summary: 账单经缴费、银行扣款或单位结算后形成的结果。
+    name: 账单结算结果
     description: 账单经缴费、银行扣款或单位结算后形成的结果。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: bill_settlement
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 由数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 发生日期
-        description: 业务事实实际发生的日期。
-      result:
-        type: string
-        required: true
-        display_name: 处理结果
-        description: 查验、计费、结算或对账形成的业务结论。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      amount: required
+      occurred_on: required
+      result: required
+      details: optional
   stock_movement:
-    display_name: 库存变化记录
-    summary: ETC 卡、OBU、CPC 卡或票据在机构与操作员库存间发生的数量变化事实。
+    name: 库存变化记录
     description: ETC 卡、OBU、CPC 卡或票据在机构与操作员库存间发生的数量变化事实。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: stock_movement
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类，例如主体角色、设备种类或资金交易种类。
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      quantity:
-        type: number
-        required: true
-        display_name: 数量
-        description: 库存或业务汇总中的数量。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 发生日期
-        description: 业务事实实际发生的日期。
-      reason:
-        type: string
-        required: false
-        display_name: 原因
-        description: 调整、冲正、名单纳入或异常处理的业务原因。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      category: required
+      reference_no: required
+      quantity: required
+      occurred_on: required
+      reason: optional
+      details: optional
   business_day_summary:
-    display_name: 业务日结
-    summary: 客服机构或操作员一个营业日内的业务和资金汇总结果。
+    name: 业务日结
     description: 客服机构或操作员一个营业日内的业务和资金汇总结果。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: business_day_summary
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 发生日期
-        description: 业务事实实际发生的日期。
-      result:
-        type: string
-        required: false
-        display_name: 处理结果
-        description: 查验、计费、结算或对账形成的业务结论。
-      details:
-        type: json
-        required: true
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      occurred_on: required
+      result: optional
+      details: required
   reconciliation_result:
-    display_name: 对账结果
-    summary: 业务数据和资金渠道完成核对后形成的一致性结论与差异说明。
+    name: 对账结果
     description: 业务数据和资金渠道完成核对后形成的一致性结论与差异说明。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: reconciliation_result
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务流水号
-        description: 通行、交易、拆分、账单或清分结果的来源流水号。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 发生日期
-        description: 业务事实实际发生的日期。
-      result:
-        type: string
-        required: true
-        display_name: 处理结果
-        description: 查验、计费、结算或对账形成的业务结论。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      reference_no: required
+      occurred_on: required
+      result: required
+      details: optional
   fee_module:
-    display_name: 计费模块
-    summary: 聚合一组可同时发布和生效的费率、优惠、路径及代收规则。
+    name: 计费模块
     description: 聚合一组可同时发布和生效的费率、优惠、路径及代收规则。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: fee_module
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      version:
-        type: string
-        required: true
-        display_name: 版本
-        description: 费率、名单或运行参数的业务版本。
-      valid_from:
-        type: date
-        required: true
-        display_name: 生效日期
-        description: 规则、名单、介质或设施开始有效的日期。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      version: required
+      valid_from: required
+      status: optional
+      details: optional
   fee_rule:
-    display_name: 费率或计费规则
-    summary: 计费模块内的规则项；通过 category 区分基础费率、省级费率、优惠策略、 代收关系、省界关系和最小费额路径。
+    name: 费率或计费规则
     description: 计费模块内的规则项；通过 category 区分基础费率、省级费率、优惠策略、 代收关系、省界关系和最小费额路径。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: fee_rule
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类，例如主体角色、设备种类或资金交易种类。
-      code:
-        type: string
-        required: false
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      version:
-        type: string
-        required: false
-        display_name: 版本
-        description: 费率、名单或运行参数的业务版本。
-      valid_from:
-        type: date
-        required: false
-        display_name: 生效日期
-        description: 规则、名单、介质或设施开始有效的日期。
-      valid_to:
-        type: date
-        required: false
-        display_name: 失效日期
-        description: 规则、名单、介质或设施结束有效的日期。
-      details:
-        type: json
-        required: true
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      category: required
+      code: optional
+      version: optional
+      valid_from: optional
+      valid_to: optional
+      details: required
   control_record:
-    display_name: 业务控制记录
-    summary: 针对车辆、OBU、ETC 卡、CPC 卡或业务设备生效的控制事实；通过 category 区分 状态名单、追缴名单、预约、关注名单和白名单。
+    name: 业务控制记录
     description: 针对车辆、OBU、ETC 卡、CPC 卡或业务设备生效的控制事实；通过 category 区分 状态名单、追缴名单、预约、关注名单和白名单。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: control_record
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类，例如主体角色、设备种类或资金交易种类。
-      code:
-        type: string
-        required: false
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      version:
-        type: string
-        required: false
-        display_name: 版本
-        description: 费率、名单或运行参数的业务版本。
-      valid_from:
-        type: date
-        required: false
-        display_name: 生效日期
-        description: 规则、名单、介质或设施开始有效的日期。
-      valid_to:
-        type: date
-        required: false
-        display_name: 失效日期
-        description: 规则、名单、介质或设施结束有效的日期。
-      reason:
-        type: string
-        required: false
-        display_name: 原因
-        description: 调整、冲正、名单纳入或异常处理的业务原因。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      category: required
+      code: optional
+      status: required
+      version: optional
+      valid_from: optional
+      valid_to: optional
+      reason: optional
+      details: optional
   operating_parameter:
-    display_name: 运行参数
-    summary: 控制收费站、车道、门架或联网中心运行方式的版本化配置，不代表名单成员。
+    name: 运行参数
     description: 控制收费站、车道、门架或联网中心运行方式的版本化配置，不代表名单成员。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: operating_parameter
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类，例如主体角色、设备种类或资金交易种类。
-      code:
-        type: string
-        required: false
-        display_name: 编码
-        description: 来源系统或行业规范中的稳定业务编码。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
-      version:
-        type: string
-        required: false
-        display_name: 版本
-        description: 费率、名单或运行参数的业务版本。
-      valid_from:
-        type: date
-        required: false
-        display_name: 生效日期
-        description: 规则、名单、介质或设施开始有效的日期。
-      valid_to:
-        type: date
-        required: false
-        display_name: 失效日期
-        description: 规则、名单、介质或设施结束有效的日期。
-      details:
-        type: json
-        required: true
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化业务事实。
+      category: required
+      code: optional
+      status: required
+      version: optional
+      valid_from: optional
+      valid_to: optional
+      details: required
 relations:
   route_next:
-    display_name: 路网后继
-    summary: from 和 to 是计费路径上相邻的收费站或收费门架，方向表示车辆行驶方向； 用设施对象自身表达 V3.1 的 RoadNode/NodeRelation，避免重复节点身份。
+    name: 路网后继
     description: from 和 to 是计费路径上相邻的收费站或收费门架，方向表示车辆行驶方向； 用设施对象自身表达 V3.1 的 RoadNode/NodeRelation，避免重复节点身份。
-    from_types:
+    from:
     - toll_station
     - toll_gantry
-    to_types:
+    to:
     - toll_station
     - toll_gantry
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: route_next
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
-      direction:
-        type: string
-        required: false
-        display_name: 方向
-        description: 上行、下行、入口或出口等业务方向。
-      mileage:
-        type: number
-        required: false
-        display_name: 里程
-        description: 路段、收费单元或路径的里程。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
+      direction: optional
+      mileage: optional
+      status: optional
   contains:
-    display_name: 包含
-    summary: from 是整体，to 是依附于整体的组成部分；用于路网层级、设施设备、拆分明细和费率包。
+    name: 包含
     description: from 是整体，to 是依附于整体的组成部分；用于路网层级、设施设备、拆分明细和费率包。
-    from_types:
+    from:
     - party
     - toll_road
     - section
@@ -2171,7 +603,7 @@ relations:
     - card_account
     - split_record
     - fee_module
-    to_types:
+    to:
     - section
     - toll_interval
     - toll_station
@@ -2185,38 +617,12 @@ relations:
     - split_detail
     - second_charge_result
     - fee_rule
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: contains
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
-      role:
-        type: string
-        required: false
-        display_name: 关系角色
-        description: 关系端点在当前业务联系中承担的角色。
+      role: optional
   references:
-    display_name: 引用
-    summary: from 业务记录使用 to 独立对象提供的信息；被引用对象不依附于引用者存在。
+    name: 引用
     description: from 业务记录使用 to 独立对象提供的信息；被引用对象不依附于引用者存在。
-    from_types:
+    from:
     - toll_interval
     - passage
     - toll_transaction
@@ -2232,82 +638,22 @@ relations:
     - fee_rule
     - control_record
     - operating_parameter
-    to_types: []
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: references
+    to: []
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
-      role:
-        type: string
-        required: true
-        display_name: 关系角色
-        description: 关系端点在当前业务联系中承担的角色。
-      amount:
-        type: money
-        required: false
-        display_name: 金额
-        description: 由数值和 ISO 币种组成的金额。
+      role: required
+      amount: optional
   associates:
-    display_name: 关联
-    summary: 两个可独立存在的对象之间形成业务联系，例如户车、车卡签、业主路段和账户归属。
+    name: 关联
     description: 两个可独立存在的对象之间形成业务联系，例如户车、车卡签、业主路段和账户归属。
-    from_types: []
-    to_types: []
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: associates
+    from: []
+    to: []
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
-      role:
-        type: string
-        required: true
-        display_name: 关系角色
-        description: 关系端点在当前业务联系中承担的角色。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象或关系当前所处的业务状态。
+      role: required
+      status: optional
   derives:
-    display_name: 派生
-    summary: from 是来源事实，to 是由其计算、汇总或处理生成的结果；方向统一为“来源到结果”。
+    name: 派生
     description: from 是来源事实，to 是由其计算、汇总或处理生成的结果；方向统一为“来源到结果”。
-    from_types:
+    from:
     - toll_interval
     - toll_station
     - toll_gantry
@@ -2320,7 +666,7 @@ relations:
     - bill_settlement
     - fee_rule
     - control_record
-    to_types:
+    to:
     - second_charge_result
     - split_record
     - clearing_result
@@ -2332,69 +678,40 @@ relations:
     - reconciliation_result
     - fee_rule
     - control_record
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: derives
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
-      role:
-        type: string
-        required: false
-        display_name: 关系角色
-        description: 关系端点在当前业务联系中承担的角色。
-      amount:
-        type: money
-        required: false
-        display_name: 金额
-        description: 由数值和 ISO 币种组成的金额。
-      reason:
-        type: string
-        required: false
-        display_name: 原因
-        description: 调整、冲正、名单纳入或异常处理的业务原因。
+      role: optional
+      amount: optional
+      reason: optional
     acyclic: true
 functions:
   get_business_overview:
-    summary: 获取路网、通行、交易、拆分清分和客服资金概览
-    reads_objects:
-    - passage
-    - toll_transaction
-    - split_record
-    - clearing_result
-    reads_relations:
-    - associates
-    - derives
-    - references
+    name: 获取路网、通行、交易、拆分清分和客服资金概览
+    description: ''
+    reads:
+      objects:
+      - passage
+      - toll_transaction
+      - split_record
+      - clearing_result
+      relations:
+      - associates
+      - derives
+      - references
   get_passage_trace:
-    summary: 获取一次通行的车辆、交易、牌识、拆分和清分追溯链
-    reads_objects:
-    - passage
-    - vehicle
-    - toll_transaction
-    - split_record
-    - clearing_result
-    reads_relations:
-    - associates
-    - derives
-    - references
-    params:
+    name: 获取一次通行的车辆、交易、牌识、拆分和清分追溯链
+    description: ''
+    reads:
+      objects:
+      - passage
+      - vehicle
+      - toll_transaction
+      - split_record
+      - clearing_result
+      relations:
+      - associates
+      - derives
+      - references
+    inputs:
       passage_id:
         type: str
         description: 通行记录对象 ID
@@ -2403,3216 +720,2974 @@ functions:
         description: 追溯深度
         default: 4
   find_incomplete_passages:
-    summary: 查找缺少入口、出口或拆分事实的通行记录
-    reads_objects:
-    - passage
-    reads_relations:
-    - references
-    - derives
+    name: 查找缺少入口、出口或拆分事实的通行记录
+    description: ''
+    reads:
+      objects:
+      - passage
+      relations:
+      - references
+      - derives
 actions:
   register_party:
-    display_name: 登记业务主体
-    summary: 登记业主、发行机构、联网中心、客服机构或操作员等业务主体。
+    name: 登记业务主体
     description: 登记业主、发行机构、联网中心、客服机构或操作员等业务主体。
     icon: building_2
-    available_on: []
-    context_input: ''
+    'on': []
+    context: ''
     inputs:
       name:
-        display_name: 主体名称
+        name: 主体名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       category:
-        display_name: 主体类别
+        name: 主体类别
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       code:
-        display_name: 主体编码
+        name: 主体编码
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: code
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: active
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - party
-      updates_objects: []
-      retires_objects: []
-      creates_relations: []
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - party
+        relations: []
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记新的联网收费业务主体。
     idempotency: required
   register_user:
-    display_name: 登记客户
-    summary: 登记 ETC 发行服务中的开户客户。
+    name: 登记客户
     description: 登记 ETC 发行服务中的开户客户。
     icon: user_round
-    available_on: []
-    context_input: ''
+    'on': []
+    context: ''
     inputs:
       name:
-        display_name: 客户名称
+        name: 客户名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       reference_no:
-        display_name: 客户编号
+        name: 客户编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: active
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - user
-      updates_objects: []
-      retires_objects: []
-      creates_relations: []
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - user
+        relations: []
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记新的客户账户主体。
     idempotency: required
   register_vehicle:
-    display_name: 登记车辆
-    summary: 在当前客户名下登记车辆并建立户车关系。
+    name: 登记车辆
     description: 在当前客户名下登记车辆并建立户车关系。
     icon: car_front
-    available_on:
+    'on':
     - user
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 车辆名称
+        name: 车辆名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       plate_no:
-        display_name: 车牌号
+        name: 车牌号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: plate_no
       vehicle_type:
-        display_name: 车型
+        name: 车型
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: vehicle_type
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: active
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - vehicle
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - associates
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - vehicle
+        relations:
+        - associates
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记车辆并关联当前客户。
     idempotency: required
   issue_etc_card:
-    display_name: 发行 ETC 卡
-    summary: 为当前车辆发行 ETC 卡并建立长期车卡关系。
+    name: 发行 ETC 卡
     description: 为当前车辆发行 ETC 卡并建立长期车卡关系。
     icon: credit_card
-    available_on:
+    'on':
     - vehicle
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: ETC 卡名称
+        name: ETC 卡名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       category:
-        display_name: 卡类别
+        name: 卡类别
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: category
       code:
-        display_name: ETC 卡号
+        name: ETC 卡号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: code
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: active
       valid_from:
-        display_name: 生效日期
+        name: 生效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_from
       valid_to:
-        display_name: 失效日期
+        name: 失效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_to
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - etc_card
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - associates
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - etc_card
+        relations:
+        - associates
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 发行 ETC 卡并绑定当前车辆。
     idempotency: required
   install_obu:
-    display_name: 安装 OBU
-    summary: 为当前车辆安装 OBU 电子标签并建立长期车签关系。
+    name: 安装 OBU
     description: 为当前车辆安装 OBU 电子标签并建立长期车签关系。
     icon: radio_tower
-    available_on:
+    'on':
     - vehicle
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: OBU 名称
+        name: OBU 名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       category:
-        display_name: OBU 类别
+        name: OBU 类别
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: category
       code:
-        display_name: OBU 编号
+        name: OBU 编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: code
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: active
       valid_from:
-        display_name: 生效日期
+        name: 生效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_from
       valid_to:
-        display_name: 失效日期
+        name: 失效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_to
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - obu
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - associates
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - obu
+        relations:
+        - associates
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 安装 OBU 并绑定当前车辆。
     idempotency: required
   pair_obu_etc_card:
-    display_name: 配置卡签关系
-    summary: 将当前 OBU 与已发行 ETC 卡关联，表达双片式插卡或单片式一体化关系。
+    name: 配置卡签关系
     description: 将当前 OBU 与已发行 ETC 卡关联，表达双片式插卡或单片式一体化关系。
     icon: link_2
-    available_on:
+    'on':
     - obu
-    context_input: ''
+    context: ''
     inputs:
       card_id:
-        display_name: ETC 卡
+        name: ETC 卡
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - etc_card
-    preconditions: []
-    side_effects:
-      creates_objects: []
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - associates
-      updates_relations: []
-      retires_relations: []
+    requires: []
+    changes:
+      create:
+        objects: []
+        relations:
+        - associates
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 建立 OBU 与 ETC 卡的卡签关系。
     idempotency: required
   record_customer_service:
-    display_name: 登记客服业务
-    summary: 为当前客户、车辆、ETC 卡或 OBU 登记开户、变更、发行、激活、挂失或注销结果。
+    name: 登记客服业务
     description: 为当前客户、车辆、ETC 卡或 OBU 登记开户、变更、发行、激活、挂失或注销结果。
     icon: clipboard_list
-    available_on:
+    'on':
     - user
     - vehicle
     - etc_card
     - obu
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 业务流水号
+        name: 业务流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       category:
-        display_name: 业务类型
+        name: 业务类型
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       occurred_on:
-        display_name: 办理日期
+        name: 办理日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       result:
-        display_name: 办理结果
+        name: 办理结果
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: result
       channel:
-        display_name: 办理渠道
+        name: 办理渠道
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: channel
       handler_id:
-        display_name: 办理机构或操作员
+        name: 办理机构或操作员
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - party
       details:
-        display_name: 业务详情
+        name: 业务详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - customer_service_record
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - references
-      - associates
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - customer_service_record
+        relations:
+        - references
+        - associates
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记客服业务结果并关联当前业务对象和办理主体。
     idempotency: required
   register_cpc_card:
-    display_name: 登记 CPC 卡
-    summary: 登记可在不同车辆通行之间循环发放和回收的 CPC 卡。
+    name: 登记 CPC 卡
     description: 登记可在不同车辆通行之间循环发放和回收的 CPC 卡。
     icon: contact
-    available_on: []
-    context_input: ''
+    'on': []
+    context: ''
     inputs:
       name:
-        display_name: CPC 卡名称
+        name: CPC 卡名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       code:
-        display_name: CPC 卡号
+        name: CPC 卡号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: code
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: available
       valid_from:
-        display_name: 生效日期
+        name: 生效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_from
       valid_to:
-        display_name: 失效日期
+        name: 失效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_to
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - cpc_card
-      updates_objects: []
-      retires_objects: []
-      creates_relations: []
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - cpc_card
+        relations: []
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记一张可用 CPC 卡。
     idempotency: required
   register_paper_ticket:
-    display_name: 登记纸券
-    summary: 登记入口可临时发放、出口凭券计费的纸质通行凭证。
+    name: 登记纸券
     description: 登记入口可临时发放、出口凭券计费的纸质通行凭证。
     icon: ticket
-    available_on: []
-    context_input: ''
+    'on': []
+    context: ''
     inputs:
       name:
-        display_name: 纸券名称
+        name: 纸券名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       code:
-        display_name: 纸券编号
+        name: 纸券编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: code
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: available
       valid_from:
-        display_name: 生效日期
+        name: 生效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_from
       valid_to:
-        display_name: 失效日期
+        name: 失效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_to
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - paper_ticket
-      updates_objects: []
-      retires_objects: []
-      creates_relations: []
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - paper_ticket
+        relations: []
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记一张可用纸券。
     idempotency: required
   register_toll_road:
-    display_name: 登记收费公路
-    summary: 登记路网中的顶层收费公路。
+    name: 登记收费公路
     description: 登记路网中的顶层收费公路。
     icon: route
-    available_on: []
-    context_input: ''
+    'on': []
+    context: ''
     inputs:
       name:
-        display_name: 公路名称
+        name: 公路名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       code:
-        display_name: 公路编码
+        name: 公路编码
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: code
       longitude:
-        display_name: 代表点经度
+        name: 代表点经度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: longitude
       latitude:
-        display_name: 代表点纬度
+        name: 代表点纬度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: latitude
       coordinate_system:
-        display_name: 坐标系
+        name: 坐标系
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: coordinate_system
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: operating
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - toll_road
-      updates_objects: []
-      retires_objects: []
-      creates_relations: []
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - toll_road
+        relations: []
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记新的收费公路。
     idempotency: required
   register_section:
-    display_name: 登记收费路段
-    summary: 在当前收费公路下登记收费路段。
+    name: 登记收费路段
     description: 在当前收费公路下登记收费路段。
     icon: between_horizontal_start
-    available_on:
+    'on':
     - toll_road
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 路段名称
+        name: 路段名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       code:
-        display_name: 路段编码
+        name: 路段编码
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: code
       mileage:
-        display_name: 路段里程
+        name: 路段里程
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: mileage
       longitude:
-        display_name: 代表点经度
+        name: 代表点经度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: longitude
       latitude:
-        display_name: 代表点纬度
+        name: 代表点纬度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: latitude
       coordinate_system:
-        display_name: 坐标系
+        name: 坐标系
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: coordinate_system
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: operating
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - section
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - section
+        relations:
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记收费路段并纳入当前公路。
     idempotency: required
   register_toll_interval:
-    display_name: 登记收费单元
-    summary: 在当前收费路段下登记最小计费单元。
+    name: 登记收费单元
     description: 在当前收费路段下登记最小计费单元。
     icon: move_horizontal
-    available_on:
+    'on':
     - section
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 单元名称
+        name: 单元名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       code:
-        display_name: 单元编码
+        name: 单元编码
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: code
       direction:
-        display_name: 方向
+        name: 方向
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: direction
       mileage:
-        display_name: 里程
+        name: 里程
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: mileage
       longitude:
-        display_name: 代表点经度
+        name: 代表点经度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: longitude
       latitude:
-        display_name: 代表点纬度
+        name: 代表点纬度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: latitude
       coordinate_system:
-        display_name: 坐标系
+        name: 坐标系
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: coordinate_system
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: active
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - toll_interval
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - toll_interval
+        relations:
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记收费单元并纳入当前路段。
     idempotency: required
   register_toll_station:
-    display_name: 登记收费站
-    summary: 在当前收费路段下登记车辆进出收费公路的站点。
+    name: 登记收费站
     description: 在当前收费路段下登记车辆进出收费公路的站点。
     icon: signpost
-    available_on:
+    'on':
     - section
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 收费站名称
+        name: 收费站名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       code:
-        display_name: 收费站编码
+        name: 收费站编码
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: code
       longitude:
-        display_name: 经度
+        name: 经度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: longitude
       latitude:
-        display_name: 纬度
+        name: 纬度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: latitude
       coordinate_system:
-        display_name: 坐标系
+        name: 坐标系
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: coordinate_system
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: operating
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - toll_station
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - toll_station
+        relations:
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记收费站并纳入当前路段。
     idempotency: required
   register_toll_plaza:
-    display_name: 登记收费广场
-    summary: 在当前收费站登记组织收费车道和虚拟门架的收费广场。
+    name: 登记收费广场
     description: 在当前收费站登记组织收费车道和虚拟门架的收费广场。
     icon: panels_top_left
-    available_on:
+    'on':
     - toll_station
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 广场名称
+        name: 广场名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       code:
-        display_name: 广场编码
+        name: 广场编码
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: code
       direction:
-        display_name: 方向
+        name: 方向
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: direction
       longitude:
-        display_name: 经度
+        name: 经度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: longitude
       latitude:
-        display_name: 纬度
+        name: 纬度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: latitude
       coordinate_system:
-        display_name: 坐标系
+        name: 坐标系
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: coordinate_system
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: operating
       details:
-        display_name: 广场详情
+        name: 广场详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - toll_plaza
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - toll_plaza
+        relations:
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记收费广场并纳入当前收费站。
     idempotency: required
   register_toll_lane:
-    display_name: 登记收费车道
-    summary: 在当前收费站下登记实际执行入口或出口交易的收费车道。
+    name: 登记收费车道
     description: 在当前收费站下登记实际执行入口或出口交易的收费车道。
     icon: rows_3
-    available_on:
+    'on':
     - toll_station
     - toll_plaza
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 车道名称
+        name: 车道名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       code:
-        display_name: 车道编码
+        name: 车道编码
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: code
       category:
-        display_name: 车道类型
+        name: 车道类型
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       direction:
-        display_name: 方向
+        name: 方向
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: direction
       longitude:
-        display_name: 经度
+        name: 经度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: longitude
       latitude:
-        display_name: 纬度
+        name: 纬度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: latitude
       coordinate_system:
-        display_name: 坐标系
+        name: 坐标系
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: coordinate_system
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: operating
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - toll_lane
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - toll_lane
+        relations:
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记收费车道并纳入当前收费站或广场。
     idempotency: required
   register_toll_gantry:
-    display_name: 登记收费门架
-    summary: 在当前收费路段下登记分段计费门架。
+    name: 登记收费门架
     description: 在当前收费路段下登记分段计费门架。
     icon: panels_top_left
-    available_on:
+    'on':
     - section
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 门架名称
+        name: 门架名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       code:
-        display_name: 门架编码
+        name: 门架编码
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: code
       direction:
-        display_name: 方向
+        name: 方向
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: direction
       longitude:
-        display_name: 经度
+        name: 经度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: longitude
       latitude:
-        display_name: 纬度
+        name: 纬度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: latitude
       coordinate_system:
-        display_name: 坐标系
+        name: 坐标系
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: coordinate_system
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: operating
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - toll_gantry
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - toll_gantry
+        relations:
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记收费门架并纳入当前路段。
     idempotency: required
   connect_route_node:
-    display_name: 连接路网节点
-    summary: 将当前收费站或收费门架连接到行驶方向上的下一收费站或门架。
+    name: 连接路网节点
     description: 将当前收费站或收费门架连接到行驶方向上的下一收费站或门架。
     icon: git_branch
-    available_on:
+    'on':
     - toll_station
     - toll_gantry
-    context_input: ''
+    context: ''
     inputs:
       next_id:
-        display_name: 下一节点
+        name: 下一节点
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - toll_station
         - toll_gantry
       direction:
-        display_name: 行驶方向
+        name: 行驶方向
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: direction
       mileage:
-        display_name: 节点间里程
+        name: 节点间里程
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: mileage
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: active
-    preconditions: []
-    side_effects:
-      creates_objects: []
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - route_next
-      updates_relations: []
-      retires_relations: []
+    requires: []
+    changes:
+      create:
+        objects: []
+        relations:
+        - route_next
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 建立有向路网拓扑关系。
     idempotency: required
   bind_interval_nodes:
-    display_name: 配置收费单元边界
-    summary: 为当前收费单元关联计费方向上的起点和终点设施。
+    name: 配置收费单元边界
     description: 为当前收费单元关联计费方向上的起点和终点设施。
     icon: move_horizontal
-    available_on:
+    'on':
     - toll_interval
-    context_input: ''
+    context: ''
     inputs:
       start_id:
-        display_name: 起点节点
+        name: 起点节点
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - toll_station
         - toll_gantry
       end_id:
-        display_name: 终点节点
+        name: 终点节点
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - toll_station
         - toll_gantry
-    preconditions: []
-    side_effects:
-      creates_objects: []
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - references
-      updates_relations: []
-      retires_relations: []
+    requires: []
+    changes:
+      create:
+        objects: []
+        relations:
+        - references
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 配置收费单元的起止路网节点。
     idempotency: required
   register_service_facility:
-    display_name: 登记服务设施
-    summary: 在当前路段、收费站或发行机构登记服务区、拓展支付或客服渠道设施。
+    name: 登记服务设施
     description: 在当前路段、收费站或发行机构登记服务区、拓展支付或客服渠道设施。
     icon: store
-    available_on:
+    'on':
     - section
     - toll_station
     - party
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 设施名称
+        name: 设施名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       category:
-        display_name: 设施类别
+        name: 设施类别
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       code:
-        display_name: 设施编码
+        name: 设施编码
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: code
       channel:
-        display_name: 服务渠道
+        name: 服务渠道
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: channel
       longitude:
-        display_name: 经度
+        name: 经度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: longitude
       latitude:
-        display_name: 纬度
+        name: 纬度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: latitude
       coordinate_system:
-        display_name: 坐标系
+        name: 坐标系
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: coordinate_system
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: operating
       details:
-        display_name: 设施详情
+        name: 设施详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - service_facility
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - service_facility
+        relations:
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记服务设施并建立归属关系。
     idempotency: required
   register_business_device:
-    display_name: 登记业务设备
-    summary: 在收费站、收费车道或收费门架登记一个业务设备，并用 category 区分设备种类。
+    name: 登记业务设备
     description: 在收费站、收费车道或收费门架登记一个业务设备，并用 category 区分设备种类。
     icon: cpu
-    available_on:
+    'on':
     - toll_station
     - toll_lane
     - toll_gantry
     - party
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 设备名称
+        name: 设备名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       category:
-        display_name: 设备类别
+        name: 设备类别
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       code:
-        display_name: 设备编码
+        name: 设备编码
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: code
       longitude:
-        display_name: 经度
+        name: 经度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: longitude
       latitude:
-        display_name: 纬度
+        name: 纬度
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: latitude
       coordinate_system:
-        display_name: 坐标系
+        name: 坐标系
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: coordinate_system
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: active
       details:
-        display_name: 设备详情
+        name: 设备详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - business_device
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - business_device
+        relations:
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记业务设备并建立部署关系。
     idempotency: required
   record_etc_passage:
-    display_name: 登记 ETC 通行
-    summary: 为当前车辆登记一次使用 OBU 的完整 ETC 通行。
+    name: 登记 ETC 通行
     description: 为当前车辆登记一次使用 OBU 的完整 ETC 通行。
     icon: car_taxi_front
-    available_on:
+    'on':
     - vehicle
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 通行流水号
+        name: 通行流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       entry_transaction_no:
-        display_name: 入口交易流水号
+        name: 入口交易流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       exit_transaction_no:
-        display_name: 出口交易流水号
+        name: 出口交易流水号
         description: ''
+        required: true
         type: string
-        required: true
-        object_types: []
       obu_id:
-        display_name: 本次使用的 OBU
+        name: 本次使用的 OBU
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - obu
       entry_lane_id:
-        display_name: 入口车道
+        name: 入口车道
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - toll_lane
       exit_lane_id:
-        display_name: 出口车道
+        name: 出口车道
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - toll_lane
       entry_at:
-        display_name: 入口时间
+        name: 入口时间
         description: ''
-        type: datetime
         required: true
-        object_types: []
+        type: datetime
       exit_at:
-        display_name: 出口时间
+        name: 出口时间
         description: ''
-        type: datetime
         required: true
-        object_types: []
+        type: datetime
       transaction_type:
-        display_name: 交易类型
+        name: 交易类型
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: transaction_type
         default: normal
       charged_vehicle_type:
-        display_name: 计费车型
+        name: 计费车型
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: charged_vehicle_type
       axle_count:
-        display_name: 计费轴数
+        name: 计费轴数
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: axle_count
       operation_channel:
-        display_name: 作业渠道
+        name: 作业渠道
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: operation_channel
       receivable_amount:
-        display_name: 应收金额
+        name: 应收金额
         description: ''
-        type: money
         required: false
-        object_types: []
+        property: receivable_amount
       discount_amount:
-        display_name: 优惠金额
+        name: 优惠金额
         description: ''
-        type: money
         required: false
-        object_types: []
+        property: discount_amount
       paid_amount:
-        display_name: 实收金额
+        name: 实收金额
         description: ''
-        type: money
         required: false
-        object_types: []
+        property: paid_amount
       payment_type:
-        display_name: 支付类型
+        name: 支付类型
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: payment_type
       fee_type:
-        display_name: 计费类型
+        name: 计费类型
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: fee_type
       multi_province:
-        display_name: 是否跨省
+        name: 是否跨省
         description: ''
-        type: boolean
         required: false
-        object_types: []
+        property: multi_province
         default: false
       details:
-        display_name: 通行详情
+        name: 通行详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - toll_transaction
-      - passage
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - associates
-      - references
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - toll_transaction
+        - passage
+        relations:
+        - associates
+        - references
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记 ETC 通行并关联车辆、OBU、出入口交易及实际收费车道。
     idempotency: required
   record_cpc_passage:
-    display_name: 登记 CPC 通行
-    summary: 为当前车辆登记一次入口领取 CPC 卡、出口交回 CPC 卡的完整通行。
+    name: 登记 CPC 通行
     description: 为当前车辆登记一次入口领取 CPC 卡、出口交回 CPC 卡的完整通行。
     icon: contact
-    available_on:
+    'on':
     - vehicle
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 通行流水号
+        name: 通行流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       entry_transaction_no:
-        display_name: 入口交易流水号
+        name: 入口交易流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       exit_transaction_no:
-        display_name: 出口交易流水号
+        name: 出口交易流水号
         description: ''
+        required: true
         type: string
-        required: true
-        object_types: []
       cpc_card_id:
-        display_name: 本次使用的 CPC 卡
+        name: 本次使用的 CPC 卡
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - cpc_card
       entry_lane_id:
-        display_name: 入口车道
+        name: 入口车道
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - toll_lane
       exit_lane_id:
-        display_name: 出口车道
+        name: 出口车道
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - toll_lane
       entry_at:
-        display_name: 入口时间
+        name: 入口时间
         description: ''
-        type: datetime
         required: true
-        object_types: []
+        type: datetime
       exit_at:
-        display_name: 出口时间
+        name: 出口时间
         description: ''
-        type: datetime
         required: true
-        object_types: []
+        type: datetime
       transaction_type:
-        display_name: 交易类型
+        name: 交易类型
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: transaction_type
         default: normal
       charged_vehicle_type:
-        display_name: 计费车型
+        name: 计费车型
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: charged_vehicle_type
       axle_count:
-        display_name: 计费轴数
+        name: 计费轴数
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: axle_count
       operation_channel:
-        display_name: 作业渠道
+        name: 作业渠道
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: operation_channel
       receivable_amount:
-        display_name: 应收金额
+        name: 应收金额
         description: ''
-        type: money
         required: false
-        object_types: []
+        property: receivable_amount
       discount_amount:
-        display_name: 优惠金额
+        name: 优惠金额
         description: ''
-        type: money
         required: false
-        object_types: []
+        property: discount_amount
       paid_amount:
-        display_name: 实收金额
+        name: 实收金额
         description: ''
-        type: money
         required: false
-        object_types: []
+        property: paid_amount
       payment_type:
-        display_name: 支付类型
+        name: 支付类型
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: payment_type
       fee_type:
-        display_name: 计费类型
+        name: 计费类型
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: fee_type
       multi_province:
-        display_name: 是否跨省
+        name: 是否跨省
         description: ''
-        type: boolean
         required: false
-        object_types: []
+        property: multi_province
         default: false
       details:
-        display_name: 通行详情
+        name: 通行详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - toll_transaction
-      - passage
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - associates
-      - references
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - toll_transaction
+        - passage
+        relations:
+        - associates
+        - references
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记 CPC 通行及本次 CPC 卡发放、使用和回收事实。
     idempotency: required
   record_paper_ticket_passage:
-    display_name: 登记纸券通行
-    summary: 为当前车辆登记一次入口领取纸券、出口凭券计费的完整通行。
+    name: 登记纸券通行
     description: 为当前车辆登记一次入口领取纸券、出口凭券计费的完整通行。
     icon: ticket
-    available_on:
+    'on':
     - vehicle
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 通行流水号
+        name: 通行流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       entry_transaction_no:
-        display_name: 入口交易流水号
+        name: 入口交易流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       exit_transaction_no:
-        display_name: 出口交易流水号
+        name: 出口交易流水号
         description: ''
+        required: true
         type: string
-        required: true
-        object_types: []
       ticket_id:
-        display_name: 本次使用的纸券
+        name: 本次使用的纸券
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - paper_ticket
       entry_lane_id:
-        display_name: 入口车道
+        name: 入口车道
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - toll_lane
       exit_lane_id:
-        display_name: 出口车道
+        name: 出口车道
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - toll_lane
       entry_at:
-        display_name: 入口时间
+        name: 入口时间
         description: ''
-        type: datetime
         required: true
-        object_types: []
+        type: datetime
       exit_at:
-        display_name: 出口时间
+        name: 出口时间
         description: ''
-        type: datetime
         required: true
-        object_types: []
+        type: datetime
       transaction_type:
-        display_name: 交易类型
+        name: 交易类型
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: transaction_type
         default: normal
       charged_vehicle_type:
-        display_name: 计费车型
+        name: 计费车型
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: charged_vehicle_type
       axle_count:
-        display_name: 计费轴数
+        name: 计费轴数
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: axle_count
       operation_channel:
-        display_name: 作业渠道
+        name: 作业渠道
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: operation_channel
       receivable_amount:
-        display_name: 应收金额
+        name: 应收金额
         description: ''
-        type: money
         required: false
-        object_types: []
+        property: receivable_amount
       discount_amount:
-        display_name: 优惠金额
+        name: 优惠金额
         description: ''
-        type: money
         required: false
-        object_types: []
+        property: discount_amount
       paid_amount:
-        display_name: 实收金额
+        name: 实收金额
         description: ''
-        type: money
         required: false
-        object_types: []
+        property: paid_amount
       payment_type:
-        display_name: 支付类型
+        name: 支付类型
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: payment_type
       fee_type:
-        display_name: 计费类型
+        name: 计费类型
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: fee_type
       multi_province:
-        display_name: 是否跨省
+        name: 是否跨省
         description: ''
-        type: boolean
         required: false
-        object_types: []
+        property: multi_province
         default: false
       details:
-        display_name: 通行详情
+        name: 通行详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - toll_transaction
-      - passage
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - associates
-      - references
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - toll_transaction
+        - passage
+        relations:
+        - associates
+        - references
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记纸券通行及本次纸券发放、使用和出口出示事实。
     idempotency: required
   record_gantry_transaction:
-    display_name: 登记门架交易
-    summary: 在当前通行中补充一笔门架分段计费交易。
+    name: 登记门架交易
     description: 在当前通行中补充一笔门架分段计费交易。
     icon: scan_line
-    available_on:
+    'on':
     - passage
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 交易流水号
+        name: 交易流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       gantry_id:
-        display_name: 收费门架
+        name: 收费门架
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - toll_gantry
       occurred_at:
-        display_name: 交易时间
+        name: 交易时间
         description: ''
-        type: datetime
         required: true
-        object_types: []
+        property: occurred_at
       transaction_type:
-        display_name: 交易类型
+        name: 交易类型
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: transaction_type
         default: normal
       charged_vehicle_type:
-        display_name: 计费车型
+        name: 计费车型
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: charged_vehicle_type
       axle_count:
-        display_name: 计费轴数
+        name: 计费轴数
         description: ''
-        type: number
         required: false
-        object_types: []
+        property: axle_count
       result:
-        display_name: 交易结果
+        name: 交易结果
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: result
         default: success
       receivable_amount:
-        display_name: 应收金额
+        name: 应收金额
         description: ''
-        type: money
         required: false
-        object_types: []
+        property: receivable_amount
       discount_amount:
-        display_name: 优惠金额
+        name: 优惠金额
         description: ''
-        type: money
         required: false
-        object_types: []
+        property: discount_amount
       paid_amount:
-        display_name: 实收金额
+        name: 实收金额
         description: ''
-        type: money
         required: false
-        object_types: []
+        property: paid_amount
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: recorded
       details:
-        display_name: 交易详情
+        name: 交易详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - toll_transaction
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - references
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - toll_transaction
+        relations:
+        - references
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记门架交易并关联当前通行和收费门架。
     idempotency: required
   record_vehicle_id:
-    display_name: 登记车辆识别
-    summary: 为当前入口、门架或出口交易补充一项车辆识别事实。
+    name: 登记车辆识别
     description: 为当前入口、门架或出口交易补充一项车辆识别事实。
     icon: scan_search
-    available_on:
+    'on':
     - toll_transaction
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 识别流水号
+        name: 识别流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       occurred_at:
-        display_name: 识别时间
+        name: 识别时间
         description: ''
-        type: datetime
         required: true
-        object_types: []
+        property: occurred_at
       plate_no:
-        display_name: 识别车牌
+        name: 识别车牌
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: plate_no
       vehicle_type:
-        display_name: 识别车型
+        name: 识别车型
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: vehicle_type
       direction:
-        display_name: 行驶方向
+        name: 行驶方向
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: direction
       result:
-        display_name: 识别结果
+        name: 识别结果
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: result
       details:
-        display_name: 识别详情
+        name: 识别详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - vehicle_id_record
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - references
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - vehicle_id_record
+        relations:
+        - references
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记车辆识别结果并关联当前交易，识别位置沿交易关系推导。
     idempotency: required
   record_vehicle_check:
-    display_name: 登记预约车辆查验
-    summary: 在当前通行中登记绿通或大件运输预约车辆的出口查验结果。
+    name: 登记预约车辆查验
     description: 在当前通行中登记绿通或大件运输预约车辆的出口查验结果。
     icon: clipboard_check
-    available_on:
+    'on':
     - passage
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 查验流水号
+        name: 查验流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       occurred_on:
-        display_name: 查验日期
+        name: 查验日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       result:
-        display_name: 查验结果
+        name: 查验结果
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: result
       details:
-        display_name: 查验详情
+        name: 查验详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - vehicle_check_result
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - references
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - vehicle_check_result
+        relations:
+        - references
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记预约车辆查验结果并关联当前通行。
     idempotency: required
   record_second_charge:
-    display_name: 登记二次计费
-    summary: 根据当前通行的查验或优惠结果登记一次重新计费结果。
+    name: 登记二次计费
     description: 根据当前通行的查验或优惠结果登记一次重新计费结果。
     icon: calculator
-    available_on:
+    'on':
     - passage
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 二次计费流水号
+        name: 二次计费流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       original_amount:
-        display_name: 原计费金额
+        name: 原计费金额
         description: ''
-        type: money
         required: false
-        object_types: []
+        property: original_amount
       amount:
-        display_name: 二次计费金额
+        name: 二次计费金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       occurred_on:
-        display_name: 计费日期
+        name: 计费日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       result:
-        display_name: 处理结果
+        name: 处理结果
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: result
       check_id:
-        display_name: 查验结果
+        name: 查验结果
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - vehicle_check_result
       details:
-        display_name: 计费详情
+        name: 计费详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - second_charge_result
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      - derives
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - second_charge_result
+        relations:
+        - contains
+        - derives
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记二次计费结果并追溯原始查验与通行。
     idempotency: required
   create_split_record:
-    display_name: 生成拆分记录
-    summary: 根据当前通行生成省内拆分结果。
+    name: 生成拆分记录
     description: 根据当前通行生成省内拆分结果。
     icon: split
-    available_on:
+    'on':
     - passage
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 拆分流水号
+        name: 拆分流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       amount:
-        display_name: 拆分总金额
+        name: 拆分总金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       occurred_on:
-        display_name: 拆分日期
+        name: 拆分日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: calculated
       details:
-        display_name: 拆分摘要
+        name: 拆分摘要
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - split_record
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - derives
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - split_record
+        relations:
+        - derives
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 生成拆分记录并追溯到当前通行。
     idempotency: required
   add_split_detail:
-    display_name: 添加拆分明细
-    summary: 为当前拆分结果增加一条收费单元金额明细。
+    name: 添加拆分明细
     description: 为当前拆分结果增加一条收费单元金额明细。
     icon: list_plus
-    available_on:
+    'on':
     - split_record
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 明细名称
+        name: 明细名称
         description: ''
+        required: true
         type: string
-        required: true
-        object_types: []
       toll_interval_id:
-        display_name: 收费单元
+        name: 收费单元
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - toll_interval
       amount:
-        display_name: 拆分金额
+        name: 拆分金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       details:
-        display_name: 明细信息
+        name: 明细信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - split_detail
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      - references
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - split_detail
+        relations:
+        - contains
+        - references
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 添加拆分明细并关联收费单元。
     idempotency: required
   add_split_basis:
-    display_name: 添加拆分依据
-    summary: 为当前拆分结果记录路径、费率版本和计算规则。
+    name: 添加拆分依据
     description: 为当前拆分结果记录路径、费率版本和计算规则。
     icon: file_check_2
-    available_on:
+    'on':
     - split_record
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 依据名称
+        name: 依据名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       version:
-        display_name: 费率版本
+        name: 费率版本
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: version
       details:
-        display_name: 路径与规则
+        name: 路径与规则
         description: ''
-        type: json
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - split_basis
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - split_basis
+        relations:
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 添加当前拆分所使用的计算依据。
     idempotency: required
   produce_clearing_result:
-    display_name: 生成清分结果
-    summary: 根据当前拆分记录生成按收费公路业主汇总的清分结果。
+    name: 生成清分结果
     description: 根据当前拆分记录生成按收费公路业主汇总的清分结果。
     icon: waypoints
-    available_on:
+    'on':
     - split_record
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 清分流水号
+        name: 清分流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       amount:
-        display_name: 清分金额
+        name: 清分金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       period:
-        display_name: 清分期间
+        name: 清分期间
         description: ''
-        type: period
         required: true
-        object_types: []
+        property: period
       occurred_on:
-        display_name: 清分日期
+        name: 清分日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: confirmed
       details:
-        display_name: 清分详情
+        name: 清分详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - clearing_result
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - derives
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - clearing_result
+        relations:
+        - derives
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 生成清分结果并追溯到当前拆分记录。
     idempotency: required
   produce_invoice_basis:
-    display_name: 生成发票基础数据
-    summary: 根据当前拆分记录生成用于开票的基础数据。
+    name: 生成发票基础数据
     description: 根据当前拆分记录生成用于开票的基础数据。
     icon: receipt_text
-    available_on:
+    'on':
     - split_record
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 开票数据流水号
+        name: 开票数据流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       amount:
-        display_name: 开票金额
+        name: 开票金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       occurred_on:
-        display_name: 生成日期
+        name: 生成日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: ready
       details:
-        display_name: 开票信息
+        name: 开票信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - invoice_basis_data
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - derives
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - invoice_basis_data
+        relations:
+        - derives
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 生成发票基础数据并追溯到当前拆分记录。
     idempotency: required
   open_user_account:
-    display_name: 开立用户资金账户
-    summary: 为当前客户开立不依赖具体 ETC 卡的用户资金账户。
+    name: 开立用户资金账户
     description: 为当前客户开立不依赖具体 ETC 卡的用户资金账户。
     icon: wallet_cards
-    available_on:
+    'on':
     - user
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 账户名称
+        name: 账户名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       reference_no:
-        display_name: 账户编号
+        name: 账户编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: active
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - user_account
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - associates
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - user_account
+        relations:
+        - associates
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 开立用户资金账户并关联当前客户。
     idempotency: required
   open_card_account:
-    display_name: 开立卡资金账户
-    summary: 为当前 ETC 卡开立用于充值、圈存和消费扣款的卡资金账户。
+    name: 开立卡资金账户
     description: 为当前 ETC 卡开立用于充值、圈存和消费扣款的卡资金账户。
     icon: wallet_cards
-    available_on:
+    'on':
     - etc_card
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 账户名称
+        name: 账户名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       reference_no:
-        display_name: 账户编号
+        name: 账户编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: active
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - card_account
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - associates
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - card_account
+        relations:
+        - associates
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 开立卡资金账户并关联当前 ETC 卡。
     idempotency: required
   register_stock_account:
-    display_name: 登记库存账户
-    summary: 为当前机构或操作员登记实物库存数量账本。
+    name: 登记库存账户
     description: 为当前机构或操作员登记实物库存数量账本。
     icon: warehouse
-    available_on:
+    'on':
     - party
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 库存账户名称
+        name: 库存账户名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       category:
-        display_name: 库存账户类别
+        name: 库存账户类别
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       reference_no:
-        display_name: 库存账户编号
+        name: 库存账户编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: active
       details:
-        display_name: 补充信息
+        name: 补充信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - stock_account
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - associates
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - stock_account
+        relations:
+        - associates
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记库存账户并关联当前机构或操作员。
     idempotency: required
   record_account_transaction:
-    display_name: 登记账户交易
-    summary: 在当前用户或卡资金账户登记充值、圈存、冲正、退费、退款、补交或缴费。
+    name: 登记账户交易
     description: 在当前用户或卡资金账户登记充值、圈存、冲正、退费、退款、补交或缴费。
     icon: badge_dollar_sign
-    available_on:
+    'on':
     - user_account
     - card_account
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 交易名称
+        name: 交易名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       category:
-        display_name: 交易类别
+        name: 交易类别
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       reference_no:
-        display_name: 交易流水号
+        name: 交易流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       amount:
-        display_name: 交易金额
+        name: 交易金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       occurred_on:
-        display_name: 交易日期
+        name: 交易日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: completed
       reason:
-        display_name: 业务原因
+        name: 业务原因
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: reason
       details:
-        display_name: 交易详情
+        name: 交易详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - account_transaction
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - associates
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - account_transaction
+        relations:
+        - associates
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记账户交易并关联当前账户。
     idempotency: required
   record_account_entry:
-    display_name: 登记账户记账
-    summary: 将当前资金交易实际记入用户账户或卡账户，并保留记账后的余额事实。
+    name: 登记账户记账
     description: 将当前资金交易实际记入用户账户或卡账户，并保留记账后的余额事实。
     icon: notebook_pen
-    available_on:
+    'on':
     - account_transaction
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 记账名称
+        name: 记账名称
         description: ''
+        required: true
         type: string
-        required: true
-        object_types: []
       account_id:
-        display_name: 记账账户
+        name: 记账账户
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - user_account
         - card_account
       reference_no:
-        display_name: 记账流水号
+        name: 记账流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       category:
-        display_name: 记账类型
+        name: 记账类型
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       amount:
-        display_name: 变动金额
+        name: 变动金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       occurred_on:
-        display_name: 记账日期
+        name: 记账日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       balance:
-        display_name: 记账后余额
+        name: 记账后余额
         description: ''
-        type: money
         required: false
-        object_types: []
+        property: balance
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: booked
       details:
-        display_name: 记账详情
+        name: 记账详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - account_entry
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - derives
-      - contains
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - account_entry
+        relations:
+        - derives
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记账户记账明细并关联资金账户和来源交易。
     idempotency: required
   record_stock_movement:
-    display_name: 登记库存变化
-    summary: 在当前库存账户登记 ETC 卡、OBU、CPC 卡或纸券的入库、领用、上缴或调整。
+    name: 登记库存变化
     description: 在当前库存账户登记 ETC 卡、OBU、CPC 卡或纸券的入库、领用、上缴或调整。
     icon: package_open
-    available_on:
+    'on':
     - stock_account
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 库存流水号
+        name: 库存流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       category:
-        display_name: 变化类别
+        name: 变化类别
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       item_id:
-        display_name: 库存物品
+        name: 库存物品
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - obu
         - etc_card
         - cpc_card
         - paper_ticket
       quantity:
-        display_name: 变化数量
+        name: 变化数量
         description: ''
-        type: number
         required: true
-        object_types: []
+        property: quantity
       occurred_on:
-        display_name: 发生日期
+        name: 发生日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       reason:
-        display_name: 业务原因
+        name: 业务原因
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: reason
       details:
-        display_name: 变化详情
+        name: 变化详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - stock_movement
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - associates
-      - references
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - stock_movement
+        relations:
+        - associates
+        - references
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记实物库存变化并关联库存账户和具体物品。
     idempotency: required
   record_consumption:
-    display_name: 登记 ETC 消费
-    summary: 根据当前 ETC 通行登记消费明细，并关联实际扣款的卡资金账户。
+    name: 登记 ETC 消费
     description: 根据当前 ETC 通行登记消费明细，并关联实际扣款的卡资金账户。
     icon: circle_dollar_sign
-    available_on:
+    'on':
     - passage
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 消费流水号
+        name: 消费流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       account_id:
-        display_name: 卡资金账户
+        name: 卡资金账户
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - card_account
       amount:
-        display_name: 实收金额
+        name: 实收金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       occurred_on:
-        display_name: 消费日期
+        name: 消费日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: booked
       details:
-        display_name: 应收与优惠明细
+        name: 应收与优惠明细
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - consumption_detail
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - references
-      - associates
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - consumption_detail
+        relations:
+        - references
+        - associates
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记 ETC 消费并建立通行和卡资金账户追溯关系。
     idempotency: required
   create_bill:
-    display_name: 生成账单
-    summary: 为当前客户建立一个账单汇总对象，消费明细可随后纳入该账单。
+    name: 生成账单
     description: 为当前客户建立一个账单汇总对象，消费明细可随后纳入该账单。
     icon: file_text
-    available_on:
+    'on':
     - user
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 账单编号
+        name: 账单编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       amount:
-        display_name: 账单金额
+        name: 账单金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       period:
-        display_name: 账单期间
+        name: 账单期间
         description: ''
-        type: period
         required: true
-        object_types: []
+        property: period
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: pending
       details:
-        display_name: 账单详情
+        name: 账单详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - bill
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - associates
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - bill
+        relations:
+        - associates
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 生成账单并关联当前客户。
     idempotency: required
   include_consumption_in_bill:
-    display_name: 纳入消费明细
-    summary: 将一笔 ETC 消费作为当前账单的汇总来源。
+    name: 纳入消费明细
     description: 将一笔 ETC 消费作为当前账单的汇总来源。
     icon: list_end
-    available_on:
+    'on':
     - bill
-    context_input: ''
+    context: ''
     inputs:
       consumption_id:
-        display_name: 消费明细
+        name: 消费明细
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - consumption_detail
       amount:
-        display_name: 纳入金额
+        name: 纳入金额
         description: ''
-        type: money
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects: []
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - derives
-      updates_relations: []
-      retires_relations: []
+        property: amount
+    requires: []
+    changes:
+      create:
+        objects: []
+        relations:
+        - derives
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 将所选消费明细纳入当前账单。
     idempotency: required
   settle_bill:
-    display_name: 结算账单
-    summary: 根据当前账单登记缴费、银行扣款或单位结算结果。
+    name: 结算账单
     description: 根据当前账单登记缴费、银行扣款或单位结算结果。
     icon: badge_check
-    available_on:
+    'on':
     - bill
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 结算流水号
+        name: 结算流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       amount:
-        display_name: 结算金额
+        name: 结算金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       occurred_on:
-        display_name: 结算日期
+        name: 结算日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       result:
-        display_name: 结算结果
+        name: 结算结果
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: result
       details:
-        display_name: 结算详情
+        name: 结算详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - bill_settlement
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - derives
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - bill_settlement
+        relations:
+        - derives
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记账单结算结果并追溯到当前账单。
     idempotency: required
   record_reconciliation:
-    display_name: 登记对账结果
-    summary: 对当前资金交易、消费或账单结算登记一致性结论。
+    name: 登记对账结果
     description: 对当前资金交易、消费或账单结算登记一致性结论。
     icon: list_checks
-    available_on:
+    'on':
     - account_transaction
     - consumption_detail
     - bill_settlement
-    context_input: ''
+    context: ''
     inputs:
       reference_no:
-        display_name: 对账流水号
+        name: 对账流水号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       occurred_on:
-        display_name: 对账日期
+        name: 对账日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       result:
-        display_name: 对账结论
+        name: 对账结论
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: result
       details:
-        display_name: 差异明细
+        name: 差异明细
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - reconciliation_result
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - derives
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - reconciliation_result
+        relations:
+        - derives
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记对账结果并追溯到当前业务事实。
     idempotency: required
   publish_fee_module:
-    display_name: 发布计费模块
-    summary: 登记一版同时发布和生效的计费参数包。
+    name: 发布计费模块
     description: 登记一版同时发布和生效的计费参数包。
     icon: package_check
-    available_on: []
-    context_input: ''
+    'on': []
+    context: ''
     inputs:
       name:
-        display_name: 模块名称
+        name: 模块名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       version:
-        display_name: 模块版本
+        name: 模块版本
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: version
       valid_from:
-        display_name: 生效日期
+        name: 生效日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: valid_from
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: published
       details:
-        display_name: 模块信息
+        name: 模块信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - fee_module
-      updates_objects: []
-      retires_objects: []
-      creates_relations: []
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - fee_module
+        relations: []
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记新的计费模块版本。
     idempotency: required
   add_fee_rule:
-    display_name: 添加计费规则
-    summary: 在当前计费模块中添加费率、优惠、路径、代收或省界规则。
+    name: 添加计费规则
     description: 在当前计费模块中添加费率、优惠、路径、代收或省界规则。
     icon: file_cog
-    available_on:
+    'on':
     - fee_module
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 规则名称
+        name: 规则名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       category:
-        display_name: 规则类别
+        name: 规则类别
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       code:
-        display_name: 规则编码
+        name: 规则编码
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: code
       version:
-        display_name: 规则版本
+        name: 规则版本
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: version
       valid_from:
-        display_name: 生效日期
+        name: 生效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_from
       valid_to:
-        display_name: 失效日期
+        name: 失效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_to
       details:
-        display_name: 规则内容
+        name: 规则内容
         description: ''
-        type: json
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - fee_rule
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - fee_rule
+        relations:
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 添加计费规则并纳入当前模块。
     idempotency: required
   add_fee_rule_basis:
-    display_name: 关联计费依据
-    summary: 为当前费率或路径规则关联收费单元、收费站、门架或其他规则作为计算依据。
+    name: 关联计费依据
     description: 为当前费率或路径规则关联收费单元、收费站、门架或其他规则作为计算依据。
     icon: network
-    available_on:
+    'on':
     - fee_rule
-    context_input: ''
+    context: ''
     inputs:
       basis_id:
-        display_name: 计费依据
+        name: 计费依据
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - toll_interval
         - toll_station
         - toll_gantry
         - fee_rule
       role:
-        display_name: 依据角色
+        name: 依据角色
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: role
         default: calculation_basis
-    preconditions: []
-    side_effects:
-      creates_objects: []
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - references
-      updates_relations: []
-      retires_relations: []
+    requires: []
+    changes:
+      create:
+        objects: []
+        relations:
+        - references
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 为当前计费规则建立依据关系。
     idempotency: required
   derive_fee_rule:
-    display_name: 生成计费结果规则
-    summary: 根据当前收费单元、收费站、门架或费率规则生成省级费率、路径或代收结果规则。
+    name: 生成计费结果规则
     description: 根据当前收费单元、收费站、门架或费率规则生成省级费率、路径或代收结果规则。
     icon: route
-    available_on:
+    'on':
     - toll_interval
     - toll_station
     - toll_gantry
     - fee_rule
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 规则名称
+        name: 规则名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       category:
-        display_name: 规则类别
+        name: 规则类别
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       code:
-        display_name: 规则编码
+        name: 规则编码
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: code
       version:
-        display_name: 规则版本
+        name: 规则版本
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: version
       valid_from:
-        display_name: 生效日期
+        name: 生效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_from
       valid_to:
-        display_name: 失效日期
+        name: 失效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_to
       details:
-        display_name: 规则内容
+        name: 规则内容
         description: ''
-        type: json
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - fee_rule
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - derives
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - fee_rule
+        relations:
+        - derives
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 生成计费结果规则并保留来源关系。
     idempotency: required
   add_control_record:
-    display_name: 纳入业务控制
-    summary: 将当前车辆、OBU、ETC 卡、CPC 卡或业务设备纳入状态、追缴、预约或白名单控制。
+    name: 纳入业务控制
     description: 将当前车辆、OBU、ETC 卡、CPC 卡或业务设备纳入状态、追缴、预约或白名单控制。
     icon: shield_check
-    available_on:
+    'on':
     - vehicle
     - obu
     - etc_card
     - cpc_card
     - business_device
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 控制记录名称
+        name: 控制记录名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       category:
-        display_name: 控制类别
+        name: 控制类别
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       code:
-        display_name: 控制记录编码
+        name: 控制记录编码
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: code
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: active
       version:
-        display_name: 版本
+        name: 版本
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: version
       valid_from:
-        display_name: 生效日期
+        name: 生效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_from
       valid_to:
-        display_name: 失效日期
+        name: 失效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_to
       reason:
-        display_name: 业务原因
+        name: 业务原因
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: reason
       details:
-        display_name: 控制详情
+        name: 控制详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - control_record
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - references
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - control_record
+        relations:
+        - references
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记业务控制记录并关联当前受控对象。
     idempotency: required
   promote_control_record:
-    display_name: 确认追缴名单
-    summary: 根据当前预追缴记录生成正式追缴记录，保留稽核确认来源。
+    name: 确认追缴名单
     description: 根据当前预追缴记录生成正式追缴记录，保留稽核确认来源。
     icon: shield_alert
-    available_on:
+    'on':
     - control_record
-    context_input: ''
+    context: ''
     inputs:
       name:
-        display_name: 追缴记录名称
+        name: 追缴记录名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       code:
-        display_name: 追缴记录编码
+        name: 追缴记录编码
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: code
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: active
       version:
-        display_name: 版本
+        name: 版本
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: version
       valid_from:
-        display_name: 生效日期
+        name: 生效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_from
       valid_to:
-        display_name: 失效日期
+        name: 失效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_to
       reason:
-        display_name: 确认原因
+        name: 确认原因
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reason
       details:
-        display_name: 追缴详情
+        name: 追缴详情
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - control_record
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - derives
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - control_record
+        relations:
+        - derives
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 生成正式追缴记录并保留预追缴来源。
     idempotency: required
   register_operating_parameter:
-    display_name: 登记运行参数
-    summary: 登记收费站、车道、门架或联网中心使用的版本化运行配置。
+    name: 登记运行参数
     description: 登记收费站、车道、门架或联网中心使用的版本化运行配置。
     icon: settings_2
-    available_on: []
-    context_input: ''
+    'on': []
+    context: ''
     inputs:
       name:
-        display_name: 参数名称
+        name: 参数名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       category:
-        display_name: 参数类别
+        name: 参数类别
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       code:
-        display_name: 参数编码
+        name: 参数编码
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: code
       status:
-        display_name: 状态
+        name: 状态
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: status
         default: active
       version:
-        display_name: 版本
+        name: 版本
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: version
       valid_from:
-        display_name: 生效日期
+        name: 生效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_from
       valid_to:
-        display_name: 失效日期
+        name: 失效日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_to
       details:
-        display_name: 参数内容
+        name: 参数内容
         description: ''
-        type: json
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - operating_parameter
-      updates_objects: []
-      retires_objects: []
-      creates_relations: []
-      updates_relations: []
-      retires_relations: []
+        property: details
+    requires: []
+    changes:
+      create:
+        objects:
+        - operating_parameter
+        relations: []
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记新的运行参数。
     idempotency: required
   apply_operating_parameter:
-    display_name: 应用运行参数
-    summary: 将当前运行参数应用到收费站、收费车道、收费门架、车辆或业务设备。
+    name: 应用运行参数
     description: 将当前运行参数应用到收费站、收费车道、收费门架、车辆或业务设备。
     icon: settings
-    available_on:
+    'on':
     - operating_parameter
-    context_input: ''
+    context: ''
     inputs:
       target_id:
-        display_name: 应用对象
+        name: 应用对象
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - toll_station
         - toll_lane
         - toll_gantry
@@ -5620,29 +3695,31 @@ actions:
         - vehicle
         - business_device
       role:
-        display_name: 参数作用
+        name: 参数作用
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: role
         default: configured_object
-    preconditions: []
-    side_effects:
-      creates_objects: []
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - references
-      updates_relations: []
-      retires_relations: []
+    requires: []
+    changes:
+      create:
+        objects: []
+        relations:
+        - references
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 将运行参数关联到所选业务对象。
     idempotency: required
-interaction_policies:
-  user_chat:
-    include_in_system_prompt: true
-    instructions:
-    - 通行、收费和清分结论优先使用确定性函数，不自行猜测金额或关系。
-    - 用户明确说出“登记收费公路”“登记车辆通行”“生成清分结果”等业务操作时，首轮直接调用 ui_open_action_form；只有无法确定 action_id 时才调用 get_available_actions。
-    - 不要为了补齐 Action 的必填输入在对话中逐项追问；将已明确且格式可靠的值放入 initial_inputs，其余由用户在表单中填写。
-    - derives 的方向固定为来源事实指向生成结果；例如 passage -> split_record -> clearing_result。
-    - 同类设备、名单和运行参数已经过领域抽象，具体种类优先写入 category，不要自行创建大量细粒度类型。
+agent:
+  excluded_tools:
+  - dispatch_workers
+  instructions:
+  - 通行、收费和清分结论优先使用确定性函数，不自行猜测金额或关系。
+  - 用户明确说出“登记收费公路”“登记车辆通行”“生成清分结果”等业务操作时，首轮直接调用 request_action_input；只有无法确定 action_id 时才调用 get_available_actions。
+  - 不要为了补齐 Action 的必填输入在对话中逐项追问；将已明确且格式可靠的值放入 initial_inputs，其余由用户在表单中填写。
+  - derives 的方向固定为来源事实指向生成结果；例如 passage -> split_record -> clearing_result。
+  - 同类设备、名单和运行参数已经过领域抽象，具体种类优先写入 category，不要自行创建大量细粒度类型。

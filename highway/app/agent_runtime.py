@@ -22,7 +22,7 @@ class OagAgentRuntime:
         self._lock = threading.RLock()
         self.ontology = None
         self.repository = None
-        self.registry = None
+        self.bindings = None
         self.workspace = None
         self.actions = None
         self._configure()
@@ -31,13 +31,14 @@ class OagAgentRuntime:
         try:
             from uom.loader import load_domain
 
-            self.ontology, self.repository, self.registry = load_domain(
-                self.domain_dir
-            )
-            self.actions = self.registry.get_action_runtime()
+            runtime = load_domain(self.domain_dir)
+            self.ontology = runtime.ontology
+            self.repository = runtime.repository
+            self.bindings = runtime.bindings
+            self.actions = runtime.actions
             if self.actions is None:
                 raise RuntimeError("UOM Action service 未注册")
-            self.workspace = self.actions.workspace
+            self.workspace = runtime.workspace
         except Exception as exc:
             self._error = f"UOM domain 初始化失败: {exc}"
             return
@@ -61,11 +62,10 @@ class OagAgentRuntime:
             self._error = "未配置 OPENAI_API_KEY 或 LLM_API_KEY"
             return
         try:
-            from openai import OpenAI
-
             from oag.agent import Agent
             from oag.harness import Harness
             from oag.runtime import HarnessConfig
+            from openai import OpenAI
 
             client_args: dict[str, Any] = {"api_key": api_key}
             if base_url:
@@ -74,12 +74,11 @@ class OagAgentRuntime:
             harness = Harness(
                 ontology=self.ontology,
                 repository=self.repository,
-                registry=self.registry,
+                bindings=self.bindings,
                 llm_client=client,
                 model=model,
                 config=HarnessConfig(
                     enable_write_confirmation=True,
-                    enable_analysis_tools=False,
                     max_turns=8,
                     runtime_context={"surface": "Highway OMS"},
                     llm_extra_body=(
@@ -105,9 +104,9 @@ class OagAgentRuntime:
         return self.workspace.bootstrap(include_graph=include_graph)
 
     def call_domain(self, name: str, **kwargs: Any) -> Any:
-        if self.registry is None:
+        if self.bindings is None:
             raise RuntimeError(self._error or "UOM domain 未初始化")
-        return self.registry.call(name, **kwargs)
+        return self.bindings.call(name, **kwargs)
 
     def apply_changes(self, **kwargs: Any) -> Any:
         return self.workspace.apply_changes(**kwargs)
@@ -118,9 +117,6 @@ class OagAgentRuntime:
             "runtime": "oag-agent",
             "message": "已连接" if self._agent is not None else self._error,
         }
-
-    def get_service(self, name: str) -> Any:
-        return self.registry.get_service(name) if self.registry is not None else None
 
     def chat(self, message: str, session_id: str) -> Iterator[dict[str, Any]]:
         if self._agent is None:

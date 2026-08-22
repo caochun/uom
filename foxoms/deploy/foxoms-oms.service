@@ -10,7 +10,7 @@ Environment="PYTHONPATH=%h/Develop/fox-oms/oag-agent:%h/Develop/fox-oms"
 Environment=UOM_DOMAIN_DIR=foxoms
 Environment=PYTHONUNBUFFERED=1
 UMask=0077
-ExecStartPre=%h/.local/bin/uv run --project %h/Develop/fox-oms/oag-agent -- python %h/Develop/fox-oms/foxoms/scripts/validate_model.py --root %h/Develop/fox-oms/foxoms
+ExecStartPre=%h/.local/bin/uv run --project %h/Develop/fox-oms/oag-agent -- python -m uom.validation --root %h/Develop/fox-oms/foxoms
 ExecStart=%h/.local/bin/uv run --project %h/Develop/fox-oms/oag-agent --env-file %h/Develop/fox-oms/.env -- python -m foxoms.app.server --host 0.0.0.0 --port 8768
 Restart=on-failure
 RestartSec=5s

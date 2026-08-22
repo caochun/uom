@@ -9,25 +9,59 @@ Object   可独立识别和追溯的业务对象
 Relation 两个 Object 之间有方向、可携带事实的业务关系
 ```
 
-领域 `model.yaml` 本身就是符合 OAG `Ontology` schema 的公开本体，OAG 直接加载其中的对象、关系、
-Function 和 Action 契约，不再经过 UOM 语义编译。例如 OAG 查询 `contract` 时，存储适配器把它映射到 SQLite 对象表中的
-`type=contract`，并将物理记录的 `properties` 展平成语义属性。Action 不是第三种图记录，
-而是创建或改变 Object/Relation 的有副作用业务操作。
+领域 `model.yaml` 是面向业务建模者和 LLM 维护场景的 UOM 源模型（`uom.domain.v1`）。UOM 在领域加载时
+将它编译为符合 OAG `Ontology` schema（`oag.ontology.v1`）的运行时本体，统一补齐稳定 ID、对象/关系
+基础属性、Repository binding、可变性和 Action 副作用契约。OAG 只接收编译结果，不解释
+UOM DSL。Action 不是第三种图记录，而是创建或改变 Object/Relation 的有副作用业务操作。
 
 项目按职责分为三层：
 
 ```text
-oag-agent/  Object / Relation / Function / Action schema、Agent 和 Repository 运行时
-uom/        SQLite 图适配、Action 执行、ChangeSet、审计和模型编辑运行时
+oag-agent/  本体元模型、Agent、Tool、逻辑 Repository、SourceManager 和 ActionRuntime 协议
+uom/        领域源模型 schema、编译器、Source adapter、UomChangeStore、Action、审计和模型编辑
 highway/    高速领域模型、数据、函数、空间能力和 Web 应用
 leasing/    融资租赁模型、数据、Action、确定性函数、领域资料和 Web 应用
 foxoms/     企业日常运营模型、Mock 数据、Agent 和 Web 应用
 ```
 
-每个领域只用一个公开本体文件，例如 [`highway/model.yaml`](highway/model.yaml)，其中直接定义具体对象、
-关系、只读 Function、业务 Action 和 Agent 策略。Action 的公开契约包含输入、适用上下文、前置条件和
-副作用摘要；具体 ChangeSet 模板放在领域私有的 `action_plans.yaml`，不会进入 LLM 本体或浏览器 bootstrap。
-可选的 `provider.py` 只负责绑定 Python Function 实现和领域运行时服务。当前高速模型基于
+每个领域只维护一个 UOM 源模型，例如 [`highway/model.yaml`](highway/model.yaml)，其中定义具体对象、关系、
+只读 Function、业务 Action、命名 Repository 和 Agent 策略。编译后的 OAG Ontology 只存在于运行时，供
+LLM、Prompt、Tool 和 Repository 使用。Action 的公开契约包含输入、适用上下文、前置条件和副作用摘要；
+具体 ChangeSet 模板放在领域私有的 `action_plans.yaml`，不会进入 LLM 本体或浏览器 bootstrap。
+
+```text
+domain/model.yaml (uom.domain.v1)
+        |
+        | UOM compiler
+        v
+OAG Ontology (oag.ontology.v1, runtime)
+        |
+        +--> Prompt / Tool / Agent
+        +--> OntologyRepository
+                    |
+                    v
+              SourceManager
+               /        \
+ OntologyRepository      UomChangeStore
+               \        /
+            UOM Source --> SQLite / 外部业务系统
+```
+
+`OntologyRepository` 是 OAG 的逻辑业务数据访问边界，按本体中声明的具体 Object/Relation 类型访问数据。
+`SourceManager` 创建并复用命名 source 实例；UOM Workspace 从同一实例建立 `UomChangeStore`，执行物理图
+ChangeSet、revision、退役、审计和历史操作，因此不会自行打开另一条 SQLite 访问通道，也不会把这些
+UOM 专有语义放入 OAG Repository。
+
+OAG 的 `load_domain(provider)` 只返回 `Ontology`、`OntologyRepository` 和 `RuntimeBindings`。
+`RuntimeBindings` 只绑定本体中已声明的 Function 实现和唯一的 `ActionRuntime`，不作为任意领域服务容器。
+UOM 的 `load_domain(domain_dir)` 在此基础上返回 `UomDomainRuntime`，显式提供 `workspace`、
+`change_store` 和 `actions`。地图投影等仅属于具体应用的能力由应用直接创建，例如 Highway 的
+`SpatialViewService`，不会注册进 OAG。
+
+对象或关系可在源模型中通过 `repository`、`selector`、`mapping` 映射到不同的 ERP、CRM 或 API；
+当前三个领域的默认实现是 UOM SQLite 属性图。
+可选的 `provider.py` 只负责绑定数据 Source、Python Function 实现和 ActionRuntime；领域或应用服务
+由 UOM runtime 或具体应用显式持有。当前高速模型基于
 [`highway/docs/高速联网收费领域本体模型 V3.1.md`](highway/docs/高速联网收费领域本体模型%20V3.1.md) 做了面向 LLM 的抽象，
 没有把设备、名单和运行参数逐表展开。
 
@@ -107,18 +141,18 @@ UOM 使用“当前状态图 + 不可变 Action 历史”处理业务变化。�
 - 每次数据变更都记录操作、操作人、渠道、原因以及每条记录的 `before` / `after`。
 - 提交时校验 `revision`；如果预览后数据已被修改，本次提交失效，必须刷新后重试。
 
-`model.yaml` 的演化与业务数据历史分开管理。类型或属性可使用 `deprecated: true`
-停止新增，使用 `aliases` 保留旧名称。已被数据使用的属性不能原地修改值类型，应新建属性并执行
-显式数据迁移。`model.yaml` 的完整版本历史仍由 Git 管理。
+`model.yaml` 的演化与业务数据历史分开管理。`aliases` 用于记录同一概念的其他业务名称。
+已被数据使用的属性不能原地修改值类型，应新建属性并执行显式数据迁移。
+`model.yaml` 的完整版本历史仍由 Git 管理。
 
 ## 校验
 
 ```bash
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python highway/scripts/validate_model.py --root highway
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m uom.validation --root highway
 PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s highway/tests -v
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python leasing/scripts/validate_model.py --root leasing
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m uom.validation --root leasing
 PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s leasing/tests -v
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python foxoms/scripts/validate_model.py --root foxoms
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m uom.validation --root foxoms
 PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s foxoms/tests -v
 node --check foxoms/app/static/app.js
 node --check highway/app/static/app.js

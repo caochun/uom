@@ -51,7 +51,7 @@ systemctl --user enable --now foxoms-oms.service
 ## 校验
 
 ```bash
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python foxoms/scripts/validate_model.py --root foxoms
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m uom.validation --root foxoms
 PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s foxoms/tests -v
 node --check foxoms/app/static/app.js
 ```

@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from uom.model import (
     load_action_plans,
+    load_domain_model,
     load_public_ontology,
     storage_contract_payload,
     workspace_model,
@@ -218,7 +219,7 @@ class ModelValidator:
                 self.result.error(path, "must contain name")
             if definition.get("type") not in VALUE_TYPES:
                 self.result.error(f"{path}.type", f"must be one of {', '.join(sorted(VALUE_TYPES))}")
-            self._validate_evolution_metadata(definition, path)
+            self._validate_aliases(definition, path)
 
         for kind in ("object", "relation"):
             section_name = f"{kind}_types"
@@ -234,7 +235,7 @@ class ModelValidator:
                     continue
                 if not definition.get("name") or not definition.get("description"):
                     self.result.error(path, "must contain name and description")
-                self._validate_evolution_metadata(definition, path)
+                self._validate_aliases(definition, path)
 
                 properties = definition.get("properties", {})
                 if not isinstance(properties, dict):
@@ -265,9 +266,7 @@ class ModelValidator:
 
         self._validate_actions(model.get("actions"))
 
-    def _validate_evolution_metadata(self, definition: dict[str, Any], path: str) -> None:
-        if "deprecated" in definition and not isinstance(definition["deprecated"], bool):
-            self.result.error(f"{path}.deprecated", "must be a boolean")
+    def _validate_aliases(self, definition: dict[str, Any], path: str) -> None:
         aliases = definition.get("aliases")
         if aliases is None:
             return
@@ -987,9 +986,10 @@ def validate_model(root: Path) -> ValidationResult:
     result = ValidationResult()
     object_data, relation_data = load_data(root)
     try:
+        source_model, _ = load_domain_model(root)
         public_model, _ = load_public_ontology(root)
         action_plans = load_action_plans(root)
-        editor_model = workspace_model(public_model, action_plans)
+        editor_model = workspace_model(public_model, action_plans, source_model)
     except (TypeError, ValueError, ValidationError) as exc:
         result.error("model", str(exc))
         return result

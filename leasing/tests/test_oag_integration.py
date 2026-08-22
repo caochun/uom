@@ -6,7 +6,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "oag-agent"))
@@ -24,9 +23,12 @@ class LeasingOagIntegrationTest(unittest.TestCase):
             self.domain_root,
             ignore=shutil.ignore_patterns("__pycache__", "*.db", "*.db-*"),
         )
-        self.ontology, self.repository, self.registry = load_domain(self.domain_root)
-        self.actions = self.registry.get_action_runtime()
-        self.graph = self.registry.get_service("uom_graph")
+        runtime = load_domain(self.domain_root)
+        self.ontology = runtime.ontology
+        self.repository = runtime.repository
+        self.bindings = runtime.bindings
+        self.actions = runtime.actions
+        self.graph = runtime.change_store
 
     def tearDown(self) -> None:
         self.repository.close()
@@ -129,7 +131,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         approval_id = self.created_object_id(approval_preview, "approval")
         self.assertEqual(
             "pending_approval",
-            self.graph.get_object("Object", plan_id)["properties"]["status"],
+            self.graph.get_object(plan_id)["properties"]["status"],
         )
 
         self.apply_business_action(
@@ -146,7 +148,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(
             "approved",
-            self.graph.get_object("Object", plan_id)["properties"]["status"],
+            self.graph.get_object(plan_id)["properties"]["status"],
         )
 
         contract_preview = self.apply_business_action(
@@ -164,7 +166,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         contract_id = self.created_object_id(contract_preview, "contract")
         self.assertEqual(
             "contracted",
-            self.graph.get_object("Object", plan_id)["properties"]["status"],
+            self.graph.get_object(plan_id)["properties"]["status"],
         )
 
         schedule_v1_preview = self.apply_business_action(
@@ -204,7 +206,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(
             "inactive",
-            self.graph.get_object("Object", schedule_v1_id)["properties"]["status"],
+            self.graph.get_object(schedule_v1_id)["properties"]["status"],
         )
 
         receivable_preview = self.apply_business_action(
@@ -243,7 +245,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(
             "partial",
-            self.graph.get_object("Object", payment_id)["properties"]["status"],
+            self.graph.get_object(payment_id)["properties"]["status"],
         )
         with self.assertRaisesRegex(ChangeValidationError, "未结清应收"):
             self.actions.preview_action(
@@ -268,11 +270,11 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(
             "allocated",
-            self.graph.get_object("Object", payment_id)["properties"]["status"],
+            self.graph.get_object(payment_id)["properties"]["status"],
         )
         self.assertEqual(
             "settled",
-            self.graph.get_object("Object", receivable_id)["properties"]["status"],
+            self.graph.get_object(receivable_id)["properties"]["status"],
         )
 
         settlement_preview = self.apply_business_action(
@@ -288,13 +290,13 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         settlement_id = self.created_object_id(settlement_preview, "settlement")
         self.assertEqual(
             "settled",
-            self.graph.get_object("Object", contract_id)["properties"]["status"],
+            self.graph.get_object(contract_id)["properties"]["status"],
         )
         self.assertEqual(
             "inactive",
-            self.graph.get_object("Object", schedule_v2_id)["properties"]["status"],
+            self.graph.get_object(schedule_v2_id)["properties"]["status"],
         )
-        audit = self.registry.call("audit_finance_consistency")
+        audit = self.bindings.call("audit_finance_consistency")
         self.assertTrue(audit["valid"], audit["errors"])
         self.assertEqual(
             {"reserved": 0.0, "used": 0.0},
@@ -421,9 +423,9 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(
             "rejected",
-            self.graph.get_object("Object", "lease_plan:rejection")["properties"]["status"],
+            self.graph.get_object("lease_plan:rejection")["properties"]["status"],
         )
-        audit = self.registry.call("audit_finance_consistency")
+        audit = self.bindings.call("audit_finance_consistency")
         self.assertTrue(audit["valid"], audit["errors"])
         self.assertEqual(
             {"reserved": 0.0, "used": 0.0},
@@ -519,7 +521,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         approval_id = next(item["record"]["id"] for item in approval["operations"] if item["action"] == "create_object")
         self.assertEqual(
             "pending_approval",
-            self.graph.get_object("Object", "lease_plan:approval-test")["properties"]["status"],
+            self.graph.get_object("lease_plan:approval-test")["properties"]["status"],
         )
 
         decision = self.actions.preview_action(
@@ -535,13 +537,13 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         )
         self.assertTrue(decision["valid"], decision["errors"])
         self.actions.execute_action(preview_token=decision["preview_token"])
-        updated = self.graph.get_object("Object", approval_id)
+        updated = self.graph.get_object(approval_id)
         self.assertEqual("pending", updated["properties"]["status"])
         self.assertEqual("pending", updated["properties"]["details"]["result"]["decision"])
         self.assertEqual(1, len(updated["properties"]["details"]["history"]))
         self.assertEqual(
             "pending_approval",
-            self.graph.get_object("Object", "lease_plan:approval-test")["properties"]["status"],
+            self.graph.get_object("lease_plan:approval-test")["properties"]["status"],
         )
 
         final_decision = self.actions.preview_action(
@@ -558,13 +560,13 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         )
         self.assertTrue(final_decision["valid"], final_decision["errors"])
         self.actions.execute_action(preview_token=final_decision["preview_token"])
-        updated = self.graph.get_object("Object", approval_id)
+        updated = self.graph.get_object(approval_id)
         self.assertEqual("approved", updated["properties"]["status"])
         self.assertEqual("approved", updated["properties"]["details"]["result"]["decision"])
         self.assertEqual(2, len(updated["properties"]["details"]["history"]))
         self.assertEqual(
             "approved",
-            self.graph.get_object("Object", "lease_plan:approval-test")["properties"]["status"],
+            self.graph.get_object("lease_plan:approval-test")["properties"]["status"],
         )
 
         signed = self.actions.preview_action(
@@ -583,7 +585,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         self.actions.execute_action(preview_token=signed["preview_token"])
         self.assertEqual(
             "contracted",
-            self.graph.get_object("Object", "lease_plan:approval-test")["properties"]["status"],
+            self.graph.get_object("lease_plan:approval-test")["properties"]["status"],
         )
         available = self.actions.list_actions(
             context_id="lease_plan:approval-test",
@@ -702,7 +704,7 @@ class LeasingOagIntegrationTest(unittest.TestCase):
                 "sequence": 1,
             },
         )
-        payment = self.graph.get_object("Object", "payment:precondition-apply")
+        payment = self.graph.get_object("payment:precondition-apply")
         self.graph.update_object(
             payment["id"],
             {"properties": {"status": "allocated"}},
@@ -782,11 +784,11 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         self.actions.execute_action(preview_token=preview["preview_token"])
         self.assertEqual(
             "partial",
-            self.graph.get_object("Object", "payment:test")["properties"]["status"],
+            self.graph.get_object("payment:test")["properties"]["status"],
         )
         self.assertEqual(
             "partial",
-            self.graph.get_object("Object", "receivable:test")["properties"]["status"],
+            self.graph.get_object("receivable:test")["properties"]["status"],
         )
 
         final = self.actions.preview_action(
@@ -803,11 +805,11 @@ class LeasingOagIntegrationTest(unittest.TestCase):
         self.actions.execute_action(preview_token=final["preview_token"])
         self.assertEqual(
             "allocated",
-            self.graph.get_object("Object", "payment:test")["properties"]["status"],
+            self.graph.get_object("payment:test")["properties"]["status"],
         )
         self.assertEqual(
             "settled",
-            self.graph.get_object("Object", "receivable:test")["properties"]["status"],
+            self.graph.get_object("receivable:test")["properties"]["status"],
         )
 
     def test_voucher_action_generates_balanced_entries(self) -> None:

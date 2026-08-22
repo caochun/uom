@@ -6,13 +6,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "oag-agent"))
 sys.path.insert(0, str(ROOT))
 
-from uom.loader import load_domain  # noqa: E402
 from uom.actions import ModelActionService  # noqa: E402
+from uom.loader import load_domain  # noqa: E402
 from uom.workspace import ChangeValidationError, UomWorkspaceService  # noqa: E402
 
 
@@ -25,8 +24,10 @@ class ModelActionServiceTest(unittest.TestCase):
             self.domain_root,
             ignore=shutil.ignore_patterns("__pycache__", "*.db", "*.db-*"),
         )
-        self.ontology, self.repository, self.registry = load_domain(self.domain_root)
-        self.graph = self.registry.get_service("uom_graph")
+        runtime = load_domain(self.domain_root)
+        self.ontology = runtime.ontology
+        self.repository = runtime.repository
+        self.graph = runtime.change_store
         self.workspace = UomWorkspaceService(self.domain_root, self.graph)
         self.actions = ModelActionService(self.workspace)
 

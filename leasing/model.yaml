@@ -1,1053 +1,294 @@
-schema: oag.ontology.v1
+schema: uom.domain.v1
 name: UOM 融资租赁领域模型
 version: 1.0.0
 description: 面向融资租赁经营与资金追溯的精简对象关系模型。模型围绕授信、方案、合同、放款、 应收、收款、核销和结清主链组织业务事实，并用版本、担保、会计和审批对象补充关键追溯。
-tool_preferences:
-  generic_search: fallback_only
-excluded_tools:
-- describe
-- mutate
-- summarize_progress
-- dispatch_workers
-data_sources:
-  uom_graph:
-    type: uom_sqlite_graph
+repositories:
+  graph:
+    type: sqlite_graph
     mode: writable
-    capabilities:
-    - object_query
-    - relation_query
-    - adjacency_query
-    - versioned_changeset
-    - history
     config:
       database: data/graph.db
+default_repository: graph
+properties:
+  category:
+    name: 类别
+    type: string
+    description: 同一对象类型下的业务分类。
+  code:
+    name: 编码
+    type: string
+    description: 稳定业务编码。
+  status:
+    name: 状态
+    type: string
+    description: 对象当前业务状态。
+  details:
+    name: 补充信息
+    type: json
+    description: 尚未稳定为公共属性的结构化事实。
+  reference_no:
+    name: 业务编号
+    type: string
+    description: 来源系统或业务单据编号。
+  amount:
+    name: 金额
+    type: money
+    description: 数值和 ISO 币种组成的金额。
+  valid_from:
+    name: 生效日
+    type: date
+    description: 规则或版本开始生效日期。
+  valid_to:
+    name: 失效日
+    type: date
+    description: 规则或版本结束生效日期。
+  occurred_on:
+    name: 业务日期
+    type: date
+    description: 业务事实发生或记账日期。
+  reason:
+    name: 原因
+    type: string
+    description: 调整、冲销或异常处理原因。
+  role:
+    name: 关系角色
+    type: string
+    description: 关系端点在业务联系中的角色。
+  version:
+    name: 版本号
+    type: string
+    description: 业务规则或计划版本。
+  sequence:
+    name: 顺序
+    type: number
+    description: 明细在计划或核销中的顺序。
+  due_on:
+    name: 到期日
+    type: date
+    description: 应收或合同约定到期日。
+  rate:
+    name: 比率
+    type: number
+    description: 利率、罚息率或费用比例。
+  period:
+    name: 业务期间
+    type: period
+    description: 汇总事实所属月份。
 objects:
   party:
-    display_name: 经营主体
-    summary: 出租方、资金方、服务机构或其他参与融资租赁经营的组织主体。
+    name: 经营主体
     description: 出租方、资金方、服务机构或其他参与融资租赁经营的组织主体。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: party
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类。
-      code:
-        type: string
-        required: false
-        display_name: 编码
-        description: 稳定业务编码。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      category: required
+      code: optional
+      status: optional
+      details: optional
   customer:
-    display_name: 客户
-    summary: 承租方、买方、卖方或保证人等客户侧业务主体。
+    name: 客户
     description: 承租方、买方、卖方或保证人等客户侧业务主体。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: customer
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: false
-        display_name: 类别
-        description: 同一对象类型下的业务分类。
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务编号
-        description: 来源系统或业务单据编号。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      category: optional
+      reference_no: required
+      status: optional
+      details: optional
   credit:
-    display_name: 授信额度
-    summary: 客户可使用的融资额度及其生命周期状态。
+    name: 授信额度
     description: 客户可使用的融资额度及其生命周期状态。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: credit
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      code:
-        type: string
-        required: true
-        display_name: 编码
-        description: 稳定业务编码。
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      valid_from:
-        type: date
-        required: false
-        display_name: 生效日
-        description: 规则或版本开始生效日期。
-      valid_to:
-        type: date
-        required: false
-        display_name: 失效日
-        description: 规则或版本结束生效日期。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
+      code: required
+      category: required
+      amount: required
+      valid_from: optional
+      valid_to: optional
+      status: required
   credit_entry:
-    display_name: 额度占用流水
-    summary: 额度预占、正式占用、释放或冲销形成的变动事实。
+    name: 额度占用流水
     description: 额度预占、正式占用、释放或冲销形成的变动事实。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: credit_entry
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 业务日期
-        description: 业务事实发生或记账日期。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      reason:
-        type: string
-        required: false
-        display_name: 原因
-        description: 调整、冲销或异常处理原因。
+      category: required
+      amount: required
+      occurred_on: required
+      status: required
+      reason: optional
   lease_plan:
-    display_name: 项目方案
-    summary: 合同签订前对融资金额、期限和租金方案的业务申请。
+    name: 项目方案
     description: 合同签订前对融资金额、期限和租金方案的业务申请。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: lease_plan
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务编号
-        description: 来源系统或业务单据编号。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 业务日期
-        description: 业务事实发生或记账日期。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      reference_no: required
+      amount: required
+      occurred_on: required
+      status: required
+      details: optional
   contract:
-    display_name: 融资租赁合同
-    summary: 约定出租、承租、放款、租金和标的物责任的核心业务事实。
+    name: 融资租赁合同
     description: 约定出租、承租、放款、租金和标的物责任的核心业务事实。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: contract
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务编号
-        description: 来源系统或业务单据编号。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 业务日期
-        description: 业务事实发生或记账日期。
-      valid_from:
-        type: date
-        required: false
-        display_name: 生效日
-        description: 规则或版本开始生效日期。
-      valid_to:
-        type: date
-        required: false
-        display_name: 失效日
-        description: 规则或版本结束生效日期。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      reference_no: required
+      amount: required
+      occurred_on: required
+      valid_from: optional
+      valid_to: optional
+      status: required
+      details: optional
   contract_participation:
-    display_name: 合同参与关系事实
-    summary: 合同参与方及其角色的可追溯事实，承载角色和生效信息。
+    name: 合同参与关系事实
     description: 合同参与方及其角色的可追溯事实，承载角色和生效信息。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: contract_participation
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      role:
-        type: string
-        required: true
-        display_name: 关系角色
-        description: 关系端点在业务联系中的角色。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象当前业务状态。
-      valid_from:
-        type: date
-        required: false
-        display_name: 生效日
-        description: 规则或版本开始生效日期。
-      valid_to:
-        type: date
-        required: false
-        display_name: 失效日
-        description: 规则或版本结束生效日期。
+      role: required
+      status: optional
+      valid_from: optional
+      valid_to: optional
   loan:
-    display_name: 放款
-    summary: 合同项下实际向客户或供应方投放资金的业务事实。
+    name: 放款
     description: 合同项下实际向客户或供应方投放资金的业务事实。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: loan
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务编号
-        description: 来源系统或业务单据编号。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 业务日期
-        description: 业务事实发生或记账日期。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      reference_no: required
+      amount: required
+      occurred_on: required
+      status: required
+      details: optional
   schedule_version:
-    display_name: 租金计划版本
-    summary: 合同或变更后生效的租金计算和收款计划版本，历史版本不删除。
+    name: 租金计划版本
     description: 合同或变更后生效的租金计算和收款计划版本，历史版本不删除。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: schedule_version
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      version:
-        type: string
-        required: true
-        display_name: 版本号
-        description: 业务规则或计划版本。
-      valid_from:
-        type: date
-        required: true
-        display_name: 生效日
-        description: 规则或版本开始生效日期。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: true
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      version: required
+      valid_from: required
+      status: required
+      details: required
   receivable:
-    display_name: 应收计划明细
-    summary: 企业对客户形成的一笔具体应收，统一承载租金、费用或其他应收款项。
+    name: 应收计划明细
     description: 企业对客户形成的一笔具体应收，统一承载租金、费用或其他应收款项。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: receivable
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      sequence:
-        type: number
-        required: true
-        display_name: 顺序
-        description: 明细在计划或核销中的顺序。
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      due_on:
-        type: date
-        required: true
-        display_name: 到期日
-        description: 应收或合同约定到期日。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      sequence: required
+      category: required
+      amount: required
+      due_on: required
+      status: required
+      details: optional
   payment:
-    display_name: 收款
-    summary: 客户或其他付款人实际到账的资金事实，可分配给多笔应收。
+    name: 收款
     description: 客户或其他付款人实际到账的资金事实，可分配给多笔应收。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: payment
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务编号
-        description: 来源系统或业务单据编号。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 业务日期
-        description: 业务事实发生或记账日期。
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      reference_no: required
+      amount: required
+      occurred_on: required
+      category: required
+      status: required
+      details: optional
   allocation:
-    display_name: 核销明细
-    summary: 一笔到账资金分配给应收或罚息的金额、顺序和冲销事实。
+    name: 核销明细
     description: 一笔到账资金分配给应收或罚息的金额、顺序和冲销事实。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: allocation
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 业务日期
-        description: 业务事实发生或记账日期。
-      sequence:
-        type: number
-        required: true
-        display_name: 顺序
-        description: 明细在计划或核销中的顺序。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      reason:
-        type: string
-        required: false
-        display_name: 原因
-        description: 调整、冲销或异常处理原因。
+      amount: required
+      occurred_on: required
+      sequence: required
+      status: required
+      reason: optional
   penalty:
-    display_name: 逾期罚息
-    summary: 应收逾期后按规则计提的罚息事实。
+    name: 逾期罚息
     description: 应收逾期后按规则计提的罚息事实。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: penalty
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 业务日期
-        description: 业务事实发生或记账日期。
-      rate:
-        type: number
-        required: false
-        display_name: 比率
-        description: 利率、罚息率或费用比例。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
+      amount: required
+      occurred_on: required
+      rate: optional
+      status: required
   subject_matter:
-    display_name: 租赁标的物
-    summary: 合同项下设备、车辆或受让应收账款等租赁标的及其价值事实。
+    name: 租赁标的物
     description: 合同项下设备、车辆或受让应收账款等租赁标的及其价值事实。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: subject_matter
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类。
-      code:
-        type: string
-        required: false
-        display_name: 编码
-        description: 稳定业务编码。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      category: required
+      code: optional
+      amount: required
+      status: required
+      details: optional
   guarantee:
-    display_name: 担保关系事实
-    summary: 合同由保证人或担保物提供担保的金额、方式和顺位事实。
+    name: 担保关系事实
     description: 合同由保证人或担保物提供担保的金额、方式和顺位事实。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: guarantee
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      sequence:
-        type: number
-        required: false
-        display_name: 顺序
-        description: 明细在计划或核销中的顺序。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      category: required
+      amount: required
+      sequence: optional
+      status: required
+      details: optional
   change_order:
-    display_name: 合同变更单
-    summary: 展期、提前还款、利率调整或租金重排等不可原地修改的变更事实。
+    name: 合同变更单
     description: 展期、提前还款、利率调整或租金重排等不可原地修改的变更事实。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: change_order
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务编号
-        description: 来源系统或业务单据编号。
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 业务日期
-        description: 业务事实发生或记账日期。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: true
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      reference_no: required
+      category: required
+      occurred_on: required
+      status: required
+      details: required
   settlement:
-    display_name: 结清单
-    summary: 合同结束时对剩余本金、利息、违约金和保证金等进行的最终结算。
+    name: 结清单
     description: 合同结束时对剩余本金、利息、违约金和保证金等进行的最终结算。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: settlement
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务编号
-        description: 来源系统或业务单据编号。
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 业务日期
-        description: 业务事实发生或记账日期。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      reference_no: required
+      category: required
+      amount: required
+      occurred_on: required
+      status: required
+      details: optional
   invoice:
-    display_name: 发票事实
-    summary: 由应收或结算事实生成的开票结果。
+    name: 发票事实
     description: 由应收或结算事实生成的开票结果。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: invoice
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务编号
-        description: 来源系统或业务单据编号。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 业务日期
-        description: 业务事实发生或记账日期。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      reference_no: required
+      amount: required
+      occurred_on: required
+      status: required
+      details: optional
   voucher:
-    display_name: 会计凭证
-    summary: 业务事实按科目映射形成的会计凭证头，借贷金额必须平衡。
+    name: 会计凭证
     description: 业务事实按科目映射形成的会计凭证头，借贷金额必须平衡。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: voucher
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务编号
-        description: 来源系统或业务单据编号。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 业务日期
-        description: 业务事实发生或记账日期。
-      period:
-        type: period
-        required: true
-        display_name: 业务期间
-        description: 汇总事实所属月份。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      reference_no: required
+      occurred_on: required
+      period: required
+      amount: required
+      status: required
+      details: optional
   voucher_line:
-    display_name: 凭证分录
-    summary: 会计凭证下的借贷科目和金额明细。
+    name: 凭证分录
     description: 会计凭证下的借贷科目和金额明细。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: voucher_line
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      sequence:
-        type: number
-        required: true
-        display_name: 顺序
-        description: 明细在计划或核销中的顺序。
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类。
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      sequence: required
+      category: required
+      amount: required
+      status: required
+      details: optional
   approval:
-    display_name: 审批申请
-    summary: 针对一个业务对象发起的一次审批决策事实。details 保存本次采用的流程快照、处理历史和最终结果； 审批参与主体通过 associates 关系连接，不把审批人或审批节点重复塞入业务对象。
+    name: 审批申请
     description: 针对一个业务对象发起的一次审批决策事实。details 保存本次采用的流程快照、处理历史和最终结果； 审批参与主体通过 associates 关系连接，不把审批人或审批节点重复塞入业务对象。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: approval
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      reference_no:
-        type: string
-        required: true
-        display_name: 业务编号
-        description: 来源系统或业务单据编号。
-      category:
-        type: string
-        required: true
-        display_name: 类别
-        description: 同一对象类型下的业务分类。
-      occurred_on:
-        type: date
-        required: true
-        display_name: 业务日期
-        description: 业务事实发生或记账日期。
-      status:
-        type: string
-        required: true
-        display_name: 状态
-        description: 对象当前业务状态。
-      details:
-        type: json
-        required: true
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      reference_no: required
+      category: required
+      occurred_on: required
+      status: required
+      details: required
 relations:
   contains:
-    display_name: 包含
-    summary: 整体包含其组成或明细事实。
+    name: 包含
     description: 整体包含其组成或明细事实。
-    from_types:
+    from:
     - credit
     - contract
     - schedule_version
     - payment
     - voucher
     - approval
-    to_types:
+    to:
     - credit_entry
     - contract_participation
     - receivable
     - allocation
     - voucher_line
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: contains
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
-      role:
-        type: string
-        required: false
-        display_name: 关系角色
-        description: 关系端点在业务联系中的角色。
+      role: optional
   references:
-    display_name: 引用
-    summary: 业务事实引用另一个独立对象作为来源、依据或业务对象。
+    name: 引用
     description: 业务事实引用另一个独立对象作为来源、依据或业务对象。
-    from_types:
+    from:
     - credit
     - credit_entry
     - lease_plan
@@ -1065,7 +306,7 @@ relations:
     - invoice
     - voucher
     - approval
-    to_types:
+    to:
     - party
     - customer
     - credit
@@ -1082,38 +323,12 @@ relations:
     - settlement
     - invoice
     - voucher
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: references
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
-      role:
-        type: string
-        required: true
-        display_name: 关系角色
-        description: 关系端点在业务联系中的角色。
+      role: required
   associates:
-    display_name: 关联
-    summary: 两个独立对象之间存在业务联系，例如客户、出租方、标的物、保证人和审批参与主体。 审批关系可用 sequence、status、occurred_on 和 reason 记录决策顺序及结果。
+    name: 关联
     description: 两个独立对象之间存在业务联系，例如客户、出租方、标的物、保证人和审批参与主体。 审批关系可用 sequence、status、occurred_on 和 reason 记录决策顺序及结果。
-    from_types:
+    from:
     - customer
     - party
     - contract
@@ -1122,7 +337,7 @@ relations:
     - payment
     - allocation
     - approval
-    to_types:
+    to:
     - customer
     - party
     - contract
@@ -1132,63 +347,17 @@ relations:
     - receivable
     - penalty
     - approval
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: associates
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
-      role:
-        type: string
-        required: true
-        display_name: 关系角色
-        description: 关系端点在业务联系中的角色。
-      status:
-        type: string
-        required: false
-        display_name: 状态
-        description: 对象当前业务状态。
-      sequence:
-        type: number
-        required: false
-        display_name: 顺序
-        description: 明细在计划或核销中的顺序。
-      occurred_on:
-        type: date
-        required: false
-        display_name: 业务日期
-        description: 业务事实发生或记账日期。
-      reason:
-        type: string
-        required: false
-        display_name: 原因
-        description: 调整、冲销或异常处理原因。
-      details:
-        type: json
-        required: false
-        display_name: 补充信息
-        description: 尚未稳定为公共属性的结构化事实。
+      role: required
+      status: optional
+      sequence: optional
+      occurred_on: optional
+      reason: optional
+      details: optional
   derives:
-    display_name: 派生
-    summary: 来源业务事实经过计算、处理或汇总形成结果事实。
+    name: 派生
     description: 来源业务事实经过计算、处理或汇总形成结果事实。
-    from_types:
+    from:
     - credit
     - lease_plan
     - contract
@@ -1202,7 +371,7 @@ relations:
     - settlement
     - invoice
     - voucher
-    to_types:
+    to:
     - credit_entry
     - contract
     - loan
@@ -1214,112 +383,53 @@ relations:
     - invoice
     - voucher
     - voucher_line
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: derives
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
-      role:
-        type: string
-        required: false
-        display_name: 关系角色
-        description: 关系端点在业务联系中的角色。
-      amount:
-        type: money
-        required: false
-        display_name: 金额
-        description: 数值和 ISO 币种组成的金额。
-      reason:
-        type: string
-        required: false
-        display_name: 原因
-        description: 调整、冲销或异常处理原因。
+      role: optional
+      amount: optional
+      reason: optional
     acyclic: true
   supersedes:
-    display_name: 替代版本
-    summary: 新业务版本替代旧版本，旧事实保留并标记失效。
+    name: 替代版本
     description: 新业务版本替代旧版本，旧事实保留并标记失效。
-    from_types:
+    from:
     - schedule_version
     - change_order
-    to_types:
+    to:
     - schedule_version
     - contract
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: supersedes
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
-      occurred_on:
-        type: date
-        required: false
-        display_name: 业务日期
-        description: 业务事实发生或记账日期。
-      reason:
-        type: string
-        required: false
-        display_name: 原因
-        description: 调整、冲销或异常处理原因。
+      occurred_on: optional
+      reason: optional
 functions:
   get_finance_overview:
-    summary: 获取融资租赁业务对象、关系和金额概览
-    reads_objects:
-    - contract
-    - receivable
-    - payment
-    - allocation
-    reads_relations:
-    - references
-    - derives
+    name: 获取融资租赁业务对象、关系和金额概览
+    description: ''
+    reads:
+      objects:
+      - contract
+      - receivable
+      - payment
+      - allocation
+      relations:
+      - references
+      - derives
   get_contract_trace:
-    summary: 追溯合同从方案、放款、应收到核销和结清的业务链
-    reads_objects:
-    - contract
-    - lease_plan
-    - loan
-    - receivable
-    - payment
-    - allocation
-    - settlement
-    reads_relations:
-    - references
-    - derives
-    - contains
-    params:
+    name: 追溯合同从方案、放款、应收到核销和结清的业务链
+    description: ''
+    reads:
+      objects:
+      - contract
+      - lease_plan
+      - loan
+      - receivable
+      - payment
+      - allocation
+      - settlement
+      relations:
+      - references
+      - derives
+      - contains
+    inputs:
       contract_id:
         type: str
         description: 合同对象 ID
@@ -1328,85 +438,86 @@ functions:
         description: 追溯深度
         default: 5
   find_unallocated_payments:
-    summary: 查找尚未通过核销明细分配的收款
-    reads_objects:
-    - payment
-    - allocation
-    reads_relations:
-    - derives
-    - references
+    name: 查找尚未通过核销明细分配的收款
+    description: ''
+    reads:
+      objects:
+      - payment
+      - allocation
+      relations:
+      - derives
+      - references
   audit_finance_consistency:
-    summary: 校验核销金额守恒和凭证借贷平衡
-    reads_objects:
-    - payment
-    - allocation
-    - voucher
-    - voucher_line
-    - credit
-    - credit_entry
-    reads_relations:
-    - derives
-    - references
-    - contains
+    name: 校验核销金额守恒和凭证借贷平衡
+    description: ''
+    reads:
+      objects:
+      - payment
+      - allocation
+      - voucher
+      - voucher_line
+      - credit
+      - credit_entry
+      relations:
+      - derives
+      - references
+      - contains
 actions:
   register_customer:
-    display_name: 登记客户
-    summary: 登记承租方、买方或其他客户侧主体。
+    name: 登记客户
     description: 登记承租方、买方或其他客户侧主体。
     icon: user_round
-    available_on: []
-    context_input: ''
+    'on': []
+    context: ''
     inputs:
       name:
-        display_name: 客户名称
+        name: 客户名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       reference_no:
-        display_name: 客户编号
+        name: 客户编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       category:
-        display_name: 客户类别
+        name: 客户类别
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: category
         default: lessee
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - customer
-      updates_objects: []
-      retires_objects: []
-      creates_relations: []
-      updates_relations: []
-      retires_relations: []
+    requires: []
+    changes:
+      create:
+        objects:
+        - customer
+        relations: []
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记新的融资租赁客户。
     idempotency: required
   start_approval:
-    display_name: 发起审批
-    summary: 针对项目方案、合同或其他业务事实发起一次审批决策。
+    name: 发起审批
     description: 针对项目方案、合同或其他业务事实发起一次审批决策。
     icon: clipboard-pen_line
-    available_on:
+    'on':
     - lease_plan
     - contract
     - loan
     - change_order
     - allocation
     - settlement
-    context_input: reviewed_object
+    context: reviewed_object
     inputs:
       reviewed_object:
-        display_name: 被审批对象
+        name: 被审批对象
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - lease_plan
         - contract
         - loan
@@ -1414,174 +525,159 @@ actions:
         - allocation
         - settlement
       reference_no:
-        display_name: 审批编号
+        name: 审批编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       category:
-        display_name: 审批类型
+        name: 审批类型
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       occurred_on:
-        display_name: 发起日期
+        name: 发起日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       submitted_by:
-        display_name: 提交主体
+        name: 提交主体
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - party
       process:
-        display_name: 审批流程
+        name: 审批流程
         description: ''
-        type: json
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - approval
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - references
-      - associates
-      updates_relations: []
-      retires_relations: []
+        type: json
+    requires: []
+    changes:
+      create:
+        objects:
+        - approval
+        relations:
+        - references
+        - associates
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 发起融资租赁业务审批。
     idempotency: required
   record_approval_decision:
-    display_name: 记录审批决定
-    summary: 记录审批参与主体对一项审批申请的阶段决定和最终结果。
+    name: 记录审批决定
     description: 记录审批参与主体对一项审批申请的阶段决定和最终结果。
     icon: clipboard-check
-    available_on:
+    'on':
     - approval
-    context_input: approval_id
+    context: approval_id
     inputs:
       approval_id:
-        display_name: 审批事项
+        name: 审批事项
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - approval
       decision:
-        display_name: 审批决定
+        name: 审批决定
         description: ''
+        required: true
         type: string
-        required: true
-        object_types: []
       occurred_on:
-        display_name: 决定日期
+        name: 决定日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       sequence:
-        display_name: 审批顺序
+        name: 审批顺序
         description: ''
-        type: number
         required: true
-        object_types: []
+        property: sequence
       decided_by:
-        display_name: 决策主体
+        name: 决策主体
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - party
       is_final:
-        display_name: 最终决定
+        name: 最终决定
         description: ''
-        type: boolean
         required: false
-        object_types: []
+        type: boolean
         default: false
       opinion:
-        display_name: 审批意见
+        name: 审批意见
         description: ''
-        type: string
         required: false
-        object_types: []
+        type: string
       reason:
-        display_name: 决策原因
+        name: 决策原因
         description: ''
-        type: string
         required: false
-        object_types: []
-    preconditions:
+        property: reason
+    requires:
     - object_status:
         object: $input.approval_id
         in:
         - pending
         message: 只有待审批事项可以继续记录审批决定。
-    side_effects:
-      creates_objects: []
-      updates_objects:
-      - approval
-      retires_objects: []
-      creates_relations:
-      - associates
-      updates_relations: []
-      retires_relations: []
+    changes:
+      create:
+        objects: []
+        relations:
+        - associates
+      update:
+        objects:
+        - approval
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 记录融资租赁审批决定。
     idempotency: required
   create_lease_plan:
-    display_name: 创建项目方案
-    summary: 为客户建立融资租赁项目方案。
+    name: 创建项目方案
     description: 为客户建立融资租赁项目方案。
     icon: file_plus_2
-    available_on:
+    'on':
     - customer
-    context_input: applicant_id
+    context: applicant_id
     inputs:
       applicant_id:
-        display_name: 申请客户
+        name: 申请客户
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - customer
       reference_no:
-        display_name: 方案编号
+        name: 方案编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       amount:
-        display_name: 融资金额
+        name: 融资金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       occurred_on:
-        display_name: 申请日期
+        name: 申请日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       credit_id:
-        display_name: 占用授信
+        name: 占用授信
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - credit
       details:
-        display_name: 方案信息
+        name: 方案信息
         description: ''
-        type: json
         required: false
-        object_types: []
-    preconditions:
+        property: details
+    requires:
     - object_status:
         object: $input.applicant_id
         in:
@@ -1598,138 +694,129 @@ actions:
         relation: references
         role: granted_customer
         message: 所选授信必须属于该申请客户。
-    side_effects:
-      creates_objects:
-      - lease_plan
-      - credit_entry
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - references
-      - contains
-      updates_relations: []
-      retires_relations: []
+    changes:
+      create:
+        objects:
+        - lease_plan
+        - credit_entry
+        relations:
+        - references
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 创建融资租赁项目方案。
     idempotency: required
   grant_credit:
-    display_name: 授予客户额度
-    summary: 为客户建立一项可预占和正式占用的授信额度。
+    name: 授予客户额度
     description: 为客户建立一项可预占和正式占用的授信额度。
     icon: badge_dollar_sign
-    available_on:
+    'on':
     - customer
-    context_input: customer_id
+    context: customer_id
     inputs:
       customer_id:
-        display_name: 授信客户
+        name: 授信客户
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - customer
       code:
-        display_name: 额度编号
+        name: 额度编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: code
       category:
-        display_name: 授信品种
+        name: 授信品种
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       amount:
-        display_name: 授信金额
+        name: 授信金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       valid_from:
-        display_name: 生效日
+        name: 生效日
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: valid_from
       valid_to:
-        display_name: 到期日
+        name: 到期日
         description: ''
-        type: date
         required: false
-        object_types: []
-    preconditions:
+        property: valid_to
+    requires:
     - object_status:
         object: $input.customer_id
         in:
         - active
         message: 只有有效客户可以被授予额度。
-    side_effects:
-      creates_objects:
-      - credit
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - references
-      updates_relations: []
-      retires_relations: []
+    changes:
+      create:
+        objects:
+        - credit
+        relations:
+        - references
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 授予客户融资额度。
     idempotency: required
   sign_contract:
-    display_name: 签订融资租赁合同
-    summary: 将项目方案落地为正式融资租赁合同。
+    name: 签订融资租赁合同
     description: 将项目方案落地为正式融资租赁合同。
     icon: file_check_2
-    available_on:
+    'on':
     - lease_plan
-    context_input: lease_plan_id
+    context: lease_plan_id
     inputs:
       lease_plan_id:
-        display_name: 项目方案
+        name: 项目方案
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - lease_plan
       reference_no:
-        display_name: 合同编号
+        name: 合同编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       amount:
-        display_name: 合同金额
+        name: 合同金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       occurred_on:
-        display_name: 签约日期
+        name: 签约日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       lessor_id:
-        display_name: 出租方
+        name: 出租方
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - party
       lessee_id:
-        display_name: 承租方
+        name: 承租方
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - customer
       credit_id:
-        display_name: 占用授信
+        name: 占用授信
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - credit
-    preconditions:
+    requires:
     - related_object:
         from_type: approval
         to: $input.lease_plan_id
@@ -1760,298 +847,283 @@ actions:
         relation: references
         role: applicant
         message: 合同承租方必须是该方案的申请客户。
-    side_effects:
-      creates_objects:
-      - contract
-      - contract_participation
-      - credit_entry
-      updates_objects:
-      - lease_plan
-      retires_objects: []
-      creates_relations:
-      - derives
-      - contains
-      - references
-      updates_relations: []
-      retires_relations: []
+    changes:
+      create:
+        objects:
+        - contract
+        - contract_participation
+        - credit_entry
+        relations:
+        - derives
+        - contains
+        - references
+      update:
+        objects:
+        - lease_plan
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 签订融资租赁合同。
     idempotency: required
   record_loan:
-    display_name: 登记放款
-    summary: 记录合同项下的实际资金投放。
+    name: 登记放款
     description: 记录合同项下的实际资金投放。
     icon: banknote
-    available_on:
+    'on':
     - contract
-    context_input: contract_id
+    context: contract_id
     inputs:
       contract_id:
-        display_name: 所属合同
+        name: 所属合同
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - contract
       reference_no:
-        display_name: 放款编号
+        name: 放款编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       amount:
-        display_name: 放款金额
+        name: 放款金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       occurred_on:
-        display_name: 放款日期
+        name: 放款日期
         description: ''
-        type: date
         required: true
-        object_types: []
-    preconditions:
+        property: occurred_on
+    requires:
     - object_status:
         object: $input.contract_id
         in:
         - active
         message: 只有生效中的合同可以登记放款。
-    side_effects:
-      creates_objects:
-      - loan
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - derives
-      updates_relations: []
-      retires_relations: []
+    changes:
+      create:
+        objects:
+        - loan
+        relations:
+        - derives
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记合同放款。
     idempotency: required
   create_schedule_version:
-    display_name: 建立租金计划版本
-    summary: 为合同建立一个不可原地覆盖的租金计算和收款计划版本。
+    name: 建立租金计划版本
     description: 为合同建立一个不可原地覆盖的租金计算和收款计划版本。
     icon: calendar_range
-    available_on:
+    'on':
     - contract
-    context_input: contract_id
+    context: contract_id
     inputs:
       contract_id:
-        display_name: 所属合同
+        name: 所属合同
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - contract
       version:
-        display_name: 版本号
+        name: 版本号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: version
       valid_from:
-        display_name: 生效日
+        name: 生效日
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: valid_from
       details:
-        display_name: 计算入参与结果
+        name: 计算入参与结果
         description: ''
-        type: json
         required: true
-        object_types: []
+        property: details
       supersedes_id:
-        display_name: 被替代版本
+        name: 被替代版本
         description: ''
-        type: str
         required: false
-        object_types:
+        objects:
         - schedule_version
-    preconditions:
+    requires:
     - object_status:
         object: $input.contract_id
         in:
         - active
         message: 只有生效中的合同可以建立租金计划。
-    side_effects:
-      creates_objects:
-      - schedule_version
-      updates_objects:
-      - schedule_version
-      retires_objects: []
-      creates_relations:
-      - derives
-      - supersedes
-      updates_relations: []
-      retires_relations: []
+    changes:
+      create:
+        objects:
+        - schedule_version
+        relations:
+        - derives
+        - supersedes
+      update:
+        objects:
+        - schedule_version
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 建立合同租金计划版本。
     idempotency: required
   create_receivable:
-    display_name: 生成应收
-    summary: 根据合同或租金计划生成一笔应收计划明细。
+    name: 生成应收
     description: 根据合同或租金计划生成一笔应收计划明细。
     icon: calendar_plus
-    available_on:
+    'on':
     - schedule_version
-    context_input: schedule_version_id
+    context: schedule_version_id
     inputs:
       schedule_version_id:
-        display_name: 租金计划版本
+        name: 租金计划版本
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - schedule_version
       sequence:
-        display_name: 期次
+        name: 期次
         description: ''
-        type: number
         required: true
-        object_types: []
+        property: sequence
       category:
-        display_name: 款项类型
+        name: 款项类型
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       amount:
-        display_name: 应收金额
+        name: 应收金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       due_on:
-        display_name: 应收日期
+        name: 应收日期
         description: ''
-        type: date
         required: true
-        object_types: []
-    preconditions:
+        property: due_on
+    requires:
     - object_status:
         object: $input.schedule_version_id
         in:
         - active
         message: 只有生效的租金计划版本可以生成应收。
-    side_effects:
-      creates_objects:
-      - receivable
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - derives
-      updates_relations: []
-      retires_relations: []
+    changes:
+      create:
+        objects:
+        - receivable
+        relations:
+        - derives
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 生成融资租赁应收计划明细。
     idempotency: required
   record_payment:
-    display_name: 登记收款
-    summary: 记录客户或其他付款人的到账资金。
+    name: 登记收款
     description: 记录客户或其他付款人的到账资金。
     icon: circle_dollar_sign
-    available_on:
+    'on':
     - customer
-    context_input: payer_id
+    context: payer_id
     inputs:
       payer_id:
-        display_name: 付款客户
+        name: 付款客户
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - customer
       reference_no:
-        display_name: 收款编号
+        name: 收款编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       amount:
-        display_name: 到账金额
+        name: 到账金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       occurred_on:
-        display_name: 到账日期
+        name: 到账日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       category:
-        display_name: 收款类别
+        name: 收款类别
         description: ''
-        type: string
         required: false
-        object_types: []
+        property: category
         default: rent
       contract_id:
-        display_name: 意向合同
+        name: 意向合同
         description: ''
-        type: str
         required: false
-        object_types:
+        objects:
         - contract
-    preconditions:
+    requires:
     - object_status:
         object: $input.payer_id
         in:
         - active
         message: 只有有效客户可以登记为付款客户。
-    side_effects:
-      creates_objects:
-      - payment
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - associates
-      updates_relations: []
-      retires_relations: []
+    changes:
+      create:
+        objects:
+        - payment
+        relations:
+        - associates
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记一笔融资租赁收款。
     idempotency: required
   allocate_payment:
-    display_name: 核销收款
-    summary: 将一笔收款分配给应收或罚息，形成有金额的核销明细。
+    name: 核销收款
     description: 将一笔收款分配给应收或罚息，形成有金额的核销明细。
     icon: split
-    available_on:
+    'on':
     - payment
-    context_input: payment_id
+    context: payment_id
     inputs:
       payment_id:
-        display_name: 收款
+        name: 收款
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - payment
       target_id:
-        display_name: 核销目标
+        name: 核销目标
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - receivable
         - penalty
       amount:
-        display_name: 核销金额
+        name: 核销金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       occurred_on:
-        display_name: 核销日期
+        name: 核销日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       sequence:
-        display_name: 核销顺序
+        name: 核销顺序
         description: ''
-        type: number
         required: true
-        object_types: []
-    preconditions:
+        property: sequence
+    requires:
     - object_status:
         object: $input.payment_id
         in:
@@ -2064,155 +1136,150 @@ actions:
         - open
         - partial
         message: 只有未结清或部分结清的应收、罚息可以被核销。
-    side_effects:
-      creates_objects:
-      - allocation
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - derives
-      - references
-      updates_relations: []
-      retires_relations: []
+    changes:
+      create:
+        objects:
+        - allocation
+        relations:
+        - derives
+        - references
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 将收款核销到指定应收。
     idempotency: required
   settle_contract:
-    display_name: 结清合同
-    summary: 记录合同最终结算和终止事实。
+    name: 结清合同
     description: 记录合同最终结算和终止事实。
     icon: circle_check
-    available_on:
+    'on':
     - contract
-    context_input: contract_id
+    context: contract_id
     inputs:
       contract_id:
-        display_name: 结清合同
+        name: 结清合同
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - contract
       reference_no:
-        display_name: 结清编号
+        name: 结清编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       category:
-        display_name: 结清类型
+        name: 结清类型
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: category
       amount:
-        display_name: 结清总额
+        name: 结清总额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       occurred_on:
-        display_name: 结清日期
+        name: 结清日期
         description: ''
-        type: date
         required: true
-        object_types: []
-    preconditions:
+        property: occurred_on
+    requires:
     - object_status:
         object: $input.contract_id
         in:
         - active
         message: 只有生效中的合同可以办理结清。
-    side_effects:
-      creates_objects:
-      - settlement
-      updates_objects:
-      - contract
-      retires_objects: []
-      creates_relations:
-      - derives
-      updates_relations: []
-      retires_relations: []
+    changes:
+      create:
+        objects:
+        - settlement
+        relations:
+        - derives
+      update:
+        objects:
+        - contract
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 结清融资租赁合同。
     idempotency: required
   issue_voucher:
-    display_name: 生成会计凭证
-    summary: 将合同相关业务事实投影为会计凭证。
+    name: 生成会计凭证
     description: 将合同相关业务事实投影为会计凭证。
     icon: receipt
-    available_on:
+    'on':
     - contract
-    context_input: accounting_source
+    context: accounting_source
     inputs:
       accounting_source:
-        display_name: 记账来源
+        name: 记账来源
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - contract
       reference_no:
-        display_name: 凭证编号
+        name: 凭证编号
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: reference_no
       occurred_on:
-        display_name: 记账日期
+        name: 记账日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: occurred_on
       period:
-        display_name: 会计期间
+        name: 会计期间
         description: ''
-        type: period
         required: true
-        object_types: []
+        property: period
       amount:
-        display_name: 凭证金额
+        name: 凭证金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       debit_account:
-        display_name: 借方科目
+        name: 借方科目
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       credit_account:
-        display_name: 贷方科目
+        name: 贷方科目
         description: ''
-        type: string
         required: true
-        object_types: []
-    preconditions:
+        type: string
+    requires:
     - object_status:
         object: $input.accounting_source
         in:
         - active
         - settled
         message: 只有生效或已结清合同可以生成会计凭证。
-    side_effects:
-      creates_objects:
-      - voucher
-      - voucher_line
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - references
-      - contains
-      updates_relations: []
-      retires_relations: []
+    changes:
+      create:
+        objects:
+        - voucher
+        - voucher_line
+        relations:
+        - references
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 生成融资租赁会计凭证。
     idempotency: required
-interaction_policies:
-  user_chat:
-    include_in_system_prompt: true
-    instructions:
-    - 先使用确定性函数获取合同、应收、收款和核销结论，不自行猜测金额。
-    - 用户明确表达登记客户、创建方案、发起审批、记录审批决定、签订合同、登记放款、生成应收、登记收款、核销或结清意图时，优先调用 ui_open_action_form。
-    - allocation 是有金额和顺序的独立资金分配事实；不要把收款到应收的核销简化为无属性关系。
-    - schedule_version 的变更使用 supersedes 关系，不覆盖历史版本；已产生的应收和核销保留原始事实。
-    - approval 是一次针对业务对象的审批决策事实；流程快照、处理历史和最终结果放在 approval.details 中。
-    - 审批参与主体通过 associates 关系连接，关系上的 sequence 表示顺序，相同 sequence 表示并行或会签。
+agent:
+  excluded_tools:
+  - dispatch_workers
+  instructions:
+  - 先使用确定性函数获取合同、应收、收款和核销结论，不自行猜测金额。
+  - 用户明确表达登记客户、创建方案、发起审批、记录审批决定、签订合同、登记放款、生成应收、登记收款、核销或结清意图时，优先调用 request_action_input。
+  - allocation 是有金额和顺序的独立资金分配事实；不要把收款到应收的核销简化为无属性关系。
+  - schedule_version 的变更使用 supersedes 关系，不覆盖历史版本；已产生的应收和核销保留原始事实。
+  - approval 是一次针对业务对象的审批决策事实；流程快照、处理历史和最终结果放在 approval.details 中。
+  - 审批参与主体通过 associates 关系连接，关系上的 sequence 表示顺序，相同 sequence 表示并行或会签。

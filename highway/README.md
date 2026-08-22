@@ -6,16 +6,16 @@
 - `Object`：可独立识别和追溯的主体、设施、业务事实或计算结果。
 - `Relation`：两个 Object 之间由业务行为建立或确认的有方向联系。
 
-`model.yaml` 本身就是 OAG 原生 Ontology，直接定义高速业务词汇、关系约束、只读 Function、业务 Action
-和 Agent 策略。UOM 不再提供另一份核心本体，也不对领域语义做组合或编译；它只提供这些语义背后的
-SQLite 图存储、ChangeSet、审计、Action 执行和模型编辑能力。
+`model.yaml` 是 UOM 领域源模型，直接定义高速业务词汇、关系约束、只读 Function、业务 Action、
+Repository 映射和 Agent 策略。UOM 将它编译为 OAG 原生 Ontology，并提供 SQLite 图适配、ChangeSet、
+审计、Action 执行和模型编辑能力；OAG 只理解编译结果及其 Repository 协议。
 
 ```text
-model.yaml (public OAG Ontology) -------> OAG Repository / Agent
-             |
-             +-- bindings -------------> UOM SQLite graph adapter
-             +-- Action contracts -----> UOM Action runtime
-action_plans.yaml (private templates) --> UOM ChangeSet compiler
+model.yaml (UOM source model) --compile--> OAG Ontology --> Repository / Agent
+             |                                  |
+             +-- repositories -----------------> UOM Source
+             +-- Action contracts ------------> UOM Action runtime
+action_plans.yaml (private templates) ---------> UOM ChangeSet compiler
 ```
 
 ## V3.4 抽象
@@ -64,7 +64,7 @@ V3.1 的 `RoadNode` 不再复制收费站和门架的身份，`NodeRelation` 也
 ## 文件
 
 ```text
-model.yaml            公开的 OAG 原生本体：高速对象、关系、Function、Action 和 Agent 策略
+model.yaml            UOM 领域源模型：高速对象、关系、Function、Action、Repository 和 Agent 策略
 action_plans.yaml     私有的 Action ChangeSet 模板，不提供给 LLM 或前端
 data/graph.db         Object / Relation 实例的唯一 SQLite 数据源
 provider.py           可选运行时绑定：注册 Python Function 实现和高速领域服务
@@ -72,13 +72,13 @@ business.py           高速领域确定性查询
 spatial.py            高速空间视图派生服务
 app/                  高速 Web UI、HTTP API 和 OAG Agent 适配
 docs/                 高速领域原始模型与问题分析资料
-scripts/              seed 和兼容的模型校验入口
+scripts/              山东场景 seed
 ```
 
 UOM 图查询、Action、ChangeSet、SQLite、审计和模型编辑运行时位于仓库根目录 [`../uom`](../uom)。
 
-`uom.loader` 直接把 `model.yaml` 校验为 OAG Ontology，并据此创建 Repository。随后可选的领域
-`provider.py` 注册数据源适配器、运行时服务和 Python Function 实现。OAG 只读取公开本体，不理解也不需要
+`uom.loader` 校验并编译 `model.yaml`，再用最终 OAG Ontology 创建 Repository。随后可选的领域
+`provider.py` 注册数据源适配器、运行时服务和 Python Function 实现。OAG 只读取编译本体，不理解也不需要
 读取 `action_plans.yaml`；后者仅由 UOM Action runtime 在预览和执行有副作用操作时使用。
 
 ## 业务主链
@@ -133,7 +133,7 @@ fee_rule ->references(applies_to)-> toll_interval
 list_actions -> prepare_action / 前端表单 -> preview_action -> 用户确认 -> execute_action
 ```
 
-OAG 从本体 Action 目录统一注册 `get_available_actions` 和 `ui_open_action_form` 工具，领域前端不再
+OAG 从本体 Action 目录统一注册 `get_available_actions` 和 `request_action_input` 工具，领域前端不再
 重复注册。模型扩展由 Workspace 使用 `preview_changes` / `apply_changes`；它属于模型管理能力，
 不是面向智能体的只读 Function。
 
@@ -142,7 +142,7 @@ OAG 从本体 Action 目录统一注册 `get_available_actions` 和 `ui_open_act
 需要 PyYAML 的 Python 环境：
 
 ```bash
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python highway/scripts/validate_model.py --root highway
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m uom.validation --root highway
 PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s highway/tests -v
 node --check highway/app/static/app.js
 ```

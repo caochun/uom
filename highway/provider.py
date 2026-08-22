@@ -12,7 +12,6 @@ from highway.business import (
     get_business_overview,
     get_passage_trace,
 )
-from highway.spatial import SpatialViewService
 from uom.provider import UomDomainProvider
 
 
@@ -29,10 +28,6 @@ class HighwayDomainProvider:
 
     def register(self, context: DomainContext) -> None:
         self.uom.register(context)
-        context.registry.register_service(
-            "spatial_view",
-            SpatialViewService(context.registry.get_service("uom_graph")),
-        )
 
 
 def create_domain(domain_dir: str | Path) -> HighwayDomainProvider:

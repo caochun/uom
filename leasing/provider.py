@@ -19,21 +19,22 @@ from uom.provider import UomDomainProvider
 
 class LeasingDomainProvider:
     def __init__(self, domain_dir: str | Path):
-        self.uom = UomDomainProvider(domain_dir, function_handlers={
-            "get_finance_overview": get_finance_overview,
-            "get_contract_trace": get_contract_trace,
-            "find_unallocated_payments": find_unallocated_payments,
-            "audit_finance_consistency": audit_finance_consistency,
-        })
+        self.uom = UomDomainProvider(
+            domain_dir,
+            function_handlers={
+                "get_finance_overview": get_finance_overview,
+                "get_contract_trace": get_contract_trace,
+                "find_unallocated_payments": find_unallocated_payments,
+                "audit_finance_consistency": audit_finance_consistency,
+            },
+            action_runtime_factory=LeasingActionService,
+        )
 
     def load_ontology(self) -> Ontology:
         return self.uom.load_ontology()
 
     def register(self, context: DomainContext) -> None:
         self.uom.register(context)
-        workspace = context.registry.get_service("uom_workspace")
-        actions = LeasingActionService(workspace)
-        context.registry.register_action_runtime(actions)
 
 
 def create_domain(domain_dir: str | Path) -> LeasingDomainProvider:

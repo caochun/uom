@@ -15,13 +15,14 @@ from highway.spatial import AmapRoutePlanner, SpatialViewService  # noqa: E402
 
 class MemoryRepository:
     def __init__(self, objects, relations):
-        self.records = {"Object": objects, "Relation": relations}
+        self.objects = objects
+        self.relations = relations
 
-    def query_objects(self, object_type):
-        return self.records[object_type]
+    def query_all_objects(self):
+        return self.objects
 
-    def query_relations(self, object_type):
-        return self.records[object_type]
+    def query_all_relations(self):
+        return self.relations
 
 
 class SpatialViewServiceTest(unittest.TestCase):

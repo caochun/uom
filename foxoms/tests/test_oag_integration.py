@@ -6,7 +6,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "oag-agent"))
@@ -25,9 +24,12 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
             self.domain_root,
             ignore=shutil.ignore_patterns("__pycache__", "*.db", "*.db-*"),
         )
-        self.ontology, self.repository, self.registry = load_domain(self.domain_root)
-        self.actions = self.registry.get_action_runtime()
-        self.graph = self.registry.get_service("uom_graph")
+        runtime = load_domain(self.domain_root)
+        self.ontology = runtime.ontology
+        self.repository = runtime.repository
+        self.actions = runtime.actions
+        self.graph = runtime.change_store
+        self.workspace = runtime.workspace
 
     def tearDown(self) -> None:
         self.repository.close()
@@ -72,6 +74,12 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
         self.assertEqual(
             "FoxOmsActionService",
             type(self.actions).__name__,
+        )
+
+    def test_repository_and_change_store_share_source_instance(self) -> None:
+        self.assertIs(
+            self.repository.sources.get("graph"),
+            self.graph._source,
         )
 
     def test_framework_business_path_and_open_opportunity(self) -> None:
@@ -214,7 +222,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
             100, audit["settled_by_invoice"][invoice_id]
         )
         self.assertGreaterEqual(
-            len(self.registry.get_service("uom_workspace").bootstrap()["recent_actions"]),
+            len(self.workspace.bootstrap()["recent_actions"]),
             15,
         )
 

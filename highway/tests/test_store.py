@@ -8,12 +8,13 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "oag-agent"))
 sys.path.insert(0, str(ROOT))
 
 from uom.loader import load_domain  # noqa: E402
-from uom.workspace import UomWorkspaceService  # noqa: E402
 
 
 class UomWorkspaceServiceTest(unittest.TestCase):
@@ -25,9 +26,12 @@ class UomWorkspaceServiceTest(unittest.TestCase):
             self.domain_root,
             ignore=shutil.ignore_patterns("__pycache__", "*.db", "*.db-*"),
         )
-        self.ontology, self.repository, self.registry = load_domain(self.domain_root)
-        self.graph = self.registry.get_service("uom_graph")
-        self.store = UomWorkspaceService(self.domain_root, self.graph)
+        runtime = load_domain(self.domain_root)
+        self.ontology = runtime.ontology
+        self.repository = runtime.repository
+        self.bindings = runtime.bindings
+        self.graph = runtime.change_store
+        self.store = runtime.workspace
 
     def tearDown(self) -> None:
         self.repository.close()
@@ -88,13 +92,46 @@ class UomWorkspaceServiceTest(unittest.TestCase):
 
     def test_missing_database_is_initialized_empty(self) -> None:
         empty_database = self.domain_root / "data" / "empty.db"
-        from uom.sqlite_adapter import UomGraphAccess
-        empty_graph = UomGraphAccess(self.domain_root, "data/empty.db")
-        empty_store = UomWorkspaceService(self.domain_root, empty_graph)
+        model_path = self.domain_root / "model.yaml"
+        model_text = model_path.read_text(encoding="utf-8")
+        model_path.write_text(
+            model_text.replace("database: data/graph.db", "database: data/empty.db"),
+            encoding="utf-8",
+        )
+        empty_repository = None
+        try:
+            empty_runtime = load_domain(self.domain_root)
+            empty_repository = empty_runtime.repository
+            empty_store = empty_runtime.workspace
+            self.assertEqual([], empty_store.list_objects())
+            self.assertEqual([], empty_store.list_relations())
+            self.assertEqual(empty_database.resolve(), empty_store.database_path)
+        finally:
+            if empty_repository is not None:
+                empty_repository.close()
+            model_path.write_text(model_text, encoding="utf-8")
 
-        self.assertEqual([], empty_store.list_objects())
-        self.assertEqual([], empty_store.list_relations())
-        self.assertEqual(empty_database.resolve(), empty_store.database_path)
+    def test_legacy_database_schema_is_rejected(self) -> None:
+        legacy_database = self.domain_root / "data" / "legacy.db"
+        with closing(sqlite3.connect(legacy_database)) as connection:
+            connection.execute(
+                "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            connection.execute(
+                "INSERT INTO metadata(key, value) VALUES ('schema_version', '3')"
+            )
+
+        model_path = self.domain_root / "model.yaml"
+        model_text = model_path.read_text(encoding="utf-8")
+        model_path.write_text(
+            model_text.replace("database: data/graph.db", "database: data/legacy.db"),
+            encoding="utf-8",
+        )
+        try:
+            with self.assertRaisesRegex(ValueError, "expected 4"):
+                load_domain(self.domain_root)
+        finally:
+            model_path.write_text(model_text, encoding="utf-8")
 
     def test_sqlite_queries_filter_sort_page_and_count_without_full_graph(self) -> None:
         for index, name in enumerate(("Bravo", "Alpha", "Charlie"), start=1):
@@ -107,20 +144,17 @@ class UomWorkspaceServiceTest(unittest.TestCase):
                 },
             )
 
-        page = self.graph.query_objects("Object",
-            filters={"type": "note", "properties.sequence__gte": 2},
+        page = self.graph.query_objects(            filters={"type": "note", "properties.sequence__gte": 2},
             order_by="name",
             limit=1,
             offset=1,
         )
         self.assertEqual(["note:query-3"], [item["id"] for item in page])
-        self.assertEqual(2, self.graph.count_objects("Object",
-            filters={"type": "note", "properties.sequence__gte": 2},
+        self.assertEqual(2, self.graph.count_objects(            filters={"type": "note", "properties.sequence__gte": 2},
         ))
         self.assertEqual(
             ["note:query-2"],
-            [item["id"] for item in self.graph.query_objects("Object",
-                filters={"name__like": "lph"},
+            [item["id"] for item in self.graph.query_objects(                filters={"name__like": "lph"},
             )],
         )
         with closing(sqlite3.connect(self.store.database_path)) as connection:
@@ -206,11 +240,16 @@ class UomWorkspaceServiceTest(unittest.TestCase):
         self.assertIn("channel_commission", self.store.snapshot()["model"]["object_types"])
         self.assertTrue(any(item["id"] == "commission:2026-08" for item in self.store.list_objects()))
         self.assertEqual(["data/graph.db", "model.yaml"], result["changed_files"])
+        with self.store.model_path.open(encoding="utf-8") as stream:
+            written_model = yaml.safe_load(stream)
+        self.assertEqual("uom.domain.v1", written_model["schema"])
+        self.assertIn("properties", written_model)
+        self.assertNotIn("data_sources", written_model)
 
-        reopened_ontology, reopened_repository, reopened_registry = load_domain(self.domain_root)
-        reopened = UomWorkspaceService(
-            self.domain_root, reopened_registry.get_service("uom_graph"),
-        )
+        reopened_runtime = load_domain(self.domain_root)
+        reopened_ontology = reopened_runtime.ontology
+        reopened_repository = reopened_runtime.repository
+        reopened = reopened_runtime.workspace
         self.assertTrue(any(item["id"] == "commission:2026-08" for item in reopened.list_objects()))
         self.assertEqual(self.ontology.name, reopened_ontology.name)
         reopened_repository.close()
@@ -280,7 +319,7 @@ class UomWorkspaceServiceTest(unittest.TestCase):
         self.assertTrue(self.store.preview_changes(operations)["valid"])
         self.store.apply_changes(operations)
         self.assertIsNotNone(
-            self.graph.get_relation("Relation", "rel:declared-first")
+            self.graph.get_relation("rel:declared-first")
         )
 
     def test_acyclic_relation_is_rechecked_inside_write_transaction(self) -> None:
@@ -360,7 +399,7 @@ class UomWorkspaceServiceTest(unittest.TestCase):
             actor="tester",
             channel="test",
         )
-        created = self.graph.get_object("Object", "note:lifecycle")
+        created = self.graph.get_object("note:lifecycle")
         self.assertEqual(1, created["lifecycle"]["revision"])
         self.assertEqual(
             created["lifecycle"]["created_at"],
@@ -379,7 +418,7 @@ class UomWorkspaceServiceTest(unittest.TestCase):
             actor="tester",
             channel="test",
         )
-        updated = self.graph.get_object("Object", "note:lifecycle")
+        updated = self.graph.get_object("note:lifecycle")
         self.assertEqual(2, updated["lifecycle"]["revision"])
         self.assertEqual(created["lifecycle"]["created_at"], updated["lifecycle"]["created_at"])
 
@@ -425,7 +464,7 @@ class UomWorkspaceServiceTest(unittest.TestCase):
         self.store.apply_changes(update)
         self.assertEqual(
             "目标更新",
-            self.graph.get_object("Object", "note:read-set")["name"],
+            self.graph.get_object("note:read-set")["name"],
         )
 
         second_update = [{
@@ -450,7 +489,7 @@ class UomWorkspaceServiceTest(unittest.TestCase):
         retire = [{"action": "delete_object", "id": "note:retired"}]
         self.assertTrue(self.store.preview_changes(retire)["valid"])
         self.store.apply_changes(retire, reason="记录不再有效")
-        self.assertIsNone(self.graph.get_object("Object", "note:retired"))
+        self.assertIsNone(self.graph.get_object("note:retired"))
         self.assertFalse(any(item["id"] == "note:retired" for item in self.store.list_objects()))
 
         with closing(sqlite3.connect(self.store.database_path)) as connection:
@@ -519,53 +558,6 @@ class UomWorkspaceServiceTest(unittest.TestCase):
         self.assertFalse(result["valid"])
         self.assertTrue(any("显式数据迁移" in error for error in result["errors"]))
 
-    def test_deprecated_type_and_property_reject_new_data(self) -> None:
-        model_changes = [
-            {
-                "action": "upsert_property_definition",
-                "property_id": "legacy_marker",
-                "definition": {
-                    "name": "旧标识",
-                    "type": "string",
-                    "description": "仅供历史数据保留。",
-                    "deprecated": True,
-                    "aliases": ["历史标识"],
-                },
-            },
-            {
-                "action": "upsert_object_type",
-                "type_id": "legacy_note",
-                "definition": {
-                    "name": "旧记录",
-                    "description": "已停止新增的历史记录类型。",
-                    "deprecated": True,
-                    "aliases": ["历史记录"],
-                    "properties": {"legacy_marker": {"required": False}},
-                },
-            },
-        ]
-        self.assertTrue(self.store.preview_changes(model_changes)["valid"])
-        self.store.apply_changes(model_changes)
-
-        deprecated_type = self.store.preview_changes([{
-            "action": "create_object",
-            "record": {"id": "legacy:new", "type": "legacy_note", "name": "不应创建"},
-        }])
-        self.assertFalse(deprecated_type["valid"])
-        self.assertTrue(any("已弃用" in error for error in deprecated_type["errors"]))
-
-        deprecated_property = self.store.preview_changes([{
-            "action": "create_object",
-            "record": {
-                "id": "note:legacy-property",
-                "type": "note",
-                "name": "不应写入旧属性",
-                "properties": {"legacy_marker": "legacy"},
-            },
-        }])
-        self.assertFalse(deprecated_property["valid"])
-        self.assertTrue(any("已弃用属性" in error for error in deprecated_property["errors"]))
-
     def test_highway_overview_reports_incomplete_passages(self) -> None:
         self.graph.create_object(
             {
@@ -578,7 +570,7 @@ class UomWorkspaceServiceTest(unittest.TestCase):
                 },
             },
         )
-        overview = self.registry.call("get_business_overview")
+        overview = self.bindings.call("get_business_overview")
         self.assertEqual(1, overview["incomplete_passage_count"])
         self.assertEqual(1, overview["object_types"]["passage"])
 

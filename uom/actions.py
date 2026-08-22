@@ -262,7 +262,7 @@ class ModelActionService:
         return resolved, context
 
     def _context(self, context_id: str) -> dict[str, Any]:
-        context = self.workspace.repository.get_object("Object", context_id)
+        context = self.workspace.repository.get_object(context_id)
         if not context:
             raise ChangeValidationError([f"action.context_id: 未找到对象 {context_id}"])
         return context
@@ -303,7 +303,7 @@ class ModelActionService:
                         continue
                     errors.append(message or "前置条件缺少业务对象")
                     continue
-                record = self.workspace.repository.get_object("Object", object_id)
+                record = self.workspace.repository.get_object(object_id)
                 status = (record.get("properties") or {}).get("status") if record else None
                 if record is None or status not in condition["in"]:
                     errors.append(message or f"{object_id} 状态必须是 {', '.join(condition['in'])}")
@@ -351,12 +351,12 @@ class ModelActionService:
             filters["from"] = from_id
         if to_id is not None:
             filters["to"] = to_id
-        for relation in self.workspace.repository.query_relations("Relation", filters=filters):
+        for relation in self.workspace.repository.query_relations(filters=filters):
             relation_properties = relation.get("properties") or {}
             if condition.get("role") is not None and relation_properties.get("role") != condition["role"]:
                 continue
-            source = self.workspace.repository.get_object("Object", relation.get("from"))
-            target = self.workspace.repository.get_object("Object", relation.get("to"))
+            source = self.workspace.repository.get_object(relation.get("from"))
+            target = self.workspace.repository.get_object(relation.get("to"))
             if not source or not target:
                 continue
             if condition.get("from_type") and source.get("type") != condition["from_type"]:
@@ -467,7 +467,7 @@ class ModelActionService:
         if "object_types" in definition:
             if not isinstance(value, str):
                 return "必须是对象 ID"
-            record = self.workspace.repository.get_object("Object", value)
+            record = self.workspace.repository.get_object(value)
             if not record:
                 return f"未找到对象 {value}"
             if record.get("type") not in definition["object_types"]:

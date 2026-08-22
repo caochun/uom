@@ -259,25 +259,6 @@ function renderMetrics() {
   $("#initialAgentMessage").textContent = `${partyName}当前有 ${opportunities.length} 项商机、${bids.filter((item) => item.properties?.bid_result === "awarded").length} 项中标记录和 ${money(outstanding, currency)} 待回款。`;
 }
 
-function renderBusinessPipelineLegacy() {
-  const stages = [
-    ["opportunity", "商机"], ["tender", "招标"], ["bid", "投标"],
-    ["framework_agreement", "框架协议"], ["contract", "项目合同"],
-    ["order", "订单"], ["work_item", "项目/任务"], ["invoice", "发票"], ["receipt", "回款"],
-  ];
-  const pipeline = $("#businessPipeline");
-  if (!pipeline) return;
-  pipeline.innerHTML = stages.map(([type, label], index) => {
-    const count = state.data.objects.filter((item) => item.type === type).length;
-    return `${index ? '<i data-lucide="chevron-right"></i>' : ""}<button type="button" data-pipeline-type="${type}"><span>${escapeHtml(label)}</span><strong>${count}</strong></button>`;
-  }).join("");
-  $$("[data-pipeline-type]", pipeline).forEach((button) => button.addEventListener("click", () => {
-    state.objectFilter = button.dataset.pipelineType;
-    renderTypeFilters();
-    renderObjects();
-  }));
-}
-
 function sumObjectMoney(items) {
   return items.reduce((result, item) => {
     const value = item.properties?.paid_amount || item.properties?.amount;
@@ -1342,7 +1323,7 @@ async function submitEditor(event) {
 }
 
 function objectTypeOptions() {
-  const result = Object.fromEntries(Object.entries(typeNames()).filter(([, definition]) => definition.deprecated !== true));
+  const result = { ...typeNames() };
   state.data.objects.forEach((item) => {
     if (!typeNames()[item.type]) result[item.type] ||= { name: item.type };
   });
@@ -1350,7 +1331,7 @@ function objectTypeOptions() {
 }
 
 function relationTypeOptions() {
-  const result = Object.fromEntries(Object.entries(relationNames()).filter(([, definition]) => definition.deprecated !== true));
+  const result = { ...relationNames() };
   state.data.relations.forEach((item) => {
     if (!relationNames()[item.type]) result[item.type] ||= { name: item.type };
   });
@@ -1558,19 +1539,29 @@ async function streamAgent(path, payload) {
       for (const line of lines) {
         if (!line.trim()) continue;
         const event = JSON.parse(line);
-        if (event.type === "text") {
-          const shouldFollow = isAgentNearBottom();
+        if (event.type === "assistant_delta") {
           if (!assistantBody) assistantBody = appendMessage("assistant", "");
           assistantMarkdown += event.content || "";
           renderAssistantMarkdown(assistantBody, assistantMarkdown);
-          scrollAgent(shouldFollow);
+          scrollAgent(true);
+        } else if (event.type === "assistant_end") {
+          if (event.kind === "progress") {
+            if (assistantMarkdown) {
+              toolGroup = appendToolEvent({ type: "progress", content: assistantMarkdown }, toolGroup);
+            }
+            assistantBody?.closest(".message")?.remove();
+          }
+          assistantBody = null;
+          assistantMarkdown = "";
+        } else if (event.type === "text") {
+          appendMessage("assistant", event.content || "");
         } else if (event.type === "confirmation_required" || event.type === "question") {
           waitingForConfirmation = true;
           setAgentPending(true);
           appendConfirmation(event);
         } else if (event.type === "tool_call" || event.type === "tool_result") {
           toolGroup = appendToolEvent(event, toolGroup);
-        } else if (event.type === "presentation" && event.name === "ui_open_action_form") {
+        } else if (event.type === "interaction" && event.name === "request_action_input") {
           if (assistantBody) {
             assistantBody.closest(".message")?.remove();
             assistantBody = null;
@@ -1623,10 +1614,12 @@ function appendToolEvent(event, group = null) {
   }
   const name = event.name || event.tool_name || "工具";
   const element = document.createElement("div");
-  element.className = `tool-event ${event.type === "tool_result" ? "result" : "call"}`;
-  element.innerHTML = event.type === "tool_call"
-    ? `<i data-lucide="play"></i><span>调用 ${escapeHtml(name)}</span>`
-    : `<i data-lucide="${event.blocked ? "circle-x" : "check"}"></i><span>${escapeHtml(name)} 已返回${event.blocked ? "（已阻止）" : ""}</span>`;
+  element.className = `tool-event ${event.type === "tool_result" ? "result" : event.type === "progress" ? "progress" : "call"}`;
+  element.innerHTML = event.type === "progress"
+    ? `<i data-lucide="loader-circle"></i><span>${escapeHtml(event.content || "正在处理")}</span>`
+    : event.type === "tool_call"
+      ? `<i data-lucide="play"></i><span>调用 ${escapeHtml(name)}</span>`
+      : `<i data-lucide="${event.blocked ? "circle-x" : "check"}"></i><span>${escapeHtml(name)} 已返回${event.blocked ? "（已阻止）" : ""}</span>`;
   $(".tool-event-list", group).append(element);
   const count = $$(".tool-event", group).length;
   $(".tool-event-count", group).textContent = count;

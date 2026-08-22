@@ -4,7 +4,6 @@ import sys
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 DOMAIN_ROOT = ROOT / "foxoms"
 sys.path.insert(0, str(ROOT))
@@ -13,21 +12,28 @@ sys.path.insert(0, str(ROOT / "oag-agent"))
 from foxoms.business import audit_foxoms_records  # noqa: E402
 from foxoms.scripts.seed import build_graph, validate_graph  # noqa: E402
 from uom.loader import load_domain  # noqa: E402
-from uom.model import load_action_plans, workspace_model  # noqa: E402
-from uom.validation import load_yaml, validate_model  # noqa: E402
+from uom.model import (  # noqa: E402
+    load_action_plans,
+    load_domain_model,
+    load_public_ontology,
+    workspace_model,
+)
+from uom.validation import validate_model  # noqa: E402
 
 
 class FoxOmsDomainModelTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.public_model = load_yaml(DOMAIN_ROOT / "model.yaml")
+        cls.source_model, _ = load_domain_model(DOMAIN_ROOT)
+        cls.public_model, _ = load_public_ontology(DOMAIN_ROOT)
         cls.action_plans = load_action_plans(DOMAIN_ROOT)
         cls.model = workspace_model(cls.public_model, cls.action_plans)
 
     def test_domain_is_loadable(self) -> None:
-        ontology, _, registry = load_domain(DOMAIN_ROOT)
+        ontology, _, _ = load_domain(DOMAIN_ROOT)
 
         self.assertEqual("FoxOMS", ontology.name)
+        self.assertEqual("uom.domain.v1", self.source_model["schema"])
         self.assertEqual("oag.ontology.v1", self.public_model["schema"])
         self.assertEqual(set(self.public_model["objects"]), set(ontology.objects))
 

@@ -11,13 +11,13 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from highway.app.agent_runtime import OagAgentRuntime
+from highway.spatial import SpatialViewService
 from uom.workspace import ChangeValidationError
-
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 AGENT = OagAgentRuntime(ROOT)
-SPATIAL = AGENT.get_service("spatial_view")
+SPATIAL = SpatialViewService(AGENT.repository) if AGENT.repository is not None else None
 
 
 class UomHandler(BaseHTTPRequestHandler):

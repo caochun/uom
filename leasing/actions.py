@@ -40,10 +40,10 @@ class LeasingActionService(ModelActionService):
         inputs: dict[str, Any],
     ) -> None:
         reviewed_id = inputs.get("reviewed_object")
-        reviewed = self.workspace.repository.get_object("Object", reviewed_id)
+        reviewed = self.workspace.repository.get_object(reviewed_id)
         if not reviewed or reviewed.get("type") != "lease_plan":
             return
-        for relation in self.workspace.repository.query_relations("Relation"):
+        for relation in self.workspace.repository.query_relations():
             if (
                 relation.get("type") == "references"
                 and relation.get("to") == reviewed_id
@@ -62,7 +62,7 @@ class LeasingActionService(ModelActionService):
         context: dict[str, Any],
         inputs: dict[str, Any],
     ) -> None:
-        approval = self.workspace.repository.get_object("Object", context.get("id"))
+        approval = self.workspace.repository.get_object(context.get("id"))
         if not approval:
             return
         properties = deepcopy(approval.get("properties") or {})
@@ -103,14 +103,14 @@ class LeasingActionService(ModelActionService):
     ) -> None:
         reviewed_ids = [
             relation.get("to")
-            for relation in self.workspace.repository.query_relations("Relation")
+            for relation in self.workspace.repository.query_relations()
             if relation.get("type") == "references"
             and relation.get("from") == approval.get("id")
             and (relation.get("properties") or {}).get("role") == "reviewed_object"
         ]
         if len(reviewed_ids) != 1:
             raise ChangeValidationError(["action: 审批必须且只能指向一个被审批对象"])
-        reviewed = self.workspace.repository.get_object("Object", reviewed_ids[0])
+        reviewed = self.workspace.repository.get_object(reviewed_ids[0])
         if not reviewed or reviewed.get("type") != "lease_plan":
             return
         decision = inputs["decision"]
@@ -134,7 +134,7 @@ class LeasingActionService(ModelActionService):
     ) -> None:
         credit_ids = {
             relation.get("to")
-            for relation in self.workspace.repository.query_relations("Relation")
+            for relation in self.workspace.repository.query_relations()
             if relation.get("type") == "references"
             and relation.get("from") == plan.get("id")
             and (relation.get("properties") or {}).get("role") == "reserved_credit"
@@ -169,7 +169,7 @@ class LeasingActionService(ModelActionService):
         ])
 
     def _validate_contract_signing(self, inputs: dict[str, Any]) -> None:
-        plan = self.workspace.repository.get_object("Object", inputs["lease_plan_id"])
+        plan = self.workspace.repository.get_object(inputs["lease_plan_id"])
         plan_money = (plan.get("properties") or {}).get("amount") if plan else None
         contract_money = inputs.get("amount")
         self._require_positive_money(contract_money, "合同金额")
@@ -180,7 +180,7 @@ class LeasingActionService(ModelActionService):
         contract_id = inputs["contract_id"]
         schedule_ids = self._contract_schedule_ids(contract_id)
         schedules = {
-            schedule_id: self.workspace.repository.get_object("Object", schedule_id)
+            schedule_id: self.workspace.repository.get_object(schedule_id)
             for schedule_id in schedule_ids
         }
         if any(
@@ -211,8 +211,8 @@ class LeasingActionService(ModelActionService):
         operations: list[dict[str, Any]],
         inputs: dict[str, Any],
     ) -> None:
-        payment = self.workspace.repository.get_object("Object", inputs["payment_id"])
-        target = self.workspace.repository.get_object("Object", inputs["target_id"])
+        payment = self.workspace.repository.get_object(inputs["payment_id"])
+        target = self.workspace.repository.get_object(inputs["target_id"])
         allocation_money = inputs.get("amount")
         allocation_amount, _ = self._require_positive_money(
             allocation_money,
@@ -221,8 +221,8 @@ class LeasingActionService(ModelActionService):
         payment_amount, _ = self._record_money(payment, "收款")
         target_amount, _ = self._record_money(target, "核销目标")
         audit = audit_finance_records(
-            self.workspace.repository.query_objects("Object"),
-            self.workspace.repository.query_relations("Relation"),
+            self.workspace.repository.query_objects(),
+            self.workspace.repository.query_relations(),
         )
         if not audit["valid"]:
             raise ChangeValidationError([f"finance: {error}" for error in audit["errors"]])
@@ -242,7 +242,7 @@ class LeasingActionService(ModelActionService):
         contract_id = inputs["contract_id"]
         open_obligations = []
         for object_id in self._contract_obligation_ids(contract_id):
-            record = self.workspace.repository.get_object("Object", object_id)
+            record = self.workspace.repository.get_object(object_id)
             if record and (record.get("properties") or {}).get("status") != "settled":
                 open_obligations.append(record.get("name") or object_id)
         if open_obligations:
@@ -280,10 +280,10 @@ class LeasingActionService(ModelActionService):
                 self._relation_operation("references", release_id, settlement_id, "source_settlement"),
             ])
 
-        for relation in self.workspace.repository.query_relations("Relation"):
+        for relation in self.workspace.repository.query_relations():
             if relation.get("type") != "contains" or relation.get("from") != contract_id:
                 continue
-            participant = self.workspace.repository.get_object("Object", relation.get("to"))
+            participant = self.workspace.repository.get_object(relation.get("to"))
             if participant and participant.get("type") == "contract_participation":
                 self._merge_object_properties(
                     operations,
@@ -291,7 +291,7 @@ class LeasingActionService(ModelActionService):
                     {"status": "inactive", "valid_to": inputs["occurred_on"]},
                 )
         for schedule_id in self._contract_schedule_ids(contract_id):
-            schedule = self.workspace.repository.get_object("Object", schedule_id)
+            schedule = self.workspace.repository.get_object(schedule_id)
             if schedule and (schedule.get("properties") or {}).get("status") == "active":
                 self._merge_object_properties(
                     operations,
@@ -302,10 +302,10 @@ class LeasingActionService(ModelActionService):
     def _contract_credit_position(self, contract_id: str) -> tuple[str, float, str]:
         objects = {
             item["id"]: item
-            for item in self.workspace.repository.query_objects("Object")
+            for item in self.workspace.repository.query_objects()
             if isinstance(item.get("id"), str)
         }
-        relations = self.workspace.repository.query_relations("Relation")
+        relations = self.workspace.repository.query_relations()
         entry_ids = {
             relation.get("from")
             for relation in relations
@@ -343,10 +343,10 @@ class LeasingActionService(ModelActionService):
     def _contract_schedule_ids(self, contract_id: str) -> set[str]:
         objects = {
             item["id"]: item
-            for item in self.workspace.repository.query_objects("Object")
+            for item in self.workspace.repository.query_objects()
             if isinstance(item.get("id"), str)
         }
-        relations = self.workspace.repository.query_relations("Relation")
+        relations = self.workspace.repository.query_relations()
         change_ids = {
             relation.get("from")
             for relation in relations
@@ -366,10 +366,10 @@ class LeasingActionService(ModelActionService):
     def _contract_obligation_ids(self, contract_id: str) -> set[str]:
         objects = {
             item["id"]: item
-            for item in self.workspace.repository.query_objects("Object")
+            for item in self.workspace.repository.query_objects()
             if isinstance(item.get("id"), str)
         }
-        relations = self.workspace.repository.query_relations("Relation")
+        relations = self.workspace.repository.query_relations()
         loan_ids = {
             relation.get("to")
             for relation in relations

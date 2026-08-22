@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "oag-agent"))
@@ -23,7 +22,6 @@ from uom.model import (  # noqa: E402
     workspace_model,
 )
 from uom.validation import ModelValidator  # noqa: E402
-
 
 DOMAIN_ROOT = Path(__file__).resolve().parents[1]
 
@@ -485,18 +483,18 @@ def main() -> int:
     if not args.confirm_clear:
         print("Dry run only; pass --confirm-clear to replace the database")
         return 0
-    _, repository, registry = load_domain(DOMAIN_ROOT)
+    runtime = load_domain(DOMAIN_ROOT)
     try:
-        graph = registry.get_service("uom_graph")
+        graph = runtime.change_store
         graph.replace_graph(objects, relations)
         with sqlite3.connect(graph.database_path) as connection:
             connection.execute("DELETE FROM action_log")
             connection.commit()
-        consistency = registry.call("audit_finance_consistency")
+        consistency = runtime.bindings.call("audit_finance_consistency")
         if not consistency["valid"]:
             raise ValueError("\n".join(consistency["errors"]))
     finally:
-        repository.close()
+        runtime.repository.close()
     print(f"Seeded data into {DOMAIN_ROOT / 'data' / 'graph.db'}")
     return 0
 

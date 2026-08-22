@@ -13,16 +13,16 @@ from uom.provider import UomDomainProvider
 
 class FoxOmsDomainProvider:
     def __init__(self, domain_dir: str | Path):
-        self.uom = UomDomainProvider(domain_dir)
+        self.uom = UomDomainProvider(
+            domain_dir,
+            action_runtime_factory=FoxOmsActionService,
+        )
 
     def load_ontology(self) -> Ontology:
         return self.uom.load_ontology()
 
     def register(self, context: DomainContext) -> None:
         self.uom.register(context)
-        workspace = context.registry.get_service("uom_workspace")
-        actions = FoxOmsActionService(workspace)
-        context.registry.register_action_runtime(actions)
 
 
 def create_domain(domain_dir: str | Path) -> FoxOmsDomainProvider:

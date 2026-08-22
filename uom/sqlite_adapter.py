@@ -443,6 +443,25 @@ class UomSqliteGraphStore:
         with self._write_lock, self._connect() as connection:
             # WAL lets readers continue while a ChangeSet holds the single writer.
             connection.execute("PRAGMA journal_mode = WAL")
+            existing_tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+                ).fetchall()
+            }
+            if existing_tables:
+                if "metadata" not in existing_tables:
+                    raise ValueError(
+                        "unsupported UOM database schema: missing schema_version; "
+                        f"expected {_DATABASE_SCHEMA_VERSION}"
+                    )
+                schema_version = self._metadata(connection, "schema_version")
+                if schema_version != _DATABASE_SCHEMA_VERSION:
+                    raise ValueError(
+                        f"unsupported UOM database schema {schema_version or 'unknown'}; "
+                        f"expected {_DATABASE_SCHEMA_VERSION}"
+                    )
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS metadata (
@@ -510,66 +529,11 @@ class UomSqliteGraphStore:
                 CREATE INDEX IF NOT EXISTS idx_relations_active_target ON relations(target_id) WHERE retired_at IS NULL;
                 """
             )
-            schema_version = self._metadata(connection, "schema_version")
-            if schema_version and schema_version not in {"1", "2", "3", _DATABASE_SCHEMA_VERSION}:
-                raise ValueError(
-                    f"unsupported UOM database schema {schema_version}; "
-                    f"expected {_DATABASE_SCHEMA_VERSION}"
-                )
             connection.execute("BEGIN IMMEDIATE")
-            for table in ("objects", "relations"):
-                self._ensure_column(connection, table, "revision", "INTEGER NOT NULL DEFAULT 1")
-                self._ensure_column(connection, table, "created_at", "TEXT NOT NULL DEFAULT ''")
-                self._ensure_column(connection, table, "updated_at", "TEXT NOT NULL DEFAULT ''")
-                self._ensure_column(connection, table, "retired_at", "TEXT")
-            now = self._now()
-            connection.execute(
-                "UPDATE objects SET created_at = ?, updated_at = ? "
-                "WHERE created_at = '' OR updated_at = ''",
-                (now, now),
-            )
-            connection.execute(
-                "UPDATE relations SET created_at = ?, updated_at = ? "
-                "WHERE created_at = '' OR updated_at = ''",
-                (now, now),
-            )
             self._set_metadata(connection, "schema_version", _DATABASE_SCHEMA_VERSION)
-            self._backfill_action_changes(connection)
             if self._metadata(connection, "data_revision") is None:
                 self._set_metadata(connection, "data_revision", "0")
             connection.commit()
-
-    @classmethod
-    def _backfill_action_changes(cls, connection: sqlite3.Connection) -> None:
-        """Materialize legacy JSON change arrays into the indexed history table."""
-        rows = connection.execute("SELECT id, payload FROM action_log").fetchall()
-        for row in rows:
-            try:
-                changes = json.loads(row["payload"]).get("changes", [])
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if not isinstance(changes, list):
-                continue
-            for change_index, change in enumerate(changes):
-                if not isinstance(change, dict):
-                    continue
-                kind = str(change.get("kind") or "")
-                record_id = str(change.get("id") or "")
-                operation = str(change.get("operation") or "")
-                if kind not in {"object", "relation"} or not record_id or not operation:
-                    continue
-                before = change.get("before")
-                after = change.get("after")
-                connection.execute(
-                    "INSERT OR IGNORE INTO action_changes("
-                    "action_log_id, change_index, kind, record_id, operation, before_payload, after_payload) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        row["id"], change_index, kind, record_id, operation,
-                        cls._encode_record(before) if before is not None else None,
-                        cls._encode_record(after) if after is not None else None,
-                    ),
-                )
 
     def list_action_log(self, limit: int = 100) -> list[dict[str, Any]]:
         safe_limit = max(1, min(int(limit), 500))
@@ -829,20 +793,6 @@ class UomSqliteGraphStore:
                 record[key] = deepcopy(value)
 
     @staticmethod
-    def _ensure_column(
-        connection: sqlite3.Connection,
-        table: str,
-        column: str,
-        definition: str,
-    ) -> None:
-        columns = {
-            str(row["name"])
-            for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
-        }
-        if column not in columns:
-            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-
-    @staticmethod
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
 
@@ -981,7 +931,7 @@ class UomSqliteGraphSource:
 
         return build
 
-    def query_records(
+    def _query_logical_records(
         self,
         kind: str,
         type_name: str,
@@ -1002,7 +952,7 @@ class UomSqliteGraphSource:
         )
         return [self._to_logical(row, type_name, kind) for row in rows]
 
-    def count_records(
+    def _count_logical_records(
         self,
         kind: str,
         type_name: str,
@@ -1015,7 +965,7 @@ class UomSqliteGraphSource:
             self._physical_filters(filters, selector_type),
         )
 
-    def query_record_by_id(
+    def _get_logical_record(
         self,
         kind: str,
         type_name: str,
@@ -1028,12 +978,36 @@ class UomSqliteGraphSource:
             return None
         return self._to_logical(row, type_name, kind)
 
+    def query_objects(
+        self,
+        object_type: str,
+        binding: DataBindingDef,
+        filters: dict[str, Any] | None = None,
+        limit: int | None = None,
+        order_by: str | None = None,
+        offset: int | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._query_logical_records(
+            "object", object_type, binding, filters, limit, order_by, offset,
+        )
+
+    def count_objects(
+        self, object_type: str, binding: DataBindingDef,
+        filters: dict[str, Any] | None = None,
+    ) -> int:
+        return self._count_logical_records("object", object_type, binding, filters)
+
+    def get_object(
+        self, object_type: str, binding: DataBindingDef, id_value: Any,
+    ) -> dict[str, Any] | None:
+        return self._get_logical_record("object", object_type, binding, id_value)
+
     def query_relations(
         self,
         relation_type: str,
         binding: DataBindingDef,
-        *,
         filters: dict[str, Any] | None = None,
+        *,
         from_id: Any = None,
         to_id: Any = None,
         direction: str = "out",
@@ -1069,106 +1043,118 @@ class UomSqliteGraphSource:
             for row in rows
         ]
 
-    def search_records(
+    def count_relations(
+        self, relation_type: str, binding: DataBindingDef,
+        filters: dict[str, Any] | None = None,
+    ) -> int:
+        return self._count_logical_records(
+            "relation", relation_type, binding, filters,
+        )
+
+    def get_relation(
+        self, relation_type: str, binding: DataBindingDef, id_value: Any,
+    ) -> dict[str, Any] | None:
+        return self._get_logical_record(
+            "relation", relation_type, binding, id_value,
+        )
+
+    def search_objects(
         self,
-        kind: str,
-        type_name: str,
+        object_type: str,
         binding: DataBindingDef,
         keyword: str,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
-        selector_type = self._selector_type(binding, kind)
-        rows = self._store(kind).search_records(
+        selector_type = self._selector_type(binding, "object")
+        rows = self._object_store.search_records(
             keyword,
-            [self._physical_type(kind)],
+            ["Object"],
             limit,
             record_type=selector_type,
         )
         return [
-            self._to_logical(row, type_name, kind)
+            self._to_logical(row, object_type, "object")
             for row in rows if row.get("type") == selector_type
         ][:limit]
 
-    def create_record(
-        self, kind: str, type_name: str, binding: DataBindingDef, data: dict[str, Any],
-    ) -> dict[str, Any]:
-        return self._store(kind).create_record(
-            self._physical_type(kind),
-            self._to_physical(data, self._selector_type(binding, kind), kind),
+    def query_graph_objects(self, filters=None, limit=None, order_by=None, offset=None):
+        return self._object_store.query_records(
+            "Object", filters, limit, order_by, offset,
         )
 
-    def update_record(
-        self, kind: str, type_name: str, binding: DataBindingDef,
-        id_value: Any, data: dict[str, Any],
-    ) -> dict[str, Any]:
-        current = self._store(kind).query_record_by_id(self._physical_type(kind), id_value)
-        if current is None or current.get("type") != self._selector_type(binding, kind):
-            raise ValueError(f"未找到 {type_name}: {id_value}")
-        return self._store(kind).update_record(
-            self._physical_type(kind), id_value, self._logical_changes(data, kind),
+    def query_graph_relations(self, filters=None, *, from_id=None, to_id=None,
+                              direction="out", limit=None, order_by=None, offset=None):
+        endpoint_filters = dict(filters or {})
+        if direction == "both" and from_id is not None and to_id is None:
+            outgoing = self._relation_store.query_records(
+                "Relation", {**endpoint_filters, "from": from_id}, order_by=order_by,
+            )
+            incoming = self._relation_store.query_records(
+                "Relation", {**endpoint_filters, "to": from_id}, order_by=order_by,
+            )
+            rows = list({row["id"]: row for row in [*outgoing, *incoming]}.values())
+            start = max(0, int(offset or 0))
+            end = None if limit is None else start + max(0, int(limit))
+            return rows[start:end]
+        if from_id is not None:
+            endpoint_filters["to" if direction == "in" else "from"] = from_id
+        if to_id is not None:
+            endpoint_filters["to"] = to_id
+        return self._relation_store.query_records(
+            "Relation", endpoint_filters, limit, order_by, offset,
         )
 
-    def retire_record(
-        self, kind: str, type_name: str, binding: DataBindingDef, id_value: Any,
-    ) -> dict[str, Any]:
-        current = self._store(kind).query_record_by_id(self._physical_type(kind), id_value)
-        if current is None or current.get("type") != self._selector_type(binding, kind):
-            raise ValueError(f"未找到 {type_name}: {id_value}")
-        return self._store(kind).retire_record(self._physical_type(kind), id_value)
+    def count_graph_objects(self, filters=None) -> int:
+        return self._object_store.count_records("Object", filters)
 
-    def query_by_ids(
-        self, kind: str, type_name: str, binding: DataBindingDef, ids,
-        *, include_retired: bool = False,
-    ) -> list[dict[str, Any]]:
-        selector_type = self._selector_type(binding, kind)
-        return [
-            self._to_logical(row, type_name, kind)
-            for row in self._store(kind).query_by_ids(ids, include_retired=include_retired)
-            if row.get("type") == selector_type
-        ]
+    def count_graph_relations(self, filters=None) -> int:
+        return self._relation_store.count_records("Relation", filters)
 
-    def query_adjacent(
-        self, relation_type: str, binding: DataBindingDef, object_ids,
-        *, include_retired: bool = False,
-    ) -> list[dict[str, Any]]:
-        selector_type = self._selector_type(binding, "relation")
-        return [
-            self._to_logical(row, relation_type, "relation")
-            for row in self._relation_store.query_adjacent(object_ids, include_retired=include_retired)
-            if row.get("type") == selector_type
-        ]
+    def get_graph_object(self, record_id: Any):
+        return self._object_store.query_record_by_id("Object", record_id)
 
-    def type_counts(
-        self, kind: str, type_name: str, binding: DataBindingDef,
-    ) -> dict[str, int]:
-        return {type_name: self.count_records(kind, type_name, binding)}
+    def get_graph_relation(self, record_id: Any):
+        return self._relation_store.query_record_by_id("Relation", record_id)
 
-    def record_exists(
-        self, kind: str, type_name: str, binding: DataBindingDef, record_id: str,
-    ) -> bool:
-        row = self._store(kind).query_record_by_id(self._physical_type(kind), record_id)
-        return bool(row and row.get("type") == self._selector_type(binding, kind))
+    def create_graph_object(self, record: dict[str, Any]) -> dict[str, Any]:
+        return self._object_store.create_record("Object", record)
 
-    def get_record_version(
-        self, kind: str, type_name: str, binding: DataBindingDef, record_id: str,
-    ) -> dict[str, Any] | None:
-        if not self.record_exists(kind, type_name, binding, record_id):
-            return None
+    def update_graph_object(self, record_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        return self._object_store.update_record("Object", record_id, changes)
+
+    def retire_graph_object(self, record_id: str) -> dict[str, Any]:
+        return self._object_store.retire_record("Object", record_id)
+
+    def create_graph_relation(self, record: dict[str, Any]) -> dict[str, Any]:
+        return self._relation_store.create_record("Relation", record)
+
+    def update_graph_relation(self, record_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        return self._relation_store.update_record("Relation", record_id, changes)
+
+    def retire_graph_relation(self, record_id: str) -> dict[str, Any]:
+        return self._relation_store.retire_record("Relation", record_id)
+
+    def query_graph_records_by_ids(self, kind: str, ids, *, include_retired=False):
+        return self._store(kind).query_by_ids(ids, include_retired=include_retired)
+
+    def query_graph_adjacent(self, object_ids, *, include_retired=False):
+        return self._relation_store.query_adjacent(
+            object_ids, include_retired=include_retired,
+        )
+
+    def graph_type_counts(self, kind: str) -> dict[str, int]:
+        return self._store(kind).type_counts()
+
+    def graph_record_exists(self, kind: str, record_id: str) -> bool:
+        return self._store(kind).record_exists(kind, record_id)
+
+    def get_graph_record_version(self, kind: str, record_id: str):
         return self._store(kind).get_record_version(kind, record_id)
 
-    def apply_changeset(
-        self,
-        operations: list[dict[str, Any]],
-        *,
-        object_binding: DataBindingDef,
-        relation_binding: DataBindingDef,
-        **kwargs: Any,
-    ) -> None:
-        self._assert_binding("object", object_binding)
-        self._assert_binding("relation", relation_binding)
+    def apply_graph_changeset(self, operations, **kwargs) -> None:
         self._object_store.apply_changeset(operations, **kwargs)
 
-    def replace_graph(self, objects, relations, **kwargs: Any) -> None:
+    def replace_property_graph(self, objects, relations, **kwargs) -> None:
         self._object_store.replace_graph(objects, relations, **kwargs)
 
     def list_action_log(self, limit: int = 100):
@@ -1259,107 +1245,3 @@ class UomSqliteGraphSource:
         if properties:
             changes["properties"] = properties
         return changes
-
-
-class UomGraphAccess:
-    """Internal raw graph access used by UOM ChangeSets and domain services."""
-
-    def __init__(self, domain_dir: str | Path, database: str | Path) -> None:
-        base = Path(domain_dir).resolve()
-        self._objects = UomSqliteGraphStore("object", database, base)
-        self._relations = UomSqliteGraphStore("relation", database, base)
-        self.database_path = self._objects.database_path
-
-    def query_objects(self, object_type: str = "Object", filters=None, limit=None,
-                      order_by=None, offset=None):
-        return self._objects.query_records(object_type, filters, limit, order_by, offset)
-
-    def query_relations(self, relation_type: str = "Relation", filters=None, *,
-                        from_id=None, to_id=None, direction="out", limit=None,
-                        order_by=None, offset=None):
-        endpoint_filters = dict(filters or {})
-        if direction == "both" and from_id is not None and to_id is None:
-            outgoing = self._relations.query_records(
-                relation_type, {**endpoint_filters, "from": from_id}, order_by=order_by,
-            )
-            incoming = self._relations.query_records(
-                relation_type, {**endpoint_filters, "to": from_id}, order_by=order_by,
-            )
-            rows = list({row["id"]: row for row in [*outgoing, *incoming]}.values())
-            start = max(0, int(offset or 0))
-            end = None if limit is None else start + max(0, int(limit))
-            return rows[start:end]
-        if from_id is not None:
-            endpoint_filters["to" if direction == "in" else "from"] = from_id
-        if to_id is not None:
-            endpoint_filters["to"] = to_id
-        return self._relations.query_records(
-            relation_type, endpoint_filters, limit, order_by, offset,
-        )
-
-    def count_objects(self, object_type: str = "Object", filters=None) -> int:
-        return self._objects.count_records(object_type, filters)
-
-    def count_relations(self, relation_type: str = "Relation", filters=None) -> int:
-        return self._relations.count_records(relation_type, filters)
-
-    def get_object(self, object_type: str, record_id: Any):
-        return self._objects.query_record_by_id(object_type, record_id)
-
-    def get_relation(self, relation_type: str, record_id: Any):
-        return self._relations.query_record_by_id(relation_type, record_id)
-
-    def create_object(self, record: dict[str, Any]) -> dict[str, Any]:
-        return self._objects.create_record("Object", record)
-
-    def update_object(self, record_id: str, changes: dict[str, Any]) -> dict[str, Any]:
-        return self._objects.update_record("Object", record_id, changes)
-
-    def retire_object(self, record_id: str) -> dict[str, Any]:
-        return self._objects.retire_record("Object", record_id)
-
-    def create_relation(self, record: dict[str, Any]) -> dict[str, Any]:
-        return self._relations.create_record("Relation", record)
-
-    def update_relation(self, record_id: str, changes: dict[str, Any]) -> dict[str, Any]:
-        return self._relations.update_record("Relation", record_id, changes)
-
-    def retire_relation(self, record_id: str) -> dict[str, Any]:
-        return self._relations.retire_record("Relation", record_id)
-
-    def query_by_ids(self, kind: str, type_name: str, ids, *, include_retired=False):
-        return self._store(kind).query_by_ids(ids, include_retired=include_retired)
-
-    def query_adjacent(self, relation_type: str, object_ids, *, include_retired=False):
-        return self._relations.query_adjacent(object_ids, include_retired=include_retired)
-
-    def type_counts(self, kind: str, type_name: str) -> dict[str, int]:
-        return self._store(kind).type_counts()
-
-    def record_exists(self, kind: str, type_name: str, record_id: str) -> bool:
-        return self._store(kind).record_exists(kind, record_id)
-
-    def get_record_version(self, kind: str, type_name: str, record_id: str):
-        return self._store(kind).get_record_version(kind, record_id)
-
-    def apply_changeset(self, operations, **kwargs) -> None:
-        self._objects.apply_changeset(operations, **kwargs)
-
-    def replace_graph(self, objects, relations, **kwargs) -> None:
-        self._objects.replace_graph(objects, relations, **kwargs)
-
-    def source_location(self, kind: str = "object", type_name: str = "Object") -> Path:
-        return self.database_path
-
-    def list_action_log(self, limit: int = 100):
-        return self._objects.list_action_log(limit)
-
-    def list_record_history(self, kind: str, record_id: str, limit: int = 100):
-        return self._objects.list_record_history(kind, record_id, limit)
-
-    def _store(self, kind: str) -> UomSqliteGraphStore:
-        if kind == "object":
-            return self._objects
-        if kind == "relation":
-            return self._relations
-        raise ValueError("kind 必须是 object 或 relation")

@@ -5,25 +5,26 @@ import sys
 import unittest
 from pathlib import Path
 
-
 DOMAIN_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DOMAIN_ROOT / "scripts"))
+
+from seed_shandong import build_graph  # noqa: E402
 
 from uom.loader import load_domain  # noqa: E402
 from uom.model import (  # noqa: E402
     load_action_plans,
+    load_public_ontology,
     storage_contract_payload,
     workspace_model,
 )
-from uom.validation import ModelValidator, load_data, load_yaml, validate_model  # noqa: E402
-from seed_shandong import build_graph  # noqa: E402
+from uom.validation import ModelValidator, load_data, validate_model  # noqa: E402
 
 
 class UomDomainModelTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.ontology = storage_contract_payload()
-        cls.public_model = load_yaml(DOMAIN_ROOT / "model.yaml")
+        cls.public_model, _ = load_public_ontology(DOMAIN_ROOT)
         cls.action_plans = load_action_plans(DOMAIN_ROOT)
         cls.domain_model = workspace_model(cls.public_model, cls.action_plans)
         cls.current_objects, cls.current_relations = load_data(DOMAIN_ROOT)
@@ -470,14 +471,14 @@ class UomDomainModelTest(unittest.TestCase):
     def test_model_functions_are_oag_native_and_provider_bound(self) -> None:
         definition = self.public_model["functions"]["get_passage_trace"]
         self.assertNotIn("implementation", definition)
-        ontology, repository, registry = load_domain(DOMAIN_ROOT)
+        ontology, repository, bindings = load_domain(DOMAIN_ROOT)
         try:
             self.assertEqual(set(ontology.functions), {
                 "get_business_overview",
                 "get_passage_trace",
                 "find_incomplete_passages",
             })
-            self.assertTrue(all(registry.has(name) for name in ontology.functions))
+            self.assertTrue(all(bindings.has(name) for name in ontology.functions))
         finally:
             repository.close()
 

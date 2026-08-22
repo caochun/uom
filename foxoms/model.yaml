@@ -1,359 +1,133 @@
-schema: oag.ontology.v1
+schema: uom.domain.v1
 name: FoxOMS
 version: 0.2.0
 description: 面向多个受管企业日常运营的对象关系模型，追踪业务主体、商机、招投标、 商务约定、履约资源、知识资产、开票和回款，并用模型驱动 Action 形成完整业务事实。
-tool_preferences:
-  generic_search: fallback_only
-excluded_tools:
-- describe
-- mutate
-- summarize_progress
-- dispatch_workers
-data_sources:
-  uom_graph:
-    type: uom_sqlite_graph
+repositories:
+  graph:
+    type: sqlite_graph
     mode: writable
-    capabilities:
-    - object_query
-    - relation_query
-    - adjacency_query
-    - versioned_changeset
-    - history
     config:
       database: data/graph.db
+default_repository: graph
+properties:
+  is_managed:
+    name: 是否受管
+    type: boolean
+    description: 是否属于 FoxOMS 直接管理其运营过程的业务主体。
+  bid_result:
+    name: 投标结果
+    type: string
+    description: 投标记录的当前结果，用于表达是否中标。
+  amount:
+    name: 金额
+    type: money
+    description: 发票或回款记录的总金额。
+  issued_date:
+    name: 开票日期
+    type: date
+    description: 发票开具的日期。
+  received_date:
+    name: 回款日期
+    type: date
+    description: 企业收到客户回款的日期。
+  participation_role:
+    name: 参与角色
+    type: string
+    description: 业务主体在具体业务中承担的角色。
+  quantity:
+    name: 投入数量
+    type: number
+    description: 一次资源投入的数量。
+  unit:
+    name: 投入单位
+    type: string
+    description: 资源投入数量使用的计量单位。
+  start_date:
+    name: 开始日期
+    type: date
+    description: 资源投入开始的日期。
+  end_date:
+    name: 结束日期
+    type: date
+    description: 资源投入结束的日期。
+  ip_role:
+    name: 知识资产角色
+    type: string
+    description: 知识资产在订单、项目或任务中是所需条件还是产生成果。
+  settled_amount:
+    name: 核销金额
+    type: money
+    description: 一笔回款分配到某张发票的金额。
 objects:
   party:
-    display_name: 业务主体
-    summary: 参与企业运营活动的个人或组织。
+    name: 业务主体
     description: 参与企业运营活动的个人或组织。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: party
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      is_managed:
-        type: boolean
-        required: true
-        display_name: 是否受管
-        description: 是否属于 FoxOMS 直接管理其运营过程的业务主体。
+      is_managed: required
   opportunity:
-    display_name: 商机
-    summary: 由某个受管业务主体跟进、可能形成后续交易的潜在商业机会。
+    name: 商机
     description: 由某个受管业务主体跟进、可能形成后续交易的潜在商业机会。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: opportunity
-    properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
+    properties: {}
   tender:
-    display_name: 招标事项
-    summary: 与商机关联、由招标方组织的招标活动。
+    name: 招标事项
     description: 与商机关联、由招标方组织的招标活动。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: tender
-    properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
+    properties: {}
   bid:
-    display_name: 投标记录
-    summary: 一个或多个业务主体针对招标事项形成的一次投标。
+    name: 投标记录
     description: 一个或多个业务主体针对招标事项形成的一次投标。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: bid
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      bid_result:
-        type: string
-        required: false
-        display_name: 投标结果
-        description: 投标记录的当前结果，用于表达是否中标。
+      bid_result: optional
   framework_agreement:
-    display_name: 框架协议
-    summary: 中标后签订、用于约定后续订单合作规则的框架性协议。
+    name: 框架协议
     description: 中标后签订、用于约定后续订单合作规则的框架性协议。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: framework_agreement
-    properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
+    properties: {}
   contract:
-    display_name: 项目合同
-    summary: 中标后围绕具体项目或任务签订的服务采购合同。
+    name: 项目合同
     description: 中标后围绕具体项目或任务签订的服务采购合同。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: contract
-    properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
+    properties: {}
   order:
-    display_name: 订单
-    summary: 客户依据框架协议向服务提供方发出的具体服务采购。
+    name: 订单
     description: 客户依据框架协议向服务提供方发出的具体服务采购。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: order
-    properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
+    properties: {}
   work_item:
-    display_name: 项目/任务
-    summary: 由项目合同定义并由企业组织履行的具体工作事项。
+    name: 项目/任务
     description: 由项目合同定义并由企业组织履行的具体工作事项。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: work_item
-    properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
+    properties: {}
   personnel:
-    display_name: 人员
-    summary: 可被安排参与订单、项目或任务的人员资源。
+    name: 人员
     description: 可被安排参与订单、项目或任务的人员资源。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: personnel
-    properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
+    properties: {}
   software_resource:
-    display_name: 软件资源
-    summary: 可被配置到订单、项目或任务的软件、许可或使用权。
+    name: 软件资源
     description: 可被配置到订单、项目或任务的软件、许可或使用权。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: software_resource
-    properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
+    properties: {}
   hardware_resource:
-    display_name: 硬件资源
-    summary: 可被配置到订单、项目或任务的设备或硬件资产。
+    name: 硬件资源
     description: 可被配置到订单、项目或任务的设备或硬件资产。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: hardware_resource
-    properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
+    properties: {}
   intellectual_asset:
-    display_name: 知识资产
-    summary: 与某个订单、项目或任务关联的专利、论文、软著或技术报告。
+    name: 知识资产
     description: 与某个订单、项目或任务关联的专利、论文、软著或技术报告。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: intellectual_asset
-    properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
+    properties: {}
   invoice:
-    display_name: 发票
-    summary: 受管主体依据合同或订单向客户开具的发票。
+    name: 发票
     description: 受管主体依据合同或订单向客户开具的发票。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: invoice
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 发票或回款记录的总金额。
-      issued_date:
-        type: date
-        required: true
-        display_name: 开票日期
-        description: 发票开具的日期。
+      amount: required
+      issued_date: required
   receipt:
-    display_name: 回款
-    summary: 客户针对发票向受管主体支付并已到账的款项。
+    name: 回款
     description: 客户针对发票向受管主体支付并已到账的款项。
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: object
-        type: receipt
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定对象 ID
-      name:
-        type: str
-        required: true
-        description: 对象名称
-      amount:
-        type: money
-        required: true
-        display_name: 金额
-        description: 发票或回款记录的总金额。
-      received_date:
-        type: date
-        required: true
-        display_name: 回款日期
-        description: 企业收到客户回款的日期。
+      amount: required
+      received_date: required
 relations:
   participates_in:
-    display_name: 参与业务
-    summary: 业务主体以特定角色参与某个业务对象。
+    name: 参与业务
     description: 业务主体以特定角色参与某个业务对象。
-    from_types:
+    from:
     - party
-    to_types:
+    to:
     - opportunity
     - tender
     - bid
@@ -361,472 +135,311 @@ relations:
     - contract
     - order
     - work_item
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: participates_in
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
-      participation_role:
-        type: string
-        required: true
-        display_name: 参与角色
-        description: 业务主体在具体业务中承担的角色。
+      participation_role: required
   contains:
-    display_name: 包含
-    summary: 表达商机包含招标事项、招标事项包含投标记录、框架协议包含订单， 或项目合同定义项目/任务的结构关系。
+    name: 包含
     description: 表达商机包含招标事项、招标事项包含投标记录、框架协议包含订单， 或项目合同定义项目/任务的结构关系。
-    from_types:
+    from:
     - opportunity
     - tender
     - framework_agreement
     - contract
     - order
-    to_types:
+    to:
     - tender
     - bid
     - order
     - work_item
     - invoice
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: contains
-    properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
+    properties: {}
   derives:
-    display_name: 形成
-    summary: 中标的投标记录形成后续框架协议或项目合同。
+    name: 形成
     description: 中标的投标记录形成后续框架协议或项目合同。
-    from_types:
+    from:
     - bid
-    to_types:
+    to:
     - framework_agreement
     - contract
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: derives
-    properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
+    properties: {}
   allocated_to:
-    display_name: 投入到
-    summary: 人员、软件或硬件在一定期间内投入某个订单、项目或任务。
+    name: 投入到
     description: 人员、软件或硬件在一定期间内投入某个订单、项目或任务。
-    from_types:
+    from:
     - personnel
     - software_resource
     - hardware_resource
-    to_types:
+    to:
     - order
     - work_item
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: allocated_to
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
-      quantity:
-        type: number
-        required: true
-        display_name: 投入数量
-        description: 一次资源投入的数量。
-      unit:
-        type: string
-        required: true
-        display_name: 投入单位
-        description: 资源投入数量使用的计量单位。
-      start_date:
-        type: date
-        required: false
-        display_name: 开始日期
-        description: 资源投入开始的日期。
-      end_date:
-        type: date
-        required: false
-        display_name: 结束日期
-        description: 资源投入结束的日期。
+      quantity: required
+      unit: required
+      start_date: optional
+      end_date: optional
   involves_ip:
-    display_name: 涉及知识资产
-    summary: 订单、项目或任务所需或产生的知识资产；每项知识资产只关联一个履约对象。
+    name: 涉及知识资产
     description: 订单、项目或任务所需或产生的知识资产；每项知识资产只关联一个履约对象。
-    from_types:
+    from:
     - order
     - work_item
-    to_types:
+    to:
     - intellectual_asset
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: involves_ip
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
-      ip_role:
-        type: string
-        required: true
-        display_name: 知识资产角色
-        description: 知识资产在订单、项目或任务中是所需条件还是产生成果。
+      ip_role: required
   settles:
-    display_name: 核销
-    summary: 一笔回款以指定金额核销一张发票。
+    name: 核销
     description: 一笔回款以指定金额核销一张发票。
-    from_types:
+    from:
     - receipt
-    to_types:
+    to:
     - invoice
-    directed: true
-    type_policy: closed
-    mutability: mutable
-    data_source: human_confirmed
-    binding:
-      source: uom_graph
-      selector:
-        kind: relation
-        type: settles
     properties:
-      id:
-        type: str
-        required: true
-        description: 稳定关系 ID
-      from:
-        type: str
-        required: true
-        description: 起点对象 ID
-      to:
-        type: str
-        required: true
-        description: 终点对象 ID
-      settled_amount:
-        type: money
-        required: true
-        display_name: 核销金额
-        description: 一笔回款分配到某张发票的金额。
+      settled_amount: required
 functions: {}
 actions:
   register_party:
-    display_name: 登记业务主体
-    summary: 登记参与企业运营的个人或组织，并标识其是否属于 FoxOMS 受管范围。
+    name: 登记业务主体
     description: 登记参与企业运营的个人或组织，并标识其是否属于 FoxOMS 受管范围。
     icon: building_2
-    available_on: []
-    context_input: ''
+    'on': []
+    context: ''
     inputs:
       name:
-        display_name: 主体名称
+        name: 主体名称
         description: ''
+        required: true
         type: string
-        required: true
-        object_types: []
       is_managed:
-        display_name: 是否受管
+        name: 是否受管
         description: ''
-        type: boolean
         required: true
-        object_types: []
+        property: is_managed
         default: false
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - party
-      updates_objects: []
-      retires_objects: []
-      creates_relations: []
-      updates_relations: []
-      retires_relations: []
+    requires: []
+    changes:
+      create:
+        objects:
+        - party
+        relations: []
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记新的业务主体。
     idempotency: required
   register_personnel:
-    display_name: 登记人员
-    summary: 登记可投入订单、项目或任务的人员资源。
+    name: 登记人员
     description: 登记可投入订单、项目或任务的人员资源。
     icon: user_round_plus
-    available_on: []
-    context_input: ''
+    'on': []
+    context: ''
     inputs:
       name:
-        display_name: 人员名称
+        name: 人员名称
         description: ''
-        type: string
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - personnel
-      updates_objects: []
-      retires_objects: []
-      creates_relations: []
-      updates_relations: []
-      retires_relations: []
+        type: string
+    requires: []
+    changes:
+      create:
+        objects:
+        - personnel
+        relations: []
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记新的人员资源。
     idempotency: required
   register_software_resource:
-    display_name: 登记软件资源
-    summary: 登记可配置到订单、项目或任务的软件、许可或使用权。
+    name: 登记软件资源
     description: 登记可配置到订单、项目或任务的软件、许可或使用权。
     icon: app_window
-    available_on: []
-    context_input: ''
+    'on': []
+    context: ''
     inputs:
       name:
-        display_name: 软件资源名称
+        name: 软件资源名称
         description: ''
-        type: string
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - software_resource
-      updates_objects: []
-      retires_objects: []
-      creates_relations: []
-      updates_relations: []
-      retires_relations: []
+        type: string
+    requires: []
+    changes:
+      create:
+        objects:
+        - software_resource
+        relations: []
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记新的软件资源。
     idempotency: required
   register_hardware_resource:
-    display_name: 登记硬件资源
-    summary: 登记可配置到订单、项目或任务的设备或硬件资产。
+    name: 登记硬件资源
     description: 登记可配置到订单、项目或任务的设备或硬件资产。
     icon: server
-    available_on: []
-    context_input: ''
+    'on': []
+    context: ''
     inputs:
       name:
-        display_name: 硬件资源名称
+        name: 硬件资源名称
         description: ''
-        type: string
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - hardware_resource
-      updates_objects: []
-      retires_objects: []
-      creates_relations: []
-      updates_relations: []
-      retires_relations: []
+        type: string
+    requires: []
+    changes:
+      create:
+        objects:
+        - hardware_resource
+        relations: []
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记新的硬件资源。
     idempotency: required
   create_opportunity:
-    display_name: 建立商机
-    summary: 为受管业务主体建立商机，并记录经营方和潜在客户。
+    name: 建立商机
     description: 为受管业务主体建立商机，并记录经营方和潜在客户。
     icon: lightbulb
-    available_on: []
-    context_input: ''
+    'on': []
+    context: ''
     inputs:
       name:
-        display_name: 商机名称
+        name: 商机名称
         description: ''
+        required: true
         type: string
-        required: true
-        object_types: []
       operating_party_id:
-        display_name: 经营方
+        name: 经营方
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - party
       potential_customer_id:
-        display_name: 潜在客户
+        name: 潜在客户
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - party
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - opportunity
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - participates_in
-      updates_relations: []
-      retires_relations: []
+    requires: []
+    changes:
+      create:
+        objects:
+        - opportunity
+        relations:
+        - participates_in
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 建立商机及其主要参与主体。
     idempotency: required
   register_tender:
-    display_name: 登记招标事项
-    summary: 在商机下登记招标事项，并记录招标方和可选的招标代理。
+    name: 登记招标事项
     description: 在商机下登记招标事项，并记录招标方和可选的招标代理。
     icon: landmark
-    available_on:
+    'on':
     - opportunity
-    context_input: opportunity_id
+    context: opportunity_id
     inputs:
       opportunity_id:
-        display_name: 所属商机
+        name: 所属商机
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - opportunity
       name:
-        display_name: 招标事项名称
+        name: 招标事项名称
         description: ''
+        required: true
         type: string
-        required: true
-        object_types: []
       tenderer_id:
-        display_name: 招标方
+        name: 招标方
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - party
       tender_agent_id:
-        display_name: 招标代理
+        name: 招标代理
         description: ''
-        type: str
         required: false
-        object_types:
+        objects:
         - party
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - tender
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      - participates_in
-      updates_relations: []
-      retires_relations: []
+    requires: []
+    changes:
+      create:
+        objects:
+        - tender
+        relations:
+        - contains
+        - participates_in
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 在商机下登记招标事项。
     idempotency: required
   register_bid:
-    display_name: 登记投标
-    summary: 在招标事项下登记一份投标，并记录牵头投标方。
+    name: 登记投标
     description: 在招标事项下登记一份投标，并记录牵头投标方。
     icon: file_check_2
-    available_on:
+    'on':
     - tender
-    context_input: tender_id
+    context: tender_id
     inputs:
       tender_id:
-        display_name: 所属招标事项
+        name: 所属招标事项
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - tender
       name:
-        display_name: 投标名称
+        name: 投标名称
         description: ''
+        required: true
         type: string
-        required: true
-        object_types: []
       lead_bidder_id:
-        display_name: 牵头投标方
+        name: 牵头投标方
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - party
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - bid
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      - participates_in
-      updates_relations: []
-      retires_relations: []
+    requires: []
+    changes:
+      create:
+        objects:
+        - bid
+        relations:
+        - contains
+        - participates_in
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 在招标事项下登记投标。
     idempotency: required
   add_business_participant:
-    display_name: 补充业务参与方
-    summary: 为业务对象补充推荐方、代理方、联合体成员或其他可核实的参与主体。
+    name: 补充业务参与方
     description: 为业务对象补充推荐方、代理方、联合体成员或其他可核实的参与主体。
     icon: user_round_plus
-    available_on:
+    'on':
     - opportunity
     - tender
     - bid
@@ -834,14 +447,13 @@ actions:
     - contract
     - order
     - work_item
-    context_input: business_object_id
+    context: business_object_id
     inputs:
       business_object_id:
-        display_name: 业务对象
+        name: 业务对象
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - opportunity
         - tender
         - bid
@@ -850,599 +462,577 @@ actions:
         - order
         - work_item
       party_id:
-        display_name: 业务主体
+        name: 业务主体
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - party
       participation_role:
-        display_name: 参与角色
+        name: 参与角色
         description: ''
-        type: string
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects: []
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - participates_in
-      updates_relations: []
-      retires_relations: []
+        property: participation_role
+    requires: []
+    changes:
+      create:
+        objects: []
+        relations:
+        - participates_in
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 补充业务参与主体及其角色。
     idempotency: required
   record_bid_result:
-    display_name: 记录投标结果
-    summary: 为尚未形成结果的投标记录中标或未中标结论。
+    name: 记录投标结果
     description: 为尚未形成结果的投标记录中标或未中标结论。
     icon: badge_check
-    available_on:
+    'on':
     - bid
-    context_input: bid_id
+    context: bid_id
     inputs:
       bid_id:
-        display_name: 投标记录
+        name: 投标记录
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - bid
       bid_result:
-        display_name: 投标结果
+        name: 投标结果
         description: ''
-        type: string
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects: []
-      updates_objects:
-      - bid
-      retires_objects: []
-      creates_relations: []
-      updates_relations: []
-      retires_relations: []
+        property: bid_result
+    requires: []
+    changes:
+      create:
+        objects: []
+        relations: []
+      update:
+        objects:
+        - bid
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 记录投标结果。
     idempotency: required
   sign_framework_agreement:
-    display_name: 签订框架协议
-    summary: 基于中标投标签订框架协议，并记录实际服务提供方和客户。
+    name: 签订框架协议
     description: 基于中标投标签订框架协议，并记录实际服务提供方和客户。
     icon: file_signature
-    available_on:
+    'on':
     - bid
-    context_input: bid_id
+    context: bid_id
     inputs:
       bid_id:
-        display_name: 中标投标
+        name: 中标投标
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - bid
       name:
-        display_name: 框架协议名称
+        name: 框架协议名称
         description: ''
+        required: true
         type: string
-        required: true
-        object_types: []
       service_provider_id:
-        display_name: 服务提供方
+        name: 服务提供方
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - party
       customer_id:
-        display_name: 客户
+        name: 客户
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - party
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - framework_agreement
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - derives
-      - participates_in
-      updates_relations: []
-      retires_relations: []
+    requires: []
+    changes:
+      create:
+        objects:
+        - framework_agreement
+        relations:
+        - derives
+        - participates_in
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 基于中标投标签订框架协议。
     idempotency: required
   issue_order:
-    display_name: 下达订单
-    summary: 在框架协议下登记一项具体服务采购订单，交易主体从框架协议推导。
+    name: 下达订单
     description: 在框架协议下登记一项具体服务采购订单，交易主体从框架协议推导。
     icon: clipboard_list
-    available_on:
+    'on':
     - framework_agreement
-    context_input: framework_agreement_id
+    context: framework_agreement_id
     inputs:
       framework_agreement_id:
-        display_name: 所属框架协议
+        name: 所属框架协议
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - framework_agreement
       name:
-        display_name: 订单名称
+        name: 订单名称
         description: ''
-        type: string
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - order
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      updates_relations: []
-      retires_relations: []
+        type: string
+    requires: []
+    changes:
+      create:
+        objects:
+        - order
+        relations:
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 在框架协议下登记订单。
     idempotency: required
   sign_project_contract:
-    display_name: 签订项目合同
-    summary: 基于中标投标签订项目合同，并记录实际服务提供方和客户。
+    name: 签订项目合同
     description: 基于中标投标签订项目合同，并记录实际服务提供方和客户。
     icon: file_check_2
-    available_on:
+    'on':
     - bid
-    context_input: bid_id
+    context: bid_id
     inputs:
       bid_id:
-        display_name: 中标投标
+        name: 中标投标
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - bid
       name:
-        display_name: 项目合同名称
+        name: 项目合同名称
         description: ''
+        required: true
         type: string
-        required: true
-        object_types: []
       service_provider_id:
-        display_name: 服务提供方
+        name: 服务提供方
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - party
       customer_id:
-        display_name: 客户
+        name: 客户
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - party
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - contract
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - derives
-      - participates_in
-      updates_relations: []
-      retires_relations: []
+    requires: []
+    changes:
+      create:
+        objects:
+        - contract
+        relations:
+        - derives
+        - participates_in
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 基于中标投标签订项目合同。
     idempotency: required
   define_work_item:
-    display_name: 建立项目/任务
-    summary: 在项目合同下建立由企业组织履行的项目或任务，交易主体从合同推导。
+    name: 建立项目/任务
     description: 在项目合同下建立由企业组织履行的项目或任务，交易主体从合同推导。
     icon: briefcase_business
-    available_on:
+    'on':
     - contract
-    context_input: contract_id
+    context: contract_id
     inputs:
       contract_id:
-        display_name: 所属项目合同
+        name: 所属项目合同
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - contract
       name:
-        display_name: 项目/任务名称
+        name: 项目/任务名称
         description: ''
-        type: string
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - work_item
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      updates_relations: []
-      retires_relations: []
+        type: string
+    requires: []
+    changes:
+      create:
+        objects:
+        - work_item
+        relations:
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 在项目合同下建立项目或任务。
     idempotency: required
   allocate_personnel:
-    display_name: 安排人员
-    summary: 将人员按数量、单位和期间投入订单、项目或任务。
+    name: 安排人员
     description: 将人员按数量、单位和期间投入订单、项目或任务。
     icon: users
-    available_on:
+    'on':
     - order
     - work_item
-    context_input: target_id
+    context: target_id
     inputs:
       target_id:
-        display_name: 投入目标
+        name: 投入目标
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - order
         - work_item
       resource_id:
-        display_name: 人员
+        name: 人员
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - personnel
       quantity:
-        display_name: 投入数量
+        name: 投入数量
         description: ''
-        type: number
         required: true
-        object_types: []
+        property: quantity
       unit:
-        display_name: 投入单位
+        name: 投入单位
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: unit
         default: person_day
       start_date:
-        display_name: 开始日期
+        name: 开始日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: start_date
       end_date:
-        display_name: 结束日期
+        name: 结束日期
         description: ''
-        type: date
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects: []
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - allocated_to
-      updates_relations: []
-      retires_relations: []
+        property: end_date
+    requires: []
+    changes:
+      create:
+        objects: []
+        relations:
+        - allocated_to
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 安排人员投入履约。
     idempotency: required
   allocate_software:
-    display_name: 配置软件
-    summary: 将软件、许可或使用权按数量、单位和期间投入订单、项目或任务。
+    name: 配置软件
     description: 将软件、许可或使用权按数量、单位和期间投入订单、项目或任务。
     icon: app_window
-    available_on:
+    'on':
     - order
     - work_item
-    context_input: target_id
+    context: target_id
     inputs:
       target_id:
-        display_name: 投入目标
+        name: 投入目标
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - order
         - work_item
       resource_id:
-        display_name: 软件资源
+        name: 软件资源
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - software_resource
       quantity:
-        display_name: 投入数量
+        name: 投入数量
         description: ''
-        type: number
         required: true
-        object_types: []
+        property: quantity
       unit:
-        display_name: 投入单位
+        name: 投入单位
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: unit
         default: license_month
       start_date:
-        display_name: 开始日期
+        name: 开始日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: start_date
       end_date:
-        display_name: 结束日期
+        name: 结束日期
         description: ''
-        type: date
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects: []
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - allocated_to
-      updates_relations: []
-      retires_relations: []
+        property: end_date
+    requires: []
+    changes:
+      create:
+        objects: []
+        relations:
+        - allocated_to
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 配置软件资源投入履约。
     idempotency: required
   allocate_hardware:
-    display_name: 调配硬件
-    summary: 将设备或硬件资产按数量、单位和期间投入订单、项目或任务。
+    name: 调配硬件
     description: 将设备或硬件资产按数量、单位和期间投入订单、项目或任务。
     icon: server
-    available_on:
+    'on':
     - order
     - work_item
-    context_input: target_id
+    context: target_id
     inputs:
       target_id:
-        display_name: 投入目标
+        name: 投入目标
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - order
         - work_item
       resource_id:
-        display_name: 硬件资源
+        name: 硬件资源
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - hardware_resource
       quantity:
-        display_name: 投入数量
+        name: 投入数量
         description: ''
-        type: number
         required: true
-        object_types: []
+        property: quantity
       unit:
-        display_name: 投入单位
+        name: 投入单位
         description: ''
-        type: string
         required: true
-        object_types: []
+        property: unit
         default: device_month
       start_date:
-        display_name: 开始日期
+        name: 开始日期
         description: ''
-        type: date
         required: false
-        object_types: []
+        property: start_date
       end_date:
-        display_name: 结束日期
+        name: 结束日期
         description: ''
-        type: date
         required: false
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects: []
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - allocated_to
-      updates_relations: []
-      retires_relations: []
+        property: end_date
+    requires: []
+    changes:
+      create:
+        objects: []
+        relations:
+        - allocated_to
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 调配硬件资源投入履约。
     idempotency: required
   register_intellectual_asset:
-    display_name: 登记知识资产
-    summary: 登记某个订单、项目或任务所需或产生的知识资产，并一次完成唯一归属关联。
+    name: 登记知识资产
     description: 登记某个订单、项目或任务所需或产生的知识资产，并一次完成唯一归属关联。
     icon: badge_check
-    available_on:
+    'on':
     - order
     - work_item
-    context_input: target_id
+    context: target_id
     inputs:
       target_id:
-        display_name: 关联业务
+        name: 关联业务
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - order
         - work_item
       name:
-        display_name: 知识资产名称
+        name: 知识资产名称
         description: ''
-        type: string
         required: true
-        object_types: []
+        type: string
       ip_role:
-        display_name: 知识资产角色
+        name: 知识资产角色
         description: ''
-        type: string
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - intellectual_asset
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - involves_ip
-      updates_relations: []
-      retires_relations: []
+        property: ip_role
+    requires: []
+    changes:
+      create:
+        objects:
+        - intellectual_asset
+        relations:
+        - involves_ip
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记知识资产及其履约角色。
     idempotency: required
   issue_invoice:
-    display_name: 开具发票
-    summary: 基于项目合同或订单登记一张发票；开票方和受票方从上游业务推导。
+    name: 开具发票
     description: 基于项目合同或订单登记一张发票；开票方和受票方从上游业务推导。
     icon: receipt_text
-    available_on:
+    'on':
     - contract
     - order
-    context_input: parent_id
+    context: parent_id
     inputs:
       parent_id:
-        display_name: 所属合同/订单
+        name: 所属合同/订单
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - contract
         - order
       name:
-        display_name: 发票名称
+        name: 发票名称
         description: ''
+        required: true
         type: string
-        required: true
-        object_types: []
       amount:
-        display_name: 发票金额
+        name: 发票金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       issued_date:
-        display_name: 开票日期
+        name: 开票日期
         description: ''
-        type: date
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - invoice
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - contains
-      updates_relations: []
-      retires_relations: []
+        property: issued_date
+    requires: []
+    changes:
+      create:
+        objects:
+        - invoice
+        relations:
+        - contains
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 基于合同或订单开具发票。
     idempotency: required
   record_receipt:
-    display_name: 登记回款
-    summary: 登记到账回款并至少核销到一张发票，使付款与收款主体可沿业务链推导。
+    name: 登记回款
     description: 登记到账回款并至少核销到一张发票，使付款与收款主体可沿业务链推导。
     icon: circle_dollar_sign
-    available_on:
+    'on':
     - invoice
-    context_input: invoice_id
+    context: invoice_id
     inputs:
       invoice_id:
-        display_name: 首笔核销发票
+        name: 首笔核销发票
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - invoice
       name:
-        display_name: 回款名称
+        name: 回款名称
         description: ''
+        required: true
         type: string
-        required: true
-        object_types: []
       amount:
-        display_name: 到账金额
+        name: 到账金额
         description: ''
-        type: money
         required: true
-        object_types: []
+        property: amount
       received_date:
-        display_name: 回款日期
+        name: 回款日期
         description: ''
-        type: date
         required: true
-        object_types: []
+        property: received_date
       settled_amount:
-        display_name: 首笔核销金额
+        name: 首笔核销金额
         description: ''
-        type: money
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects:
-      - receipt
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - settles
-      updates_relations: []
-      retires_relations: []
+        property: settled_amount
+    requires: []
+    changes:
+      create:
+        objects:
+        - receipt
+        relations:
+        - settles
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 登记到账回款及首笔发票核销。
     idempotency: required
   settle_receipt:
-    display_name: 核销回款
-    summary: 将一笔回款的剩余金额继续核销到同一交易主体的发票。
+    name: 核销回款
     description: 将一笔回款的剩余金额继续核销到同一交易主体的发票。
     icon: split
-    available_on:
+    'on':
     - receipt
-    context_input: receipt_id
+    context: receipt_id
     inputs:
       receipt_id:
-        display_name: 回款
+        name: 回款
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - receipt
       invoice_id:
-        display_name: 核销发票
+        name: 核销发票
         description: ''
-        type: str
         required: true
-        object_types:
+        objects:
         - invoice
       settled_amount:
-        display_name: 核销金额
+        name: 核销金额
         description: ''
-        type: money
         required: true
-        object_types: []
-    preconditions: []
-    side_effects:
-      creates_objects: []
-      updates_objects: []
-      retires_objects: []
-      creates_relations:
-      - settles
-      updates_relations: []
-      retires_relations: []
+        property: settled_amount
+    requires: []
+    changes:
+      create:
+        objects: []
+        relations:
+        - settles
+      update:
+        objects: []
+        relations: []
+      retire:
+        objects: []
+        relations: []
     confirmation: 将回款核销到指定发票。
     idempotency: required
-interaction_policies:
-  user_chat:
-    include_in_system_prompt: true
-    instructions:
-    - 用户明确表达登记主体、建立商机、登记招投标、签约、资源投入、开票、回款或核销意图时，优先调用 ui_open_action_form。
-    - 不要用通用图变更替代已有 Action；Action 会同时生成必要对象、关系和业务约束校验。
-    - 商机只有进入招投标链或暂无后续两种情况，不要从商机直接推导框架协议或项目合同。
-    - 发票与回款主体从所属合同或订单追溯，不重复创建主体参与关系。
-    - 回款核销金额与知识资产归属使用确定性约束，不自行猜测或绕过校验。
+agent:
+  excluded_tools:
+  - dispatch_workers
+  instructions:
+  - 用户明确表达登记主体、建立商机、登记招投标、签约、资源投入、开票、回款或核销意图时，优先调用 request_action_input。
+  - 不要用通用图变更替代已有 Action；Action 会同时生成必要对象、关系和业务约束校验。
+  - 商机只有进入招投标链或暂无后续两种情况，不要从商机直接推导框架协议或项目合同。
+  - 发票与回款主体从所属合同或订单追溯，不重复创建主体参与关系。
+  - 回款核销金额与知识资产归属使用确定性约束，不自行猜测或绕过校验。

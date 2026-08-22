@@ -10,12 +10,14 @@ from oag.ontology.domain import DomainContext
 from oag.ontology.schema import Ontology
 
 from uom.actions import ModelActionService
+from uom.change_store import UomChangeSource, UomChangeStore
 from uom.model import (
     load_action_plans,
+    load_domain_model,
     load_public_ontology,
     validate_action_plans,
 )
-from uom.sqlite_adapter import UomGraphAccess, UomSqliteGraphSource
+from uom.sqlite_adapter import UomSqliteGraphSource
 from uom.workspace import UomWorkspaceService
 
 
@@ -26,9 +28,14 @@ class UomDomainProvider:
         self,
         domain_dir: str | Path,
         function_handlers: dict[str, Callable[..., Any]] | None = None,
+        action_runtime_factory: Callable[[UomWorkspaceService], Any] | None = None,
     ):
         self.domain_dir = Path(domain_dir).resolve()
         self.function_handlers = dict(function_handlers or {})
+        self.action_runtime_factory = action_runtime_factory
+        self.workspace: UomWorkspaceService | None = None
+        self.change_store: UomChangeStore | None = None
+        self.actions: Any = None
 
     def load_ontology(self) -> Ontology:
         public_model, ontology = load_public_ontology(self.domain_dir)
@@ -36,29 +43,36 @@ class UomDomainProvider:
         return ontology
 
     def register(self, context: DomainContext) -> None:
-        context.registry.register_source_adapter(
+        context.sources.register(
             "uom_sqlite_graph",
-            UomSqliteGraphSource.factory(context.domain_dir),
+            UomSqliteGraphSource.factory(self.domain_dir),
         )
-        source = context.ontology.data_sources["uom_graph"]
-        graph = UomGraphAccess(
-            context.domain_dir,
-            source.config.get("database") or source.config.get("path"),
+        _, source_model = load_domain_model(self.domain_dir)
+        source_name = source_model.default_repository
+        source = context.sources.require(source_name, UomChangeSource)
+        change_store = UomChangeStore(
+            source,
+            writable=context.ontology.data_sources[source_name].mode == "writable",
         )
         workspace = UomWorkspaceService(
-            context.domain_dir,
-            graph,
+            self.domain_dir,
+            change_store,
         )
-        actions = ModelActionService(workspace)
-        context.registry.register_service("uom_workspace", workspace)
-        context.registry.register_service("uom_graph", graph)
-        context.registry.register_action_runtime(actions)
+        actions = (
+            self.action_runtime_factory(workspace)
+            if self.action_runtime_factory is not None
+            else ModelActionService(workspace)
+        )
+        self.workspace = workspace
+        self.change_store = change_store
+        self.actions = actions
+        context.bindings.register_action_runtime(actions)
 
         for name, handler in self.function_handlers.items():
             definition = context.ontology.functions.get(name)
             if definition is None:
                 raise ValueError(f"function handler references unknown model function: {name}")
-            context.registry.register(
+            context.bindings.register(
                 name,
                 partial(handler, context.repository),
                 definition,

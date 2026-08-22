@@ -133,8 +133,14 @@ class SpatialViewService:
         }
 
     def get_view(self, object_id: str) -> dict[str, Any]:
-        objects = self.repository.query_objects("Object")
-        relations = self.repository.query_relations("Relation")
+        objects = [
+            self._raw_record(item, "object")
+            for item in self.repository.query_all_objects()
+        ]
+        relations = [
+            self._raw_record(item, "relation")
+            for item in self.repository.query_all_relations()
+        ]
         index = {item["id"]: item for item in objects}
         selected = index.get(object_id)
         if selected is None:
@@ -472,6 +478,21 @@ class SpatialViewService:
             if not result or result[-1] != value:
                 result.append(value)
         return result
+
+    @staticmethod
+    def _raw_record(item: dict[str, Any], kind: str) -> dict[str, Any]:
+        """Normalize an OAG semantic record for the spatial projection."""
+        if "_object_type" not in item:
+            return item
+        base = {"id", "name"} if kind == "object" else {"id", "from", "to"}
+        return {
+            **{key: value for key, value in item.items() if key in base},
+            "type": item["_object_type"],
+            "properties": {
+                key: value for key, value in item.items()
+                if key not in base and key != "_object_type"
+            },
+        }
 
     @staticmethod
     def _empty_view(selected: dict[str, Any]) -> dict[str, Any]:

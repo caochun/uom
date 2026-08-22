@@ -1055,19 +1055,29 @@ async function streamAgent(path, payload) {
       for (const line of lines) {
         if (!line.trim()) continue;
         const event = JSON.parse(line);
-        if (event.type === "text") {
-          const shouldFollow = isAgentNearBottom();
+        if (event.type === "assistant_delta") {
           if (!assistantBody) assistantBody = appendMessage("assistant", "");
           assistantMarkdown += event.content || "";
           renderAssistantMarkdown(assistantBody, assistantMarkdown);
-          scrollAgent(shouldFollow);
+          scrollAgent(true);
+        } else if (event.type === "assistant_end") {
+          if (event.kind === "progress") {
+            if (assistantMarkdown) {
+              toolGroup = appendToolEvent({ type: "progress", content: assistantMarkdown }, toolGroup);
+            }
+            assistantBody?.closest(".message")?.remove();
+          }
+          assistantBody = null;
+          assistantMarkdown = "";
+        } else if (event.type === "text") {
+          appendMessage("assistant", event.content || "");
         } else if (event.type === "confirmation_required" || event.type === "question") {
           waitingForConfirmation = true;
           setAgentPending(true);
           appendConfirmation(event);
         } else if (event.type === "tool_call" || event.type === "tool_result") {
           toolGroup = appendToolEvent(event, toolGroup);
-        } else if (event.type === "presentation" && event.name === "ui_open_action_form") {
+        } else if (event.type === "interaction" && event.name === "request_action_input") {
           if (assistantBody) {
             assistantBody.closest(".message")?.remove();
             assistantBody = null;
@@ -1120,10 +1130,12 @@ function appendToolEvent(event, group = null) {
   }
   const name = event.name || event.tool_name || "工具";
   const element = document.createElement("div");
-  element.className = `tool-event ${event.type === "tool_result" ? "result" : "call"}`;
-  element.innerHTML = event.type === "tool_call"
-    ? `<i data-lucide="play"></i><span>调用 ${escapeHtml(name)}</span>`
-    : `<i data-lucide="${event.blocked ? "circle-x" : "check"}"></i><span>${escapeHtml(name)} 已返回${event.blocked ? "（已阻止）" : ""}</span>`;
+  element.className = `tool-event ${event.type === "tool_result" ? "result" : event.type === "progress" ? "progress" : "call"}`;
+  element.innerHTML = event.type === "progress"
+    ? `<i data-lucide="loader-circle"></i><span>${escapeHtml(event.content || "正在处理")}</span>`
+    : event.type === "tool_call"
+      ? `<i data-lucide="play"></i><span>调用 ${escapeHtml(name)}</span>`
+      : `<i data-lucide="${event.blocked ? "circle-x" : "check"}"></i><span>${escapeHtml(name)} 已返回${event.blocked ? "（已阻止）" : ""}</span>`;
   $(".tool-event-list", group).append(element);
   const count = $$(".tool-event", group).length;
   $(".tool-event-count", group).textContent = count;

@@ -4,34 +4,56 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
-from oag.ontology.domain import DomainContext
-from oag.ontology.registry import FunctionRegistry
+from oag.ontology.bindings import RuntimeBindings
+from oag.ontology.loader import load_domain as load_oag_domain
 from oag.ontology.repository import OntologyRepository
+from oag.ontology.schema import Ontology
 
+from uom.actions import ModelActionService
+from uom.change_store import UomChangeStore
 from uom.provider import UomDomainProvider
+from uom.workspace import UomWorkspaceService
+
+
+@dataclass(frozen=True)
+class UomDomainRuntime:
+    ontology: Ontology
+    repository: OntologyRepository
+    bindings: RuntimeBindings
+    workspace: UomWorkspaceService
+    change_store: UomChangeStore
+    actions: ModelActionService
+
+    def __iter__(self) -> Iterator[object]:
+        """Retain tuple unpacking for callers that only need OAG components."""
+        yield self.ontology
+        yield self.repository
+        yield self.bindings
 
 
 def load_domain(domain_dir: str | Path):
     domain_dir = Path(domain_dir).resolve()
     provider = _load_extension_provider(domain_dir) or UomDomainProvider(domain_dir)
-    ontology = provider.load_ontology()
-    registry = FunctionRegistry()
-    repository = OntologyRepository(ontology, registry)
-    provider.register(DomainContext(
-        domain_dir=domain_dir,
-        ontology=ontology,
-        registry=registry,
-        repository=repository,
-    ))
-    missing = [name for name in ontology.functions if not registry.has(name)]
-    if missing:
+    ontology, repository, bindings = load_oag_domain(provider)
+    uom_provider = getattr(provider, "uom", provider)
+    workspace = getattr(uom_provider, "workspace", None)
+    change_store = getattr(uom_provider, "change_store", None)
+    actions = getattr(uom_provider, "actions", None)
+    if workspace is None or change_store is None or actions is None:
         repository.close()
-        raise ValueError(
-            "UOM function implementations are missing: " + ", ".join(sorted(missing))
-        )
-    return ontology, repository, registry
+        raise RuntimeError("UOM provider did not expose its runtime services")
+    return UomDomainRuntime(
+        ontology=ontology,
+        repository=repository,
+        bindings=bindings,
+        workspace=workspace,
+        change_store=change_store,
+        actions=actions,
+    )
 
 
 def _load_extension_provider(domain_dir: Path):

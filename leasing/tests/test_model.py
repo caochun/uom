@@ -13,16 +13,17 @@ sys.path.insert(0, str(ROOT / "oag-agent"))
 from leasing.scripts.seed import build_graph  # noqa: E402
 from uom.model import (  # noqa: E402
     load_action_plans,
+    load_public_ontology,
     storage_contract_payload,
     workspace_model,
 )
-from uom.validation import ModelValidator, load_data, load_yaml  # noqa: E402
+from uom.validation import ModelValidator, load_data  # noqa: E402
 
 
 class LeasingDomainModelTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.public_model = load_yaml(DOMAIN_ROOT / "model.yaml")
+        cls.public_model, _ = load_public_ontology(DOMAIN_ROOT)
         cls.model = workspace_model(
             cls.public_model,
             load_action_plans(DOMAIN_ROOT),

@@ -19,15 +19,16 @@ from pydantic import ValidationError
 
 from uom.model import (
     load_action_plans,
-    load_public_ontology,
+    load_domain_model,
+    public_ontology,
     storage_contract_payload,
-    update_public_vocabulary,
+    update_source_vocabulary,
     workspace_model,
 )
 from uom.validation import ModelValidator
 
 if TYPE_CHECKING:
-    from uom.sqlite_adapter import UomGraphAccess
+    from uom.change_store import UomChangeStore
 
 
 TYPE_ID = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -46,7 +47,7 @@ class UomWorkspaceService:
     def __init__(
         self,
         domain_root: str | Path,
-        repository: UomGraphAccess,
+        repository: UomChangeStore,
     ):
         self.root = Path(domain_root).resolve()
         self.model_path = self.root / "model.yaml"
@@ -61,30 +62,38 @@ class UomWorkspaceService:
         return path
 
     def snapshot(self) -> dict[str, dict[str, Any]]:
-        public_model, editor_model = self._model_snapshot()
+        source_model, public_model, editor_model = self._model_snapshot()
         return {
             "ontology": storage_contract_payload(),
+            "source_model": source_model,
             "public_model": public_model,
             "model": editor_model,
             "objects": {
                 "schema": "uom.data.objects.v1",
-                "objects": self.repository.query_objects("Object"),
+                "objects": self.repository.query_objects(),
             },
             "relations": {
                 "schema": "uom.data.relations.v1",
-                "relations": self.repository.query_relations("Relation"),
+                "relations": self.repository.query_relations(),
             },
         }
 
     def load_model(self) -> dict[str, Any]:
         """Return the private Action/editor projection of the public OAG model."""
-        _, editor_model = self._model_snapshot()
+        _, _, editor_model = self._model_snapshot()
         return editor_model
 
-    def _model_snapshot(self) -> tuple[dict[str, Any], dict[str, Any]]:
-        public_model, _ = load_public_ontology(self.root)
+    def _model_snapshot(
+        self,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        source_model, parsed_source_model = load_domain_model(self.root)
+        public_model, _ = public_ontology(parsed_source_model)
         action_plans = load_action_plans(self.root)
-        return public_model, workspace_model(public_model, action_plans)
+        return source_model, public_model, workspace_model(
+            public_model,
+            action_plans,
+            source_model,
+        )
 
     def changeset_snapshot(
         self,
@@ -102,7 +111,7 @@ class UomWorkspaceService:
         if any(operation.get("action") in model_actions for operation in operations):
             return self.snapshot()
 
-        public_model, model = self._model_snapshot()
+        source_model, public_model, model = self._model_snapshot()
         supplemental_object_ids = set(read_object_ids or set())
         object_ids: set[str] = set(supplemental_object_ids)
         relation_ids: set[str] = set()
@@ -136,12 +145,8 @@ class UomWorkspaceService:
                 if isinstance(operation.get("id"), str):
                     relation_ids.add(operation["id"])
 
-        objects = self.repository.query_by_ids(
-            "object", "Object", object_ids,
-        )
-        relations = self.repository.query_by_ids(
-            "relation", "Relation", relation_ids,
-        )
+        objects = self.repository.query_by_ids("object", object_ids)
+        relations = self.repository.query_by_ids("relation", relation_ids)
 
         for relation in relations:
             for endpoint in (relation.get("from"), relation.get("to")):
@@ -149,25 +154,22 @@ class UomWorkspaceService:
                     object_ids.add(endpoint)
         adjacent_object_ids = delete_object_ids | supplemental_object_ids
         if adjacent_object_ids:
-            adjacent = self.repository.query_adjacent(
-                "Relation", adjacent_object_ids,
-            )
+            adjacent = self.repository.query_adjacent(adjacent_object_ids)
             relations.extend(adjacent)
         for relation_type in acyclic_types:
             relations.extend(self.repository.query_relations(
-                "Relation", filters={"type": relation_type},
+                filters={"type": relation_type},
             ))
 
         loaded_object_ids = {item.get("id") for item in objects}
         missing_object_ids = object_ids - loaded_object_ids - created_object_ids
         if missing_object_ids:
-            additional = self.repository.query_by_ids(
-                "object", "Object", missing_object_ids,
-            )
+            additional = self.repository.query_by_ids("object", missing_object_ids)
             objects.extend(additional)
 
         return {
             "ontology": storage_contract_payload(),
+            "source_model": source_model,
             "public_model": public_model,
             "model": model,
             "objects": {
@@ -189,10 +191,10 @@ class UomWorkspaceService:
         return list(unique.values())
 
     def bootstrap(self, include_graph: bool = True) -> dict[str, Any]:
-        public_model, model = self._model_snapshot()
+        _, public_model, model = self._model_snapshot()
         client_model = self._client_model(model)
-        object_type_counts = self.repository.type_counts("object", "Object")
-        relation_type_counts = self.repository.type_counts("relation", "Relation")
+        object_type_counts = self.repository.type_counts("object")
+        relation_type_counts = self.repository.type_counts("relation")
         stats = {
             "object_count": sum(object_type_counts.values()),
             "relation_count": sum(relation_type_counts.values()),
@@ -210,8 +212,8 @@ class UomWorkspaceService:
             "graph_loaded": bool(include_graph),
         }
         if include_graph:
-            result["objects"] = self.repository.query_objects("Object")
-            result["relations"] = self.repository.query_relations("Relation")
+            result["objects"] = self.repository.query_objects()
+            result["relations"] = self.repository.query_relations()
         return result
 
     @staticmethod
@@ -247,12 +249,11 @@ class UomWorkspaceService:
             if kind == "object"
             else self.repository.count_relations
         )
-        type_name = "Object" if kind == "object" else "Relation"
         records = query(
-            type_name, filters=filters or None, limit=safe_limit,
+            filters=filters or None, limit=safe_limit,
             order_by=order_by, offset=safe_offset,
         )
-        total = count(type_name, filters=filters or None)
+        total = count(filters=filters or None)
         return {
             "kind": kind,
             "records": records,
@@ -277,7 +278,7 @@ class UomWorkspaceService:
                     "changes": [],
                     "changed_files": [],
                 }
-            base_model_digest = self._digest(snapshot["public_model"])
+            base_model_digest = self._digest(snapshot["source_model"])
             base_snapshot = deepcopy(snapshot)
             try:
                 changed_sections, summaries = self._apply_operations(snapshot, operations)
@@ -321,7 +322,7 @@ class UomWorkspaceService:
                 raise ChangeValidationError([
                     "changes: 必须基于当前数据先完成相同 ChangeSet 的预览"
                 ])
-            if preview.get("model_digest") != self._digest(snapshot["public_model"]):
+            if preview.get("model_digest") != self._digest(snapshot["source_model"]):
                 raise ChangeValidationError([
                     "changes: 模型或数据前提已变化，请重新预览"
                 ])
@@ -331,7 +332,7 @@ class UomWorkspaceService:
                 ])
 
             before_snapshot = deepcopy(snapshot)
-            original_model = deepcopy(snapshot["public_model"])
+            original_model = deepcopy(snapshot["source_model"])
             changed_sections, summaries = self._apply_operations(snapshot, operations)
             errors = self._validate_changed_snapshot(
                 snapshot, operations, changed_sections,
@@ -370,8 +371,8 @@ class UomWorkspaceService:
 
             def write_model() -> None:
                 nonlocal model_written
-                updated = update_public_vocabulary(
-                    snapshot["public_model"], snapshot["model"]
+                updated = update_source_vocabulary(
+                    snapshot["source_model"], snapshot["model"]
                 )
                 self._write_atomic(self.model_path, updated)
                 model_written = True
@@ -448,10 +449,10 @@ class UomWorkspaceService:
         return changes
 
     def list_objects(self) -> list[dict[str, Any]]:
-        return self.repository.query_objects("Object")
+        return self.repository.query_objects()
 
     def list_relations(self) -> list[dict[str, Any]]:
-        return self.repository.query_relations("Relation")
+        return self.repository.query_relations()
 
     def get_model_vocabulary(self, kind: str = "all", type_id: str = "") -> dict[str, Any]:
         model = self.load_model()
@@ -494,7 +495,7 @@ class UomWorkspaceService:
             action = operation.get("action")
             if action == "create_object":
                 record = deepcopy(operation.get("record"))
-                self._validate_new_record(record, "object", snapshot["model"])
+                self._validate_new_record(record, "object")
                 snapshot["objects"].setdefault("objects", []).append(record)
                 changed_sections.add("objects")
                 summaries.append(f"新增对象 {self._record_label(record)}")
@@ -502,11 +503,6 @@ class UomWorkspaceService:
                 record = self._find_record(
                     snapshot["objects"].get("objects", []),
                     operation.get("id"),
-                )
-                self._validate_property_writes(
-                    operation.get("changes"),
-                    record,
-                    snapshot["model"],
                 )
                 self._merge_record(record, operation.get("changes"), "object")
                 changed_sections.add("objects")
@@ -528,7 +524,7 @@ class UomWorkspaceService:
                 summaries.append(f"退役对象 {object_id}")
             elif action == "create_relation":
                 record = deepcopy(operation.get("record"))
-                self._validate_new_record(record, "relation", snapshot["model"])
+                self._validate_new_record(record, "relation")
                 snapshot["relations"].setdefault("relations", []).append(record)
                 changed_sections.add("relations")
                 summaries.append(f"新增关系 {self._record_label(record)}")
@@ -536,11 +532,6 @@ class UomWorkspaceService:
                 record = self._find_record(
                     snapshot["relations"].get("relations", []),
                     operation.get("id"),
-                )
-                self._validate_property_writes(
-                    operation.get("changes"),
-                    record,
-                    snapshot["model"],
                 )
                 self._merge_record(record, operation.get("changes"), "relation")
                 changed_sections.add("relations")
@@ -630,7 +621,7 @@ class UomWorkspaceService:
             snapshot["model"],
         ).validate().errors
         try:
-            update_public_vocabulary(snapshot["public_model"], snapshot["model"])
+            update_source_vocabulary(snapshot["source_model"], snapshot["model"])
         except (TypeError, ValueError, ValidationError) as exc:
             errors.append(f"model: {exc}")
         return errors
@@ -718,64 +709,14 @@ class UomWorkspaceService:
         self,
         record: Any,
         kind: str,
-        model: dict[str, Any],
     ) -> None:
         if not isinstance(record, dict):
             return
         if "lifecycle" in record:
             raise ChangeValidationError(["lifecycle: 由 UOM 存储层维护，不能由业务输入"])
-        type_name = "Object" if kind == "object" else "Relation"
-        if self.repository.record_exists(
-            kind, type_name, str(record.get("id") or ""),
-        ):
+        if self.repository.record_exists(kind, str(record.get("id") or "")):
             raise ChangeValidationError([
                 f"稳定 ID {record.get('id')} 已存在或曾经使用，不能重复创建"
-            ])
-        definition = model.get(f"{kind}_types", {}).get(record.get("type"), {})
-        if isinstance(definition, dict) and definition.get("deprecated") is True:
-            raise ChangeValidationError([
-                f"{kind} type {record.get('type')} 已弃用，不能创建新记录"
-            ])
-        self._reject_deprecated_properties(
-            record.get("properties"),
-            model,
-            existing_properties={},
-        )
-
-    def _validate_property_writes(
-        self,
-        changes: Any,
-        record: dict[str, Any],
-        model: dict[str, Any],
-    ) -> None:
-        if not isinstance(changes, dict):
-            return
-        self._reject_deprecated_properties(
-            changes.get("properties"),
-            model,
-            existing_properties=record.get("properties") or {},
-        )
-
-    @staticmethod
-    def _reject_deprecated_properties(
-        properties: Any,
-        model: dict[str, Any],
-        *,
-        existing_properties: dict[str, Any],
-    ) -> None:
-        if not isinstance(properties, dict):
-            return
-        definitions = model.get("property_definitions", {})
-        deprecated = [
-            property_id
-            for property_id in properties
-            if property_id not in existing_properties
-            and isinstance(definitions.get(property_id), dict)
-            and definitions[property_id].get("deprecated") is True
-        ]
-        if deprecated:
-            raise ChangeValidationError([
-                "已弃用属性不能用于新数据: " + ", ".join(sorted(deprecated))
             ])
 
     @staticmethod
@@ -872,8 +813,7 @@ class UomWorkspaceService:
                 kind, record_id = str(key).split(":", 1)
             except ValueError:
                 return False
-            type_name = "Object" if kind == "object" else "Relation"
-            state = self.repository.get_record_version(kind, type_name, record_id)
+            state = self.repository.get_record_version(kind, record_id)
             if not state or int(state.get("revision", -1)) != int(expected):
                 return False
         return True

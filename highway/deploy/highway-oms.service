@@ -10,7 +10,7 @@ Environment="PYTHONPATH=%h/Develop/highway-oms/oag-agent:%h/Develop/highway-oms"
 Environment=UOM_DOMAIN_DIR=highway
 Environment=PYTHONUNBUFFERED=1
 UMask=0077
-ExecStartPre=%h/.local/bin/uv run --project %h/Develop/highway-oms/oag-agent -- python %h/Develop/highway-oms/highway/scripts/validate_model.py --root %h/Develop/highway-oms/highway
+ExecStartPre=%h/.local/bin/uv run --project %h/Develop/highway-oms/oag-agent -- python -m uom.validation --root %h/Develop/highway-oms/highway
 ExecStart=%h/.local/bin/uv run --project %h/Develop/highway-oms/oag-agent --env-file %h/Develop/highway-oms/.env -- python -m highway.app.server --host 0.0.0.0 --port 5678
 Restart=on-failure
 RestartSec=5s
