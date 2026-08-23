@@ -19,6 +19,8 @@ from uom.model import (  # noqa: E402
     workspace_model,
 )
 from uom.validation import validate_model  # noqa: E402
+from oag.ontology.bindings import RuntimeBindings  # noqa: E402
+from oag.ontology.prompt_builder import OntologyPromptBuilder  # noqa: E402
 
 
 class FoxOmsDomainModelTest(unittest.TestCase):
@@ -39,6 +41,17 @@ class FoxOmsDomainModelTest(unittest.TestCase):
 
     def test_model_and_graph_are_valid(self) -> None:
         self.assertEqual([], validate_model(DOMAIN_ROOT).errors)
+
+    def test_compiled_prompt_explains_cost_and_operating_result(self) -> None:
+        ontology, _, _ = load_domain(DOMAIN_ROOT)
+        prompt = OntologyPromptBuilder(ontology, RuntimeBindings()).build_system_prompt()
+
+        self.assertIn("allocated_to", prompt)
+        self.assertIn("cost_amount 是该次投入形成的历史直接成本", prompt)
+        self.assertIn("必须同时查询 invoice 和 allocated_to", prompt)
+        self.assertIn("当前直接贡献等于已开票金额减直接归集成本", prompt)
+        self.assertIn("不是会计利润", prompt)
+        self.assertIn("经营汇总默认先给结论", prompt)
 
     def test_model_defines_party_and_opportunity_semantics(self) -> None:
         model = self.model
