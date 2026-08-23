@@ -1,6 +1,6 @@
 schema: uom.domain.v1
 name: FoxOMS
-version: 0.2.0
+version: 0.3.0
 description: 面向多个受管企业日常运营的对象关系模型，追踪业务主体、商机、招投标、 商务约定、履约资源、知识资产、开票和回款，并用模型驱动 Action 形成完整业务事实。
 repositories:
   graph:
@@ -38,6 +38,14 @@ properties:
     name: 投入数量
     type: number
     description: 一次资源投入的数量。
+  default_unit_cost:
+    name: 默认单位成本
+    type: money
+    description: 资源按默认投入单位计算的当前参考成本，仅用于形成投入成本建议，不改变历史记录。
+  cost_amount:
+    name: 归集成本
+    type: money
+    description: 本次资源投入归集到订单、项目或任务的成本总额。
   unit:
     name: 投入单位
     type: string
@@ -96,15 +104,18 @@ objects:
   personnel:
     name: 人员
     description: 可被安排参与订单、项目或任务的人员资源。
-    properties: {}
+    properties:
+      default_unit_cost: optional
   software_resource:
     name: 软件资源
     description: 可被配置到订单、项目或任务的软件、许可或使用权。
-    properties: {}
+    properties:
+      default_unit_cost: optional
   hardware_resource:
     name: 硬件资源
     description: 可被配置到订单、项目或任务的设备或硬件资产。
-    properties: {}
+    properties:
+      default_unit_cost: optional
   intellectual_asset:
     name: 知识资产
     description: 与某个订单、项目或任务关联的专利、论文、软著或技术报告。
@@ -175,6 +186,7 @@ relations:
     properties:
       quantity: required
       unit: required
+      cost_amount: required
       start_date: optional
       end_date: optional
   involves_ip:
@@ -242,6 +254,11 @@ actions:
         description: ''
         required: true
         type: string
+      default_unit_cost:
+        name: 默认人天成本
+        description: 当前参考人天成本；实际历史成本以每次投入记录为准。
+        required: false
+        property: default_unit_cost
     requires: []
     changes:
       create:
@@ -268,6 +285,11 @@ actions:
         description: ''
         required: true
         type: string
+      default_unit_cost:
+        name: 默认许可月成本
+        description: 当前参考许可月成本；实际历史成本以每次投入记录为准。
+        required: false
+        property: default_unit_cost
     requires: []
     changes:
       create:
@@ -294,6 +316,11 @@ actions:
         description: ''
         required: true
         type: string
+      default_unit_cost:
+        name: 默认设备月成本
+        description: 当前参考设备月成本；实际历史成本以每次投入记录为准。
+        required: false
+        property: default_unit_cost
     requires: []
     changes:
       create:
@@ -683,7 +710,7 @@ actions:
     idempotency: required
   allocate_personnel:
     name: 安排人员
-    description: 将人员按数量、单位和期间投入订单、项目或任务。
+    description: 将人员按数量、单位、期间和归集成本投入订单、项目或任务。
     icon: users
     'on':
     - order
@@ -714,6 +741,11 @@ actions:
         required: true
         property: unit
         default: person_day
+      cost_amount:
+        name: 归集成本
+        description: 本次人员投入归集到目标业务的成本总额。
+        required: true
+        property: cost_amount
       start_date:
         name: 开始日期
         description: ''
@@ -740,7 +772,7 @@ actions:
     idempotency: required
   allocate_software:
     name: 配置软件
-    description: 将软件、许可或使用权按数量、单位和期间投入订单、项目或任务。
+    description: 将软件、许可或使用权按数量、单位、期间和归集成本投入订单、项目或任务。
     icon: app_window
     'on':
     - order
@@ -771,6 +803,11 @@ actions:
         required: true
         property: unit
         default: license_month
+      cost_amount:
+        name: 归集成本
+        description: 本次软件投入归集到目标业务的成本总额。
+        required: true
+        property: cost_amount
       start_date:
         name: 开始日期
         description: ''
@@ -797,7 +834,7 @@ actions:
     idempotency: required
   allocate_hardware:
     name: 调配硬件
-    description: 将设备或硬件资产按数量、单位和期间投入订单、项目或任务。
+    description: 将设备或硬件资产按数量、单位、期间和归集成本投入订单、项目或任务。
     icon: server
     'on':
     - order
@@ -828,6 +865,11 @@ actions:
         required: true
         property: unit
         default: device_month
+      cost_amount:
+        name: 归集成本
+        description: 本次硬件投入归集到目标业务的成本总额。
+        required: true
+        property: cost_amount
       start_date:
         name: 开始日期
         description: ''

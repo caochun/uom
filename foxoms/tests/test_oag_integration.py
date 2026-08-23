@@ -171,6 +171,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
                 "resource_id": personnel_id,
                 "quantity": 10,
                 "unit": "person_day",
+                "cost_amount": {"amount": 12_000, "currency": "CNY"},
                 "start_date": "2026-08-01",
                 "end_date": "2026-08-10",
             },
@@ -229,6 +230,14 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
     def test_invalid_business_inputs_are_rejected(self) -> None:
         managed_id = self.register_party("受管企业", True)
         external_id = self.register_party("外部企业", False)
+        with self.assertRaisesRegex(ChangeValidationError, "默认单位成本必须大于零"):
+            self.actions.preview_action(
+                action_id="register_personnel",
+                inputs={
+                    "name": "非法成本人员",
+                    "default_unit_cost": {"amount": 0, "currency": "CNY"},
+                },
+            )
         with self.assertRaisesRegex(ChangeValidationError, "经营方必须是受管"):
             self.actions.preview_action(
                 action_id="create_opportunity",
@@ -291,6 +300,17 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
         }
         self.graph.create_object( work_target)
         self.graph.create_object( resource)
+        with self.assertRaisesRegex(ChangeValidationError, "归集成本必须大于零"):
+            self.actions.preview_action(
+                action_id="allocate_personnel",
+                context_id=work_target["id"],
+                inputs={
+                    "resource_id": resource["id"],
+                    "quantity": 1,
+                    "unit": "person_day",
+                    "cost_amount": {"amount": 0, "currency": "CNY"},
+                },
+            )
         with self.assertRaisesRegex(ChangeValidationError, "不能早于"):
             self.actions.preview_action(
                 action_id="allocate_personnel",
@@ -299,6 +319,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
                     "resource_id": resource["id"],
                     "quantity": 1,
                     "unit": "person_day",
+                    "cost_amount": {"amount": 1_000, "currency": "CNY"},
                     "start_date": "2026-08-10",
                     "end_date": "2026-08-01",
                 },
@@ -361,7 +382,11 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
         )
         work_item_id = self.created_object_id(work_item, "work_item")
         software = self.execute_action(
-            "register_software_resource", {"name": "项目测试软件许可"}
+            "register_software_resource",
+            {
+                "name": "项目测试软件许可",
+                "default_unit_cost": {"amount": 2_000, "currency": "CNY"},
+            },
         )
         hardware = self.execute_action(
             "register_hardware_resource", {"name": "项目测试设备"}
@@ -372,6 +397,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
                 "resource_id": self.created_object_id(software, "software_resource"),
                 "quantity": 2,
                 "unit": "license_month",
+                "cost_amount": {"amount": 4_000, "currency": "CNY"},
             },
             work_item_id,
         )
@@ -381,6 +407,7 @@ class FoxOmsOagIntegrationTest(unittest.TestCase):
                 "resource_id": self.created_object_id(hardware, "hardware_resource"),
                 "quantity": 1,
                 "unit": "device_month",
+                "cost_amount": {"amount": 800, "currency": "CNY"},
             },
             work_item_id,
         )

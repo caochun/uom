@@ -237,26 +237,26 @@ function renderMetrics() {
   const opportunities = objects.filter((item) => item.type === "opportunity");
   const bids = objects.filter((item) => item.type === "bid");
   const invoices = objects.filter((item) => item.type === "invoice");
-  const receipts = objects.filter((item) => item.type === "receipt");
   const invoiced = sumObjectMoney(invoices);
-  const received = sumObjectMoney(receipts);
-  const objectIds = new Set(objects.map((item) => item.id));
-  const settledAmount = state.data.relations
-    .filter((item) => item.type === "settles" && objectIds.has(item.from) && objectIds.has(item.to))
+  const invoiceIds = new Set(invoices.map((item) => item.id));
+  const settledAmount = (state.data.relations || [])
+    .filter((item) => item.type === "settles" && invoiceIds.has(item.to))
     .reduce((total, item) => total + Number(item.properties?.settled_amount?.amount || 0), 0);
+  const deliveryIds = new Set(objects.filter((item) => ["order", "work_item"].includes(item.type)).map((item) => item.id));
+  const costs = allocationCostSummary({ targetIds: deliveryIds });
   const outstanding = Math.max(0, invoiced.amount - settledAmount);
-  const unallocated = Math.max(0, received.amount - settledAmount);
-  const currency = invoiced.currency || received.currency || "CNY";
+  const contribution = invoiced.amount - costs.total;
+  const currency = invoiced.currency || costs.currency || "CNY";
 
-  $("#metricOpportunities").textContent = opportunities.length;
-  $("#metricOpportunityHint").textContent = `${opportunities.filter((item) => !businessChildren(item.id, "contains", "tender").length).length} 项暂无后续`;
-  $("#metricPendingBids").textContent = bids.filter((item) => !item.properties?.bid_result).length;
-  $("#metricAwards").textContent = bids.filter((item) => item.properties?.bid_result === "awarded").length;
-  $("#metricDeliveries").textContent = objects.filter((item) => ["order", "work_item"].includes(item.type)).length;
+  $("#metricInvoiced").textContent = money(invoiced.amount, currency);
+  $("#metricReceived").textContent = money(settledAmount, currency);
+  $("#metricAllocatedCost").textContent = money(costs.total, costs.currency || currency);
+  $("#metricContribution").textContent = money(contribution, currency);
+  $("#metricContribution").classList.toggle("negative-value", contribution < 0);
   $("#metricOutstanding").textContent = money(outstanding, currency);
-  $("#metricOutstandingHint").textContent = `${money(invoiced.amount, currency)} 已开票${unallocated ? ` · ${money(unallocated, currency)} 待核销` : ""}`;
+  $("#metricOutstandingHint").textContent = `${invoices.length} 张发票 · ${Math.round(invoiced.amount ? settledAmount / invoiced.amount * 100 : 0)}% 已回收`;
   const partyName = selectedManagedParty()?.name || `${managedParties().length} 家受管企业`;
-  $("#initialAgentMessage").textContent = `${partyName}当前有 ${opportunities.length} 项商机、${bids.filter((item) => item.properties?.bid_result === "awarded").length} 项中标记录和 ${money(outstanding, currency)} 待回款。`;
+  $("#initialAgentMessage").textContent = `${partyName}当前有 ${opportunities.length} 项商机、${bids.filter((item) => item.properties?.bid_result === "awarded").length} 项中标记录，已开票 ${money(invoiced.amount, currency)}，归集直接成本 ${money(costs.total, costs.currency || currency)}。`;
 }
 
 function sumObjectMoney(items) {
@@ -266,6 +266,63 @@ function sumObjectMoney(items) {
     result.currency ||= value?.currency;
     return result;
   }, { amount: 0, currency: null });
+}
+
+const RESOURCE_TYPES = ["personnel", "software_resource", "hardware_resource"];
+
+function allocationCostSummary({ targetIds = null, resourceIds = null } = {}) {
+  const index = objectIndex();
+  const allocations = (state.data?.relations || []).filter((relation) => {
+    if (relation.type !== "allocated_to") return false;
+    if (targetIds && !targetIds.has(relation.to)) return false;
+    return !resourceIds || resourceIds.has(relation.from);
+  });
+  const breakdown = Object.fromEntries(RESOURCE_TYPES.map((type) => [type, 0]));
+  let total = 0;
+  let currency = null;
+  allocations.forEach((relation) => {
+    const value = relation.properties?.cost_amount;
+    const amount = Number(value?.amount || 0);
+    const resourceType = index[relation.from]?.type;
+    total += amount;
+    currency ||= value?.currency;
+    if (resourceType in breakdown) breakdown[resourceType] += amount;
+  });
+  return { allocations, breakdown, total, currency: currency || "CNY" };
+}
+
+function deliveryItemsForCommitment(commitment) {
+  return businessChildren(
+    commitment.id,
+    "contains",
+    commitment.type === "framework_agreement" ? "order" : "work_item",
+  );
+}
+
+function invoicesForCommitment(commitment, deliveryItems = deliveryItemsForCommitment(commitment)) {
+  if (commitment.type === "framework_agreement") {
+    return deliveryItems.flatMap((item) => businessChildren(item.id, "contains", "invoice"));
+  }
+  return businessChildren(commitment.id, "contains", "invoice");
+}
+
+function businessEconomics(commitment) {
+  const deliveryItems = deliveryItemsForCommitment(commitment);
+  const invoices = invoicesForCommitment(commitment, deliveryItems);
+  const invoiced = sumObjectMoney(invoices);
+  const settled = invoices.reduce((total, invoice) => total + settledForInvoice(invoice.id), 0);
+  const costs = allocationCostSummary({ targetIds: new Set(deliveryItems.map((item) => item.id)) });
+  const currency = invoiced.currency || costs.currency || "CNY";
+  return {
+    deliveryItems,
+    invoices,
+    invoiced: invoiced.amount,
+    settled,
+    outstanding: Math.max(0, invoiced.amount - settled),
+    costs,
+    contribution: invoiced.amount - costs.total,
+    currency,
+  };
 }
 
 function managedParties() {
@@ -387,8 +444,8 @@ function renderOperations() {
   const party = selectedManagedParty();
   $("#operationsTitle").textContent = party ? party.name : "经营工作台";
   $("#operationsSubtitle").textContent = party
-    ? "从该企业经营的商机出发，追踪签约、履约投入和资金回收。"
-    : "跨受管企业查看商务、履约和资金链；选择企业可收窄经营范围。";
+    ? "从该企业经营的商机出发，对照签约、履约成本、开票和资金回收。"
+    : "跨受管企业查看商务、履约成本和资金链；选择企业可收窄经营范围。";
   renderMetrics();
   const renderers = {
     overview: renderOperationsOverview,
@@ -428,7 +485,8 @@ function renderOperationsOverview() {
   const currency = invoiced.currency || "CNY";
   const openOpportunities = opportunities.filter((item) => !businessChildren(item.id, "contains", "tender").length);
   const activeDeliveries = objects.filter((item) => ["order", "work_item"].includes(item.type));
-  const allocations = (state.data.relations || []).filter((item) => item.type === "allocated_to" && activeDeliveries.some((target) => target.id === item.to));
+  const costs = allocationCostSummary({ targetIds: new Set(activeDeliveries.map((item) => item.id)) });
+  const contribution = invoiced.amount - costs.total;
 
   return `<div class="overview-grid">
     <section class="business-band span-two">
@@ -443,14 +501,20 @@ function renderOperationsOverview() {
         ${overviewStage("file-signature", "商务约定", agreements.length, "框架协议或项目合同")}
       </div>
     </section>
-    <section class="business-band">
-      <div class="band-heading"><div><span class="eyebrow">资金回收</span><h2>${money(outstanding, currency)} 待回款</h2></div><button class="icon-command" data-go-operation="finance" title="查看开票回款"><i data-lucide="arrow-up-right"></i></button></div>
-      <div class="finance-meter"><span style="width:${invoiced.amount ? Math.min(100, settled / invoiced.amount * 100) : 0}%"></span></div>
-      <div class="band-stat-row"><span>已开票 <strong>${money(invoiced.amount, currency)}</strong></span><span>已核销 <strong>${money(settled, currency)}</strong></span></div>
-    </section>
-    <section class="business-band">
-      <div class="band-heading"><div><span class="eyebrow">履约投入</span><h2>${activeDeliveries.length} 项订单/任务</h2></div><button class="icon-command" data-go-operation="delivery" title="查看履约交付"><i data-lucide="arrow-up-right"></i></button></div>
-      <div class="band-stat-row compact"><span>资源投入 <strong>${allocations.length}</strong></span><span>知识资产 <strong>${objects.filter((item) => item.type === "intellectual_asset").length}</strong></span></div>
+    <section class="business-band span-two operating-result-band">
+      <div class="band-heading"><div><span class="eyebrow">收入与投入</span><h2>当前经营结果</h2></div><span class="result-definition">当前贡献 = 已开票 - 直接归集成本</span></div>
+      <div class="result-flow">
+        <div class="result-side">
+          <div class="result-side-heading"><span><i data-lucide="badge-dollar-sign"></i>收入链</span><button class="icon-command" data-go-operation="finance" title="查看开票回款"><i data-lucide="arrow-up-right"></i></button></div>
+          <div class="result-values"><span>已开票<strong>${money(invoiced.amount, currency)}</strong></span><span>已回款<strong>${money(settled, currency)}</strong></span><span>待回款<strong>${money(outstanding, currency)}</strong></span></div>
+        </div>
+        <div class="result-focus ${contribution < 0 ? "negative" : ""}"><span>当前贡献</span><strong>${money(contribution, currency)}</strong><small>仅比较开票与直接资源成本</small></div>
+        <div class="result-side">
+          <div class="result-side-heading"><span><i data-lucide="package-open"></i>成本链</span><button class="icon-command" data-go-operation="delivery" title="查看履约成本"><i data-lucide="arrow-up-right"></i></button></div>
+          <div class="result-values"><span>人员<strong>${money(costs.breakdown.personnel, costs.currency)}</strong></span><span>软件<strong>${money(costs.breakdown.software_resource, costs.currency)}</strong></span><span>硬件<strong>${money(costs.breakdown.hardware_resource, costs.currency)}</strong></span></div>
+          <div class="result-side-total"><span>${activeDeliveries.length} 项履约 · ${costs.allocations.length} 次投入</span><strong>${money(costs.total, costs.currency)}</strong></div>
+        </div>
+      </div>
     </section>
     <section class="business-band span-two">
       <div class="band-heading"><div><span class="eyebrow">需要关注</span><h2>经营事项</h2></div></div>
@@ -539,27 +603,45 @@ function renderDeliveryView() {
   const scopedIds = scopedObjectIds();
   let commitments = (state.data.objects || []).filter((item) => scopedIds.has(item.id) && ["framework_agreement", "contract"].includes(item.type));
   if (state.search) commitments = commitments.filter((item) => [item, ...businessChildren(item.id, "contains")].some(matchesSearch));
-  return operationSectionHeader("履约交付", "从框架协议或项目合同进入订单和项目/任务，查看实际资源与知识资产", `${commitments.length} 项商务约定`)
+  return operationSectionHeader("履约经营", "以商务约定为经营单元，对照开票、回款与人员、软件、硬件直接成本", `${commitments.length} 项商务约定`)
     + `<div class="delivery-list">${commitments.map(renderDeliveryCommitment).join("") || operationEmpty("暂无履约事项")}</div>`;
 }
 
 function renderDeliveryCommitment(commitment) {
-  const targetType = commitment.type === "framework_agreement" ? "order" : "work_item";
-  const items = businessChildren(commitment.id, "contains", targetType);
+  const economics = businessEconomics(commitment);
+  const items = economics.deliveryItems;
   return `<article class="delivery-group">
     <button class="delivery-heading" data-business-object="${escapeAttr(commitment.id)}"><span class="type-icon ${escapeAttr(commitment.type)}"><i data-lucide="file-signature"></i></span><span><strong>${escapeHtml(commitment.name)}</strong><small>${escapeHtml(typeNames()[commitment.type]?.name || commitment.type)} · ${escapeHtml(partyNamesFor(commitment.id, "customer").join("、"))}</small></span><b>${items.length} 项履约</b><i data-lucide="chevron-right"></i></button>
+    <div class="commitment-economics">
+      ${economicValue("已开票", economics.invoiced, economics.currency)}
+      ${economicValue("已回款", economics.settled, economics.currency)}
+      ${economicValue("归集成本", economics.costs.total, economics.costs.currency)}
+      ${economicValue("当前贡献", economics.contribution, economics.currency, economics.contribution < 0 ? "negative" : "emphasis")}
+    </div>
     <div class="delivery-items">${items.map(renderDeliveryItem).join("") || `<div class="thread-empty"><i data-lucide="inbox"></i><span><strong>尚未建立履约事项</strong><small>${commitment.type === "framework_agreement" ? "可在协议下下达订单" : "可在合同下建立项目/任务"}</small></span></div>`}</div>
   </article>`;
 }
 
+function economicValue(label, amount, currency, className = "") {
+  return `<div class="${escapeAttr(className)}"><span>${escapeHtml(label)}</span><strong>${money(amount, currency)}</strong></div>`;
+}
+
 function renderDeliveryItem(item) {
-  const allocations = (state.data.relations || []).filter((relation) => relation.type === "allocated_to" && relation.to === item.id);
+  const costs = allocationCostSummary({ targetIds: new Set([item.id]) });
+  const allocations = costs.allocations;
   const intellectualAssets = businessChildren(item.id, "involves_ip");
   const index = objectIndex();
-  const resourceTypes = ["personnel", "software_resource", "hardware_resource"].map((type) => ({ type, count: allocations.filter((relation) => index[relation.from]?.type === type).length }));
+  const resourceTypes = RESOURCE_TYPES.map((type) => ({
+    type,
+    count: allocations.filter((relation) => index[relation.from]?.type === type).length,
+    cost: costs.breakdown[type],
+  }));
+  const invoices = item.type === "order" ? businessChildren(item.id, "contains", "invoice") : [];
+  const invoiced = sumObjectMoney(invoices);
+  const contribution = invoiced.amount - costs.total;
   return `<div class="delivery-item">
-    <button data-business-object="${escapeAttr(item.id)}"><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(typeNames()[item.type]?.name || item.type)}</small></span><i data-lucide="chevron-right"></i></button>
-    <div class="delivery-facts">${resourceTypes.map(({ type, count }) => `<span><i data-lucide="${typeIcon(type)}"></i>${escapeHtml(typeNames()[type]?.name || type)} <b>${count}</b></span>`).join("")}<span><i data-lucide="badge-check"></i>知识资产 <b>${intellectualAssets.length}</b></span></div>
+    <button data-business-object="${escapeAttr(item.id)}"><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(typeNames()[item.type]?.name || item.type)} · ${allocations.length} 次资源投入</small></span><span class="delivery-item-total"><small>归集成本</small><b>${money(costs.total, costs.currency)}</b></span><i data-lucide="chevron-right"></i></button>
+    <div class="delivery-facts">${resourceTypes.map(({ type, count, cost }) => `<span><i data-lucide="${typeIcon(type)}"></i>${escapeHtml(typeNames()[type]?.name || type)} <b>${money(cost, costs.currency)}</b><small>${count} 次</small></span>`).join("")}<span><i data-lucide="badge-check"></i>知识资产 <b>${intellectualAssets.length}</b></span>${invoices.length ? `<span><i data-lucide="receipt-text"></i>已开票 <b>${money(invoiced.amount, invoiced.currency || costs.currency)}</b></span><span class="${contribution < 0 ? "negative" : ""}"><i data-lucide="chart-no-axes-combined"></i>当前贡献 <b>${money(contribution, invoiced.currency || costs.currency)}</b></span>` : ""}</div>
     ${allocations.length || intellectualAssets.length ? `<div class="allocation-list">${allocations.map((relation) => allocationChip(index[relation.from], relation)).join("")}${intellectualAssets.map((asset) => `<button data-business-object="${escapeAttr(asset.id)}"><i data-lucide="badge-check"></i>${escapeHtml(asset.name)}</button>`).join("")}</div>` : ""}
   </div>`;
 }
@@ -613,7 +695,7 @@ function renderResourceView() {
   const resources = objects.filter((item) => ["personnel", "software_resource", "hardware_resource"].includes(item.type));
   const intellectualAssets = objects.filter((item) => item.type === "intellectual_asset");
   const filteredResources = state.search ? resources.filter(matchesSearch) : resources;
-  return operationSectionHeader("资源资产", "人员、软件和硬件分别管理，以投入关系展示实际去向；知识资产显示所需或产出角色", `${resources.length + intellectualAssets.length} 项资产`)
+  return operationSectionHeader("资源成本", "查看人员、软件和硬件的参考单位成本、历史实际成本及业务去向", `${resources.length + intellectualAssets.length} 项资源与资产`)
     + `<div class="resource-sections">
       ${["personnel", "software_resource", "hardware_resource"].map((type) => renderResourceSection(type, filteredResources.filter((item) => item.type === type))).join("")}
       ${renderIntellectualAssetSection(state.search ? intellectualAssets.filter(matchesSearch) : intellectualAssets)}
@@ -621,13 +703,43 @@ function renderResourceView() {
 }
 
 function renderResourceSection(type, resources) {
-  return `<section class="resource-section"><div class="resource-section-heading"><span class="type-icon ${escapeAttr(type)}"><i data-lucide="${typeIcon(type)}"></i></span><div><h3>${escapeHtml(typeNames()[type]?.name || type)}</h3><span>${resources.length} 项</span></div></div><div class="resource-list">${resources.map(renderResourceRow).join("") || `<span class="muted-text">当前范围没有此类资源投入</span>`}</div></section>`;
+  const costs = allocationCostSummary({ resourceIds: new Set(resources.map((item) => item.id)) });
+  return `<section class="resource-section"><div class="resource-section-heading"><span class="type-icon ${escapeAttr(type)}"><i data-lucide="${typeIcon(type)}"></i></span><div><h3>${escapeHtml(typeNames()[type]?.name || type)}</h3><span>${resources.length} 项 · 累计归集 ${money(costs.total, costs.currency)}</span></div></div><div class="resource-list">${resources.map(renderResourceRow).join("") || `<span class="muted-text">当前范围没有此类资源投入</span>`}</div></section>`;
 }
 
 function renderResourceRow(resource) {
-  const allocations = (state.data.relations || []).filter((item) => item.type === "allocated_to" && item.from === resource.id);
+  const economics = resourceEconomics(resource);
+  const allocations = economics.costs.allocations;
   const index = objectIndex();
-  return `<div class="resource-row"><button data-business-object="${escapeAttr(resource.id)}"><strong>${escapeHtml(resource.name)}</strong><small>${allocations.length} 个投入去向</small></button><div>${allocations.map((relation) => `<button data-business-object="${escapeAttr(relation.to)}"><span>${escapeHtml(index[relation.to]?.name || relation.to)}</span><small>${escapeHtml(relationFact(relation))}</small></button>`).join("") || '<span class="muted-text">暂无投入记录</span>'}</div></div>`;
+  const rate = resource.properties?.default_unit_cost;
+  const rateLabel = rate ? `${money(rate.amount, rate.currency)} / ${resourceDefaultUnit(resource.type)}` : "未设默认成本";
+  const averageLabel = economics.average === null
+    ? "暂无可比实际均价"
+    : `实际均价 ${money(economics.average, economics.costs.currency)} / ${economics.singleUnit}`;
+  return `<div class="resource-row"><button data-business-object="${escapeAttr(resource.id)}"><strong>${escapeHtml(resource.name)}</strong><small>${escapeHtml(rateLabel)}</small><span>${escapeHtml(averageLabel)} · 累计 ${money(economics.costs.total, economics.costs.currency)}</span></button><div>${allocations.map((relation) => `<button data-business-object="${escapeAttr(relation.to)}"><span>${escapeHtml(index[relation.to]?.name || relation.to)}</span><small>${escapeHtml(relationFact(relation))}</small></button>`).join("") || '<span class="muted-text">暂无投入记录</span>'}</div></div>`;
+}
+
+function resourceDefaultUnit(type) {
+  return {
+    personnel: "人天",
+    software_resource: "许可月",
+    hardware_resource: "设备月",
+  }[type] || "单位";
+}
+
+function resourceEconomics(resource) {
+  const costs = allocationCostSummary({ resourceIds: new Set([resource.id]) });
+  const quantities = {};
+  costs.allocations.forEach((relation) => {
+    const unit = relation.properties?.unit || "单位";
+    quantities[unit] = (quantities[unit] || 0) + Number(relation.properties?.quantity || 0);
+  });
+  const units = Object.keys(quantities);
+  const singleUnit = units.length === 1 ? units[0] : null;
+  const average = singleUnit && quantities[singleUnit] > 0
+    ? costs.total / quantities[singleUnit]
+    : null;
+  return { costs, quantities, singleUnit, average };
 }
 
 function renderIntellectualAssetSection(assets) {
@@ -780,7 +892,7 @@ function detailMarkup(kind, id, item) {
     const role = fact !== "-" ? ` · ${fact}` : "";
     return `<button class="relation-link" type="button" data-related-object="${escapeAttr(other?.id || (outbound ? rel.to : rel.from))}"><i data-lucide="${outbound ? "arrow-right" : "arrow-left"}"></i><div><strong>${escapeHtml(relationNames()[rel.type]?.name || rel.type)}${escapeHtml(role)} · ${escapeHtml(other?.name || (outbound ? rel.to : rel.from))}</strong><span>${escapeHtml(typeNames()[other?.type]?.name || other?.type || "未知类型")} · ${escapeHtml(rel.id)}</span></div><i data-lucide="chevron-right"></i></button>`;
   }).join("") : `<span class="muted-text">暂无关系</span>`;
-  return (kind === "object" ? businessPositionMarkup(item) : "")
+  return (kind === "object" ? businessEconomicsMarkup(item) + businessPositionMarkup(item) : "")
     + detailSection("基本信息", Object.fromEntries(Object.entries(item).filter(([key]) => !["properties", "tags", "source_refs", "lifecycle"].includes(key))))
     + detailSection("Properties", item.properties || {})
     + (item.tags?.length ? detailSection("Tags", { tags: item.tags }) : "")
@@ -788,6 +900,82 @@ function detailMarkup(kind, id, item) {
     + lifecycleMarkup(item.lifecycle)
     + `<div class="detail-section"><h3>相邻关系 · ${links.length}</h3><div>${linkMarkup}</div></div>`
     + `<div class="detail-section"><h3>变更历史</h3><div class="record-history" id="recordHistory"><div class="history-empty"><i data-lucide="loader-circle"></i><span>正在读取</span></div></div></div>`;
+}
+
+function businessEconomicsMarkup(item) {
+  let metrics = [];
+  let note = "";
+  if (["framework_agreement", "contract"].includes(item.type)) {
+    const economics = businessEconomics(item);
+    metrics = businessResultMetrics(economics);
+    metrics.push(
+      { label: "人员成本", value: money(economics.costs.breakdown.personnel, economics.costs.currency) },
+      { label: "软件成本", value: money(economics.costs.breakdown.software_resource, economics.costs.currency) },
+      { label: "硬件成本", value: money(economics.costs.breakdown.hardware_resource, economics.costs.currency) },
+    );
+    note = "当前贡献仅比较已开票金额与直接资源归集成本。";
+  } else if (item.type === "order") {
+    const invoices = businessChildren(item.id, "contains", "invoice");
+    const invoiced = sumObjectMoney(invoices);
+    const settled = invoices.reduce((total, invoice) => total + settledForInvoice(invoice.id), 0);
+    const costs = allocationCostSummary({ targetIds: new Set([item.id]) });
+    const currency = invoiced.currency || costs.currency;
+    metrics = businessResultMetrics({
+      invoiced: invoiced.amount,
+      settled,
+      outstanding: Math.max(0, invoiced.amount - settled),
+      costs,
+      contribution: invoiced.amount - costs.total,
+      currency,
+    });
+    note = "订单可以直接对照自身发票与资源投入成本。";
+  } else if (item.type === "work_item") {
+    const costs = allocationCostSummary({ targetIds: new Set([item.id]) });
+    metrics = costBreakdownMetrics(costs);
+    note = "项目合同的发票不能在没有分摊依据时归属于单个任务，因此这里只显示任务直接成本。";
+  } else if (RESOURCE_TYPES.includes(item.type)) {
+    const economics = resourceEconomics(item);
+    const rate = item.properties?.default_unit_cost;
+    const quantity = Object.entries(economics.quantities)
+      .map(([unit, value]) => `${value} ${displayUnit(unit)}`)
+      .join("、") || "尚无投入";
+    metrics = [
+      { label: "默认单位成本", value: rate ? `${money(rate.amount, rate.currency)} / ${resourceDefaultUnit(item.type)}` : "未设置" },
+      { label: "累计投入", value: quantity },
+      { label: "历史归集成本", value: money(economics.costs.total, economics.costs.currency) },
+      { label: "实际平均单位成本", value: economics.average === null ? "暂无可比数据" : `${money(economics.average, economics.costs.currency)} / ${displayUnit(economics.singleUnit)}` },
+    ];
+    note = "默认成本用于形成新投入的建议值；历史记录始终使用投入关系中的成本快照。";
+  }
+  if (!metrics.length) return "";
+  return `<div class="detail-section business-economics"><h3>经营数据</h3><div class="economic-detail-grid">${metrics.map((metric) => `<div class="${escapeAttr(metric.tone || "")}"><span>${escapeHtml(metric.label)}</span><strong>${escapeHtml(metric.value)}</strong></div>`).join("")}</div>${note ? `<p>${escapeHtml(note)}</p>` : ""}</div>`;
+}
+
+function businessResultMetrics(economics) {
+  return [
+    { label: "已开票", value: money(economics.invoiced, economics.currency) },
+    { label: "已回款", value: money(economics.settled, economics.currency) },
+    { label: "待回款", value: money(economics.outstanding, economics.currency) },
+    { label: "归集成本", value: money(economics.costs.total, economics.costs.currency) },
+    { label: "当前贡献", value: money(economics.contribution, economics.currency), tone: economics.contribution < 0 ? "negative" : "emphasis" },
+  ];
+}
+
+function costBreakdownMetrics(costs) {
+  return [
+    { label: "归集成本", value: money(costs.total, costs.currency), tone: "emphasis" },
+    { label: "人员成本", value: money(costs.breakdown.personnel, costs.currency) },
+    { label: "软件成本", value: money(costs.breakdown.software_resource, costs.currency) },
+    { label: "硬件成本", value: money(costs.breakdown.hardware_resource, costs.currency) },
+  ];
+}
+
+function displayUnit(unit) {
+  return {
+    person_day: "人天",
+    license_month: "许可月",
+    device_month: "设备月",
+  }[unit] || unit || "单位";
 }
 
 function lifecycleMarkup(lifecycle) {
@@ -1000,7 +1188,38 @@ function openActionForm(action, initialInputs = {}) {
       Object.prototype.hasOwnProperty.call(preparedInputs, inputId) ? preparedInputs[inputId] : undefined,
     ))
     .join("");
+  bindAllocationCostSuggestion(action);
   icons();
+}
+
+function bindAllocationCostSuggestion(action) {
+  const formBody = $("#actionFormBody");
+  formBody.onchange = null;
+  formBody.oninput = null;
+  if (!["allocate_personnel", "allocate_software", "allocate_hardware"].includes(action.id)) return;
+  const costRow = $('[data-action-input="cost_amount"]', formBody);
+  const costInput = $("[data-action-value]", costRow);
+  const currencyInput = $("[data-action-currency]", costRow);
+  if (!costInput || !currencyInput) return;
+
+  const suggest = () => {
+    const resourceId = $('input[name="action_resource_id"]:checked', formBody)?.value;
+    const quantity = Number($('[data-action-input="quantity"] [data-action-value]', formBody)?.value || 0);
+    const resource = (state.data?.objects || []).find((item) => item.id === resourceId);
+    const unitCost = resource?.properties?.default_unit_cost;
+    if (!unitCost || quantity <= 0) return;
+    if (costInput.value !== "" && costInput.dataset.suggested !== "true") return;
+    costInput.value = String(Number(unitCost.amount) * quantity);
+    currencyInput.value = unitCost.currency || "CNY";
+    costInput.dataset.suggested = "true";
+  };
+
+  costInput.addEventListener("input", () => { costInput.dataset.suggested = "false"; });
+  formBody.onchange = suggest;
+  formBody.oninput = (event) => {
+    if (event.target.closest('[data-action-input="quantity"]')) suggest();
+  };
+  suggest();
 }
 
 function actionContextField(action) {
@@ -1693,10 +1912,13 @@ function relationFact(relation) {
   const props = relation.properties || {};
   if (props.settled_amount) return money(props.settled_amount.amount, props.settled_amount.currency);
   if (props.quantity !== undefined) {
+    const cost = props.cost_amount
+      ? ` · ${money(props.cost_amount.amount, props.cost_amount.currency)}`
+      : "";
     const period = props.start_date || props.end_date
       ? ` · ${props.start_date || "?"} 至 ${props.end_date || "?"}`
       : "";
-    return `${props.quantity} ${props.unit || ""}${period}`.trim();
+    return `${props.quantity} ${displayUnit(props.unit)}${cost}${period}`.trim();
   }
   return props.participation_role || props.ip_role || props.status || "-";
 }

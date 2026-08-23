@@ -48,6 +48,9 @@ class FoxOmsAppTest(unittest.TestCase):
         self.assertIn("商务拓展", content)
         self.assertIn("开票回款", content)
         self.assertIn("资源资产", content)
+        self.assertIn("归集成本", content)
+        self.assertIn("当前贡献", content)
+        self.assertIn("已开票减直接归集成本", content)
         self.assertIn("全部数据", content)
         self.assertNotIn("融资租赁", content)
 

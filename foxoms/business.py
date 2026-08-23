@@ -122,6 +122,14 @@ def audit_foxoms_records(
             _audit_positive_money(record, "回款", errors)
             if settlements_by_receipt[object_id] <= 0:
                 errors.append(f"{object_id}: 回款必须至少核销一张发票")
+        elif object_type in {"personnel", "software_resource", "hardware_resource"}:
+            default_unit_cost = (record.get("properties") or {}).get(
+                "default_unit_cost"
+            )
+            if default_unit_cost is not None:
+                amount, _ = _money_value(default_unit_cost)
+                if amount is None or amount <= 0:
+                    errors.append(f"{object_id}: 默认单位成本必须大于零")
         elif object_type == "intellectual_asset" and ip_links[object_id] != 1:
             errors.append(f"{object_id}: 知识资产必须且只能关联一个履约对象")
 
@@ -200,6 +208,9 @@ def _audit_allocation(relation: dict[str, Any], errors: list[str]) -> None:
     quantity = properties.get("quantity")
     if isinstance(quantity, bool) or not isinstance(quantity, (int, float)) or quantity <= 0:
         errors.append(f"{relation.get('id')}: 资源投入数量必须大于零")
+    cost_amount, _ = _money_value(properties.get("cost_amount"))
+    if cost_amount is None or cost_amount <= 0:
+        errors.append(f"{relation.get('id')}: 资源投入归集成本必须大于零")
     start = properties.get("start_date")
     end = properties.get("end_date")
     if start and end:

@@ -107,8 +107,24 @@ class FoxOmsDomainModelTest(unittest.TestCase):
         self.assertEqual(["order", "work_item"], allocation["to_types"])
         self.assertTrue(allocation["properties"]["quantity"]["required"])
         self.assertTrue(allocation["properties"]["unit"]["required"])
+        self.assertTrue(allocation["properties"]["cost_amount"]["required"])
         self.assertFalse(allocation["properties"]["start_date"]["required"])
         self.assertFalse(allocation["properties"]["end_date"]["required"])
+        for resource_type in (
+            "personnel",
+            "software_resource",
+            "hardware_resource",
+        ):
+            self.assertFalse(
+                model["object_types"][resource_type]["properties"]
+                ["default_unit_cost"]["required"]
+            )
+        for action_id in (
+            "allocate_personnel",
+            "allocate_software",
+            "allocate_hardware",
+        ):
+            self.assertTrue(model["actions"][action_id]["inputs"]["cost_amount"]["required"])
         ip_relation = model["relation_types"]["involves_ip"]
         self.assertEqual(["order", "work_item"], ip_relation["from_types"])
         self.assertEqual(["intellectual_asset"], ip_relation["to_types"])

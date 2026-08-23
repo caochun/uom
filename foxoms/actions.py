@@ -16,6 +16,11 @@ class FoxOmsActionService(ModelActionService):
         "allocate_software",
         "allocate_hardware",
     }
+    _RESOURCE_REGISTRATION_ACTIONS = {
+        "register_personnel",
+        "register_software_resource",
+        "register_hardware_resource",
+    }
     _SIGNING_ACTIONS = {"sign_framework_agreement", "sign_project_contract"}
     _RESERVED_PARTICIPATION_ROLES = {
         "operating_party",
@@ -73,6 +78,10 @@ class FoxOmsActionService(ModelActionService):
             self._validate_bid_result(inputs)
         elif action_id in self._SIGNING_ACTIONS:
             self._validate_signing(inputs)
+        elif action_id in self._RESOURCE_REGISTRATION_ACTIONS:
+            default_unit_cost = inputs.get("default_unit_cost")
+            if default_unit_cost is not None:
+                self._require_positive_money(default_unit_cost, "默认单位成本")
         elif action_id in self._ALLOCATION_ACTIONS:
             self._validate_allocation(inputs)
         elif action_id == "register_intellectual_asset":
@@ -138,11 +147,12 @@ class FoxOmsActionService(ModelActionService):
                 "action.inputs.customer_id: 客户不能与服务提供方相同"
             ])
 
-    @staticmethod
-    def _validate_allocation(inputs: dict[str, Any]) -> None:
+    @classmethod
+    def _validate_allocation(cls, inputs: dict[str, Any]) -> None:
         quantity = inputs["quantity"]
         if quantity <= 0:
             raise ChangeValidationError(["action.inputs.quantity: 必须大于零"])
+        cls._require_positive_money(inputs["cost_amount"], "归集成本")
         start = inputs.get("start_date")
         end = inputs.get("end_date")
         if start and end and date.fromisoformat(end) < date.fromisoformat(start):

@@ -16,6 +16,8 @@ actions:
         ref: personnel
         type: personnel
         name: $input.name
+        properties:
+          default_unit_cost: $input.default_unit_cost
   register_software_resource:
     handler: changeset
     effects:
@@ -23,6 +25,8 @@ actions:
         ref: software
         type: software_resource
         name: $input.name
+        properties:
+          default_unit_cost: $input.default_unit_cost
   register_hardware_resource:
     handler: changeset
     effects:
@@ -30,6 +34,8 @@ actions:
         ref: hardware
         type: hardware_resource
         name: $input.name
+        properties:
+          default_unit_cost: $input.default_unit_cost
   create_opportunity:
     handler: changeset
     effects:
@@ -184,6 +190,7 @@ actions:
         properties:
           quantity: $input.quantity
           unit: $input.unit
+          cost_amount: $input.cost_amount
           start_date: $input.start_date
           end_date: $input.end_date
   allocate_software:
@@ -196,6 +203,7 @@ actions:
         properties:
           quantity: $input.quantity
           unit: $input.unit
+          cost_amount: $input.cost_amount
           start_date: $input.start_date
           end_date: $input.end_date
   allocate_hardware:
@@ -208,6 +216,7 @@ actions:
         properties:
           quantity: $input.quantity
           unit: $input.unit
+          cost_amount: $input.cost_amount
           start_date: $input.start_date
           end_date: $input.end_date
   register_intellectual_asset:
