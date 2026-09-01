@@ -136,11 +136,66 @@ class AgentDef(UomModel):
     ])
 
 
+class ContractImportDef(UomModel):
+    """Select shared vocabulary exported by another UOM contract."""
+
+    path: str
+    properties: list[str] = Field(default_factory=list)
+    objects: list[str] = Field(default_factory=list)
+    relations: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_selection(self):
+        if not (self.properties or self.objects or self.relations):
+            raise ValueError("contract import must select at least one export")
+        return self
+
+
+class DomainContract(UomModel):
+    """Storage-independent shared vocabulary imported by UOM domains."""
+
+    schema_id: Literal["uom.contract.v1"] = Field(alias="schema")
+    name: str
+    version: str
+    description: str = ""
+    properties: dict[str, PropertyDef] = Field(default_factory=dict)
+    objects: dict[str, ObjectDef] = Field(default_factory=dict)
+    relations: dict[str, RelationDef] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_contract(self):
+        known_properties = set(self.properties)
+        known_objects = set(self.objects)
+        for kind, definitions in (("object", self.objects), ("relation", self.relations)):
+            for type_id, definition in definitions.items():
+                unknown = set(definition.properties) - known_properties
+                if unknown:
+                    raise ValueError(
+                        f"{kind} {type_id} references unknown properties: "
+                        + ", ".join(sorted(unknown))
+                    )
+                if definition.repository or definition.selector or definition.mapping:
+                    raise ValueError(
+                        f"{kind} {type_id} contract must be repository independent"
+                    )
+                if kind == "relation":
+                    unknown_endpoints = (
+                        set(definition.from_types) | set(definition.to_types)
+                    ) - known_objects
+                    if unknown_endpoints:
+                        raise ValueError(
+                            f"relation {type_id} references unknown object types: "
+                            + ", ".join(sorted(unknown_endpoints))
+                        )
+        return self
+
+
 class DomainModel(UomModel):
     schema_id: Literal["uom.domain.v1"] = Field(alias="schema")
     name: str
     version: str
     description: str = ""
+    imports: list[ContractImportDef] = Field(default_factory=list)
     repositories: dict[str, RepositoryDef]
     default_repository: str
     properties: dict[str, PropertyDef] = Field(default_factory=dict)

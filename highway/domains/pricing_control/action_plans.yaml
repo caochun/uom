@@ -1,0 +1,16 @@
+schema: uom.action_plans.v1
+actions:
+  register_rate_rule:
+    handler: changeset
+    effects:
+      - create_object: {ref: rule, type: rate_rule, name: $input.name, properties: {code: $input.code, vehicle_type: $input.vehicle_type, unit_rate: $input.unit_rate, fee_type: $input.fee_type, discount_rule: $input.discount_rule, valid_from: $input.valid_from, valid_to: $input.valid_to, status: $input.status, source_system: $input.source_system, source_type: $input.source_type, source_id: $input.source_id, details: $input.details}}
+  register_rate_version:
+    handler: changeset
+    effects:
+      - create_object: {ref: rate, type: rate_version, name: $input.name, properties: {version: $input.version, valid_from: $input.valid_from, valid_to: $input.valid_to, status: $input.status, source_system: $input.source_system, source_type: $input.source_type, source_id: $input.source_id, details: $input.details}}
+      - create_relation: {type: references, from: $rate, to: $input.rate_rule_id, properties: {role: rate_rule, relation_status: active}}
+  add_control_record:
+    handler: changeset
+    effects:
+      - create_object: {ref: control, type: control_record, name: $input.name, properties: {category: $input.category, status: $input.status, valid_from: $input.valid_from, valid_to: $input.valid_to, reason: $input.reason, source_system: $input.source_system, source_type: $input.source_type, source_id: $input.source_id, details: $input.details}}
+      - create_relation: {type: references, from: $control, to: $input.target_id, properties: {role: controlled_object, relation_status: active}}

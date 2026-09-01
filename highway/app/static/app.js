@@ -1,1362 +1,288 @@
 function createSessionId() {
   if (globalThis.crypto?.randomUUID) return `oms-${globalThis.crypto.randomUUID()}`;
-  if (globalThis.crypto?.getRandomValues) {
-    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
-    return `oms-${[...bytes].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
-  }
   return `oms-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 const state = {
-  data: null,
-  view: "objects",
-  objectFilter: "all",
-  relationFilter: "all",
-  modelKind: "object",
-  search: "",
-  selected: null,
-  pendingOperations: [],
-  preview: null,
-  previewMode: "changeset",
-  actionContextId: "",
-  actionContextType: "",
-  actionContextCandidates: [],
-  availableActions: [],
-  currentAction: null,
-  spatialRequest: 0,
-  detailMap: null,
-  sessionId: createSessionId(),
-  agentBusy: false,
-  agentPending: false,
+  data: null, view: "overview", search: "", passageFilter: "all", objectFilter: "all", relationFilter: "all", modelKind: "object", modelDomain: "all",
+  selected: null, detailMap: null, spatialRequest: 0, sessionId: createSessionId(), agentBusy: false, agentPending: false,
+  agentPinned: true, agentScrollProgrammatic: false,
+  agentDomains: [], agentDomainIds: [], agentDomainMode: "auto", agentDomainLocked: false, actionDomainIds: [], changeDomainIds: [],
+  availableActions: [], actionContextId: "", actionContextType: "", actionContextCandidates: [], currentAction: null,
+  pendingOperations: [], preview: null, previewMode: "changeset",
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const icons = () => window.lucide?.createIcons({ attrs: { "aria-hidden": "true" } });
-
-const typeNames = () => state.data?.model?.object_types || {};
-const relationNames = () => state.data?.model?.relation_types || {};
+const modelObjectTypes = () => state.data?.model?.object_types || {};
+const modelRelationTypes = () => state.data?.model?.relation_types || {};
 const propertyDefinitions = () => state.data?.model?.property_definitions || {};
-const objectIndex = () => Object.fromEntries((state.data?.objects || []).map((item) => [item.id, item]));
-const relationCount = (id) => (state.data?.relations || []).filter((rel) => rel.from === id || rel.to === id).length;
-const propertyTypeOptions = [
-  ["string", "文本"], ["number", "数值"], ["money", "金额"], ["date", "日期"], ["datetime", "日期时间"],
-  ["period", "期间"], ["boolean", "是 / 否"], ["json", "JSON"],
-];
+const indexObjects = () => Object.fromEntries((state.data?.objects || []).map((item) => [item.id, item]));
+const typeName = (type) => modelObjectTypes()[type]?.name || type || "未知类型";
+const relationName = (type) => modelRelationTypes()[type]?.name || type || "未知关系";
+const relationCount = (id) => (state.data?.relations || []).filter((item) => item.from === id || item.to === id).length;
+const objectTypeIds = ["toll_road", "section", "toll_interval", "toll_station", "toll_gantry", "toll_lane", "equipment"];
+const DOMAIN_META = {
+  "highway.passage_charging": { name: "通行收费", view: "passages", icon: "route", summary: "通行、计费与支付" },
+  "highway.customer_accounts": { name: "客户账户", view: "accounts", icon: "wallet-cards", summary: "余额、记账与扣款来源" },
+  "highway.clearing_settlement": { name: "清分结算", view: "settlement", icon: "split", summary: "拆分、业主与资金划拨" },
+  "highway.facility_operations": { name: "设施运营", view: "network", icon: "radio-tower", summary: "路网拓扑与设施状态" },
+  "highway.pricing_control": { name: "费率控制", view: "pricing", icon: "badge-percent", summary: "费率版本、规则与控制" },
+};
+const propertyTypeOptions = [["string", "文本"], ["number", "数值"], ["money", "金额"], ["date", "日期"], ["datetime", "日期时间"], ["period", "期间"], ["boolean", "是 / 否"], ["json", "JSON"]];
+const AGENT_WIDTH_STORAGE_KEY = "highway-oms.agent-width";
+const AGENT_FONT_STORAGE_KEY = "highway-oms.agent-font";
+const AGENT_WIDTH_MIN = 300;
+const AGENT_WIDTH_MAX = 520;
+let agentResizeState = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
-  bindEvents();
-  icons();
+  bindEvents(); initializeAgentPreferences(); icons();
   await Promise.all([loadData(), loadAgentStatus()]);
 });
 
 function bindEvents() {
   $$(".nav-item[data-view]").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
+  $$('[data-go-view]').forEach((button) => button.addEventListener("click", () => switchView(button.dataset.goView)));
+  $$('[data-open-actions]').forEach((button) => button.addEventListener("click", () => openActionLauncher(state.selected?.kind === "object" ? state.selected.id : "", button.dataset.domainId || currentDomainId())));
   $$('[data-open-form]').forEach((button) => button.addEventListener("click", () => openEditor(button.dataset.openForm)));
-  $$('[data-open-actions]').forEach((button) => button.addEventListener("click", openActionsForCurrentView));
-  $("#objectFilters").addEventListener("click", (event) => handleTypeFilterClick(event, "object"));
-  $("#relationFilters").addEventListener("click", (event) => handleTypeFilterClick(event, "relation"));
-  $("#modelKindTabs").addEventListener("click", segmentedHandler("modelKind", renderModel, "kind"));
   $("#globalSearch").addEventListener("input", (event) => { state.search = event.target.value.trim().toLowerCase(); renderCurrentView(); });
-  $("#refreshBtn").addEventListener("click", loadData);
-  $("#agentToggle").addEventListener("click", openAgent);
-  $("#closeAgentBtn").addEventListener("click", closeAgent);
+  $("#refreshBtn").addEventListener("click", loadData); $("#chainRefresh").addEventListener("click", loadData);
+  $("#agentToggle").addEventListener("click", openAgent); $("#closeAgentBtn").addEventListener("click", closeAgent);
+  $("#overviewAgentBtn").addEventListener("click", () => askAgent("分析当前经营概览，重点说明计费、支付、拆分和结算之间是否闭合。"));
+  $("#quickAgent").addEventListener("click", () => askAgent("解释一笔通行的费用链，并说明每一步数据来自哪里。"));
+  $("#quickRoute").addEventListener("click", () => switchView("network"));
   $("#scrim").addEventListener("click", closeOverlays);
   $$('[data-close-drawer]').forEach((button) => button.addEventListener("click", closeDetail));
-  $$('[data-close-changes]').forEach((button) => button.addEventListener("click", () => $("#changeDialog").close()));
-  $("#returnFromChanges").addEventListener("click", returnFromChanges);
-  $("#editorForm").addEventListener("submit", submitEditor);
-  $("#editorDialog").addEventListener("click", handleEditorClick);
-  $("#editorDialog").addEventListener("input", handleEditorInput);
-  $("#applyChangesBtn").addEventListener("click", applyPendingChanges);
-  $("#contextActionBtn").addEventListener("click", () => {
-    const contextId = state.selected?.kind === "object" ? state.selected.id : "";
-    closeDetail();
-    openActionLauncher(contextId);
-  });
   $$('[data-close-actions]').forEach((button) => button.addEventListener("click", closeActionDialog));
-  $("#backToActions").addEventListener("click", renderActionCatalog);
-  $("#actionCatalog").addEventListener("click", handleActionCatalogClick);
-  $("#actionForm").addEventListener("submit", submitAction);
-  $("#openChangesBtn").addEventListener("click", () => {
-    if (!state.pendingOperations.length) return toast("当前没有待应用的变更");
-    if (state.preview) {
-      renderChangePreview();
-      $("#changeDialog").showModal();
-      return;
-    }
-    previewOperations(state.pendingOperations);
-  });
-  $("#askAboutBtn").addEventListener("click", askAboutSelection);
-  $("#clearContextBtn").addEventListener("click", clearAgentContext);
-  $("#agentForm").addEventListener("submit", sendAgentMessage);
-  $("#agentInput").addEventListener("input", autoGrowTextarea);
-  $("#agentInput").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); $("#agentForm").requestSubmit(); } });
-  $("#agentMessages").addEventListener("click", handleAgentClick);
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "/" && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) { event.preventDefault(); $("#globalSearch").focus(); }
-    if (event.key === "Escape") closeOverlays();
-  });
-}
-
-function segmentedHandler(stateKey, render, dataKey = "filter") {
-  return (event) => {
-    const button = event.target.closest("button");
-    if (!button) return;
-    $$("button", event.currentTarget).forEach((item) => item.classList.toggle("active", item === button));
-    state[stateKey] = button.dataset[dataKey];
-    render();
-  };
-}
-
-function typeCatalog(kind) {
-  const definitions = kind === "object" ? typeNames() : relationNames();
-  const records = kind === "object" ? state.data.objects : state.data.relations;
-  const summaryCounts = kind === "object" ? state.data.stats?.object_types : state.data.stats?.relation_types;
-  const counts = records.length ? records.reduce((result, item) => {
-    result[item.type] = (result[item.type] || 0) + 1;
-    return result;
-  }, {}) : (summaryCounts || {});
-  const catalog = Object.entries(definitions).map(([id, definition]) => ({
-    id,
-    name: definition.name || id,
-    count: counts[id] || 0,
-  }));
-  Object.keys(counts).filter((id) => !definitions[id]).sort().forEach((id) => catalog.push({
-    id,
-    name: `${id}（未定义）`,
-    count: counts[id],
-  }));
-  return catalog;
-}
-
-function renderTypeFilters() {
-  const objectTypes = typeCatalog("object");
-  const relationTypes = typeCatalog("relation");
-  if (state.objectFilter !== "all" && !objectTypes.some((item) => item.id === state.objectFilter)) state.objectFilter = "all";
-  if (state.relationFilter !== "all" && !relationTypes.some((item) => item.id === state.relationFilter)) state.relationFilter = "all";
-
-  $("#objectFilters").innerHTML = [
-    filterButton("all", "全部", state.data.stats.object_count, state.objectFilter),
-    ...objectTypes.map((item) => filterButton(item.id, item.name, item.count, state.objectFilter)),
-  ].join("");
-
-  $("#relationFilters").innerHTML = [
-    filterButton("all", "全部", state.data.stats.relation_count, state.relationFilter),
-    ...relationTypes.map((item) => filterButton(item.id, item.name, item.count, state.relationFilter)),
-  ].join("");
-}
-
-function filterButton(id, name, count, selected) {
-  return `<button class="${selected === id ? "active" : ""}" data-filter="${escapeAttr(id)}" title="${escapeAttr(id)}">${escapeHtml(name)} <span class="filter-count">${count}</span></button>`;
-}
-
-function handleTypeFilterClick(event, kind) {
-  const button = event.target.closest("button[data-filter]");
-  if (!button) return;
-  state[`${kind}Filter`] = button.dataset.filter;
-  renderTypeFilters();
-  (kind === "object" ? renderObjects : renderRelations)();
+  $$('[data-close-changes]').forEach((button) => button.addEventListener("click", () => $("#changeDialog").close()));
+  $("#contextActionBtn").addEventListener("click", () => { const id = state.selected?.kind === "object" ? state.selected.id : ""; closeDetail(); openActionLauncher(id, currentDomainId()); });
+  $("#askAboutBtn").addEventListener("click", () => { if (!state.selected) return; const question = `解释这个${state.selected.kind === "relation" ? "关系" : "对象"}及其业务含义：${state.selected.id}`; closeDetail(); askAgent(question); });
+  $("#clearContextBtn").addEventListener("click", () => { state.selected = null; updateAgentContext(); });
+  $("#openChangesBtn").addEventListener("click", () => { if (!state.pendingOperations.length) return toast("当前没有待应用的变更"); renderChangePreview(); $("#changeDialog").showModal(); });
+  $("#applyChangesBtn").addEventListener("click", applyPendingChanges); $("#returnFromChanges").addEventListener("click", returnFromChanges);
+  $("#actionCatalog").addEventListener("click", handleActionCatalogClick); $("#actionForm").addEventListener("submit", submitAction); $("#backToActions").addEventListener("click", renderActionCatalog);
+  $("#editorForm").addEventListener("submit", submitEditor); $("#editorDialog").addEventListener("click", handleEditorClick); $("#editorDialog").addEventListener("change", handleEditorChange); $("#editorDialog").addEventListener("input", handleEditorInput);
+  $("#agentForm").addEventListener("submit", sendAgentMessage); $("#agentInput").addEventListener("input", autoGrowTextarea); $("#agentInput").addEventListener("keydown", handleAgentKeydown); $("#agentMessages").addEventListener("click", handleAgentClick); $("#agentMessages").addEventListener("scroll", handleAgentScroll, { passive: true }); $("#agentDomainOptions").addEventListener("click", handleAgentDomainClick); $("#agentResizer").addEventListener("pointerdown", startAgentResize); $("#agentResizer").addEventListener("keydown", handleAgentResizeKeydown); $("#agentSettings").addEventListener("click", handleAgentSettingsClick);
+  $("#modelKindTabs").addEventListener("click", (event) => { const button = event.target.closest("button[data-kind]"); if (!button) return; state.modelKind = button.dataset.kind; $$("#modelKindTabs button").forEach((item) => item.classList.toggle("active", item === button)); renderModel(); });
+  document.addEventListener("keydown", (event) => { if (event.key === "/" && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) { event.preventDefault(); $("#globalSearch").focus(); } if (event.key === "Escape") closeOverlays(); });
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
-  const payload = await response.json();
-  if (!response.ok) throw new Error((payload.errors || [payload.error || response.statusText]).join("\n"));
+  const response = await fetch(path, { headers: { "Content-Type": "application/json", ...(options.headers || {}) }, ...options });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) { const errors = Array.isArray(payload.errors) ? payload.errors.join("\n") : payload.error || response.statusText; throw new Error(errors); }
   return payload;
 }
 
 async function loadData() {
+  const label = $("#syncLabel"); label.textContent = "同步中…";
   try {
     state.data = { ...(await api("/api/bootstrap")), objects: [], relations: [] };
-    renderShell();
-    const [objects, relations] = await Promise.all([
-      loadRecordPages("object"),
-      loadRecordPages("relation"),
-    ]);
-    state.data.objects = objects;
-    state.data.relations = relations;
-    state.data.graph_loaded = true;
-    renderShell();
-    toast("数据已刷新");
-  } catch (error) {
-    toast(error.message, true);
-  }
+    const [objects, relations] = await Promise.all([loadRecordPages("object"), loadRecordPages("relation")]);
+    state.data.objects = objects; state.data.relations = relations; state.data.graph_loaded = true;
+    renderShell(); label.textContent = `已同步 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
+  } catch (error) { label.textContent = "同步失败"; toast(error.message, true); }
 }
 
 async function loadRecordPages(kind) {
-  const records = [];
-  const path = kind === "object" ? "/api/objects/query" : "/api/relations/query";
-  let offset = 0;
-  while (true) {
-    const page = await api(path, {
-      method: "POST",
-      body: JSON.stringify({ limit: 500, offset }),
-    });
-    records.push(...page.records);
-    if (!page.has_more) return records;
-    offset += page.records.length;
-  }
+  const records = []; const path = kind === "object" ? "/api/objects/query" : "/api/relations/query"; let offset = 0;
+  while (true) { const page = await api(path, { method: "POST", body: JSON.stringify({ limit: 500, offset }) }); records.push(...(page.records || []).map((record) => normalizeRecord(record, kind))); if (!page.has_more) return records; offset += page.records.length; }
+}
+
+function normalizeRecord(record, kind) {
+  if (record.type) return record;
+  const base = kind === "object" ? new Set(["id", "name", "_object_type", "lifecycle"]) : new Set(["id", "from", "to", "_object_type", "lifecycle"]);
+  const properties = Object.fromEntries(Object.entries(record).filter(([key]) => !base.has(key) && key !== "properties"));
+  return { ...record, type: record._object_type, properties: { ...properties, ...(record.properties || {}) } };
 }
 
 function renderShell() {
-  const { stats, model } = state.data;
-  $("#objectNavCount").textContent = stats.object_count;
-  $("#relationNavCount").textContent = stats.relation_count;
+  const stats = state.data.stats || {}; const model = state.data.model || {};
+  $("#passageNavCount").textContent = stats.object_types?.passage || 0; $("#accountsNavCount").textContent = stats.object_types?.account || 0; $("#settlementNavCount").textContent = (stats.object_types?.split_result || 0) + (stats.object_types?.settlement || 0); $("#networkNavCount").textContent = objectTypeIds.reduce((n, id) => n + (stats.object_types?.[id] || 0), 0); $("#pricingNavCount").textContent = (stats.object_types?.rate_version || 0) + (stats.object_types?.rate_rule || 0) + (stats.object_types?.control_record || 0); $("#graphNavCount").textContent = stats.object_count || 0;
   $("#modelNavCount").textContent = Object.keys(model.object_types || {}).length + Object.keys(model.relation_types || {}).length + Object.keys(model.actions || {}).length;
-  $("#sidebarModelName").textContent = model.model.name;
-  $("#sidebarModelVersion").textContent = `v${model.model.version}`;
-  $("#modelVersion").textContent = `v${model.model.version}`;
-  renderTypeFilters();
-  renderMetrics();
-  renderObjects();
-  renderRelations();
-  renderModel();
-  icons();
+  $("#sidebarModel").textContent = model.model?.name || "Highway OMS"; $("#sidebarVersion").textContent = `${(state.data.domains || []).length} 个域`; $("#modelVersion").textContent = `模型 v${model.model?.version || "-"}`;
+  $("#modelObjectTotal").textContent = Object.keys(model.object_types || {}).length; $("#modelRelationTotal").textContent = Object.keys(model.relation_types || {}).length; $("#modelActionTotal").textContent = Object.keys(model.actions || {}).length; $("#modelFunctionTotal").textContent = Object.keys(state.data.ontology?.functions || model.functions || {}).length;
+  renderMetrics(); renderCurrentView(); icons();
 }
+
+function renderCurrentView() { ({ overview: renderOverview, passages: renderPassages, accounts: renderAccounts, settlement: renderSettlement, network: renderNetwork, pricing: renderPricing, graph: renderGraph, model: renderModel }[state.view] || renderOverview)(); updateAgentContext(); }
+function switchView(view) { state.view = view; state.selected = null; $$(".nav-item[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === view)); $$(".view").forEach((section) => section.classList.toggle("active", section.id === `${view}View`)); const activeNav = $(`.nav-item[data-view="${CSS.escape(view)}"]`); activeNav?.scrollIntoView({ block: "nearest", inline: "nearest" }); renderCurrentView(); }
+function matchesSearch(item) { return !state.search || JSON.stringify(item).toLowerCase().includes(state.search); }
+function currentDomainId() { return Object.entries(DOMAIN_META).find(([, meta]) => meta.view === state.view)?.[0] || ""; }
+function domainName(domainId) { return DOMAIN_META[domainId]?.name || shortDomainName((state.data?.domains || []).find((item) => item.id === domainId) || { id: domainId }); }
+function ownersFor(kind, typeId) { return state.data?.domain_ownership?.[kind]?.[typeId] || []; }
+function primaryOwner(kind, typeId) { return ownersFor(kind, typeId)[0] || "shared"; }
+
+function amountOf(value) { return value && typeof value === "object" ? Number(value.amount || 0) : Number(value || 0); }
+function money(value, currency = "CNY") { const amount = amountOf(value); if (!Number.isFinite(amount)) return "-"; try { return new Intl.NumberFormat("zh-CN", { style: "currency", currency, maximumFractionDigits: 2 }).format(amount); } catch { return `${amount.toFixed(2)} ${currency}`; } }
+function sumMoney(items, field) { const total = items.reduce((sum, item) => sum + amountOf(item.properties?.[field]), 0); return money(total); }
+function objectById(id) { return indexObjects()[id]; }
+function outgoing(id, type, role) { return (state.data?.relations || []).filter((rel) => rel.from === id && (!type || rel.type === type) && (!role || rel.properties?.role === role)); }
+function targets(id, type, role) { return outgoing(id, type, role).map((rel) => objectById(rel.to)).filter(Boolean); }
+function firstTarget(id, type, role) { return targets(id, type, role)[0]; }
+function passageFacts(passage) { const events = targets(passage.id, "contains", null).filter((item) => item.type === "passage_event").sort((a, b) => String(a.properties?.occurred_at || "").localeCompare(String(b.properties?.occurred_at || ""))); const charge = firstTarget(passage.id, "derives"); const vehicle = firstTarget(passage.id, "associates", "passage_vehicle"); const medium = firstTarget(passage.id, "references", "used_medium"); const entry = events.find((item) => item.properties?.stage === "entry"); const exit = events.find((item) => item.properties?.stage === "exit"); const split = charge ? targets(charge.id, "derives").find((item) => item.type === "split_result") : null; const settlement = split ? firstTarget(split.id, "derives") : null; return { events, charge: charge?.type === "charge" ? charge : null, vehicle, medium, entry, exit, split, settlement, complete: Boolean(entry && exit && charge) }; }
 
 function renderMetrics() {
-  const objects = state.data.objects;
-  const relations = state.data.relations;
-  const index = objectIndex();
-  const passages = objects.filter((item) => item.type === "passage");
-  const transactions = sumObjectMoney(objects.filter((item) => item.type === "toll_transaction"));
-  const clearing = sumObjectMoney(objects.filter((item) => item.type === "clearing_result"));
-  const incomplete = passages.filter((passage) => {
-    const outbound = relations.filter((item) => item.from === passage.id);
-    const stages = new Set(outbound
-      .filter((item) => item.type === "references" && index[item.to]?.type === "toll_transaction")
-      .map((item) => index[item.to]?.properties?.stage));
-    const hasSplit = outbound.some((item) => item.type === "derives" && index[item.to]?.type === "split_record");
-    return !stages.has("entry") || !stages.has("exit") || !hasSplit;
-  });
-  $("#metricPassages").textContent = passages.length;
-  $("#metricTransactions").textContent = money(transactions.amount, transactions.currency || "CNY");
-  $("#metricClearing").textContent = money(clearing.amount, clearing.currency || "CNY");
-  $("#metricIncomplete").textContent = incomplete.length;
-  $("#metricIncompleteHint").textContent = incomplete.length ? "需要补充入口、出口或拆分" : "通行主链完整";
-  $("#initialAgentMessage").textContent = `当前有 ${passages.length} 条通行记录，交易金额 ${money(transactions.amount, transactions.currency || "CNY")}，清分金额 ${money(clearing.amount, clearing.currency || "CNY")}；${incomplete.length ? `仍有 ${incomplete.length} 条通行待完善。` : "通行主链暂未发现缺口。"}`;
+  const objects = state.data?.objects || []; const passages = objects.filter((item) => item.type === "passage"); const charges = objects.filter((item) => item.type === "charge"); const payments = objects.filter((item) => item.type === "payment"); const splits = objects.filter((item) => item.type === "split_result"); const settlements = objects.filter((item) => item.type === "settlement"); const incomplete = passages.filter((item) => !passageFacts(item).complete);
+  $("#metricPassages").textContent = passages.length; $("#metricPassagesHint").textContent = `${passages.filter((item) => passageFacts(item).complete).length} 条主链完整`;
+  $("#metricReceivable").textContent = sumMoney(charges, "receivable_amount"); $("#metricPaid").textContent = sumMoney(payments, "amount"); $("#metricPaidHint").textContent = `${payments.length} 条支付事实`;
+  $("#metricSplit").textContent = sumMoney(splits, "amount"); $("#metricSettlement").textContent = sumMoney(settlements, "amount"); $("#metricIncomplete").textContent = incomplete.length; $("#metricIncompleteHint").textContent = incomplete.length ? "缺少入口、出口或计费" : "通行主链完整";
+  $("#initialAgentMessage").textContent = `当前有 ${passages.length} 条通行，计费应收 ${sumMoney(charges, "receivable_amount")}，支付实收 ${sumMoney(payments, "amount")}；${incomplete.length ? `有 ${incomplete.length} 条通行需要补充事实。` : "主链暂未发现缺口。"}`;
 }
 
-function sumObjectMoney(items) {
-  return items.reduce((result, item) => {
-    const value = item.properties?.paid_amount || item.properties?.amount;
-    result.amount += Number(value?.amount || 0);
-    result.currency ||= value?.currency;
-    return result;
-  }, { amount: 0, currency: null });
+function renderOverview() {
+  if (!state.data) return; const passages = state.data.objects.filter((item) => item.type === "passage").filter(matchesSearch); const incomplete = passages.filter((item) => !passageFacts(item).complete);
+  const focus = [...incomplete, ...passages.filter((item) => !incomplete.includes(item))].slice(0, 5); $("#overviewPassagesEmpty").classList.toggle("hidden", focus.length > 0); $("#overviewPassages").innerHTML = focus.map((passage) => overviewPassageMarkup(passage)).join(""); $$("#overviewPassages .passage-row").forEach((row) => row.addEventListener("click", () => showDetail("object", row.dataset.id)));
+  const charge = state.data.objects.filter((item) => item.type === "charge"); const payment = state.data.objects.filter((item) => item.type === "payment"); const split = state.data.objects.filter((item) => item.type === "split_result"); const settlement = state.data.objects.filter((item) => item.type === "settlement");
+  $("#chainVisual").innerHTML = [["charge", "计费", sumMoney(charge, "receivable_amount")], ["payment", "支付", sumMoney(payment, "amount")], ["split", "拆分", sumMoney(split, "amount")], ["settlement", "结算", sumMoney(settlement, "amount")]].map(([klass, label, total], index, all) => `<div class="chain-node ${klass}"><div><strong>${escapeHtml(total)}</strong><span>${label}</span></div></div>${index < all.length - 1 ? '<i class="chain-arrow"></i>' : ""}`).join(""); $("#chainLegend").innerHTML = [["charge", "计费", charge.length], ["payment", "支付", payment.length], ["split", "拆分", split.length], ["settlement", "结算", settlement.length]].map(([klass, label, count]) => `<div class="${klass}"><span>${label}事实</span><strong>${count} 条</strong></div>`).join(""); renderDomainOverview(); icons();
 }
+function renderDomainOverview() { const stats = state.data?.stats?.object_types || {}; const values = { "highway.passage_charging": `${stats.passage || 0} 条通行`, "highway.customer_accounts": `${stats.account || 0} 个账户`, "highway.clearing_settlement": `${stats.settlement || 0} 条结算`, "highway.facility_operations": `${objectTypeIds.reduce((sum, id) => sum + (stats[id] || 0), 0)} 个设施`, "highway.pricing_control": `${(stats.rate_rule || 0) + (stats.rate_version || 0)} 项费率` }; $("#domainOverview").innerHTML = Object.entries(DOMAIN_META).map(([id, meta]) => `<button type="button" data-go-domain="${escapeAttr(meta.view)}"><span class="domain-overview-icon"><i data-lucide="${meta.icon}"></i></span><span><strong>${meta.name}</strong><small>${meta.summary}</small></span><b>${escapeHtml(values[id])}</b><i data-lucide="chevron-right"></i></button>`).join(""); $$('[data-go-domain]', $("#domainOverview")).forEach((button) => button.addEventListener("click", () => switchView(button.dataset.goDomain))); }
+function overviewPassageMarkup(passage) { const info = passageFacts(passage); const props = passage.properties || {}; return `<div class="passage-row" data-id="${escapeAttr(passage.id)}"><span class="passage-marker ${info.complete ? "" : "incomplete"}"><i data-lucide="${info.complete ? "route" : "triangle-alert"}"></i></span><div><strong>${escapeHtml(passage.name || passage.id)}</strong><small>${escapeHtml(info.vehicle?.properties?.plate_no || info.vehicle?.name || "车辆未识别")} · ${escapeHtml(info.medium?.properties?.medium_kind || info.medium?.name || "介质未知")} · ${escapeHtml(props.mode || "通行")}</small></div><span class="passage-amount">${info.charge ? money(info.charge.properties?.paid_amount) : "待计费"}</span><i data-lucide="chevron-right"></i></div>`; }
 
-function switchView(view) {
-  state.view = view;
-  $$(".nav-item[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
-  $$(".view").forEach((section) => section.classList.toggle("active", section.id === `${view}View`));
-  renderCurrentView();
+function renderPassageFilters() { const passages = state.data.objects.filter((item) => item.type === "passage"); const options = [["all", "全部", passages.length], ["complete", "主链完整", passages.filter((item) => passageFacts(item).complete).length], ["incomplete", "待完善", passages.filter((item) => !passageFacts(item).complete).length]]; $("#passageFilters").innerHTML = options.map(([id, label, count]) => `<button class="${state.passageFilter === id ? "active" : ""}" data-filter="${id}">${label}<span class="count">${count}</span></button>`).join(""); $$("#passageFilters button").forEach((button) => button.addEventListener("click", () => { state.passageFilter = button.dataset.filter; renderPassages(); })); }
+function renderPassages() { if (!state.data) return; renderPassageFilters(); let passages = state.data.objects.filter((item) => item.type === "passage"); if (state.passageFilter === "complete") passages = passages.filter((item) => passageFacts(item).complete); if (state.passageFilter === "incomplete") passages = passages.filter((item) => !passageFacts(item).complete); passages = passages.filter(matchesSearch); $("#passageResultCount").textContent = `${passages.length} 条`; $("#passagesEmpty").classList.toggle("hidden", passages.length > 0); $("#passagesTable").innerHTML = passages.map(passageRowMarkup).join(""); $$("#passagesTable tr").forEach((row) => row.addEventListener("click", () => showDetail("object", row.dataset.id))); icons(); }
+function passageRowMarkup(passage) { const info = passageFacts(passage); const p = passage.properties || {}; const charge = info.charge?.properties || {}; const status = p.status || (info.complete ? "complete" : "in_progress"); return `<tr data-id="${escapeAttr(passage.id)}"><td><div class="passage-id"><span class="object-icon"><i data-lucide="route"></i></span><div><strong>${escapeHtml(passage.name || passage.id)}</strong><small>${escapeHtml(p.reference_no || passage.id)}</small></div></div></td><td><div class="vehicle-cell"><strong>${escapeHtml(info.vehicle?.properties?.plate_no || info.vehicle?.name || "未识别车辆")}</strong><small>${escapeHtml(info.medium?.properties?.medium_kind || info.medium?.name || "未识别介质")}</small></div></td><td><div class="route-cell"><span><i data-lucide="log-in"></i>${escapeHtml(eventFacility(info.entry) || "未记录入口")}</span><span><i data-lucide="log-out"></i>${escapeHtml(eventFacility(info.exit) || "未记录出口")}</span></div></td><td><span class="money-cell">${escapeHtml(money(charge.receivable_amount))}</span><small class="sub-cell">实收 ${escapeHtml(money(charge.paid_amount))}</small></td><td><span class="money-cell">${escapeHtml(money(sumRelatedMoney(info.charge, "payment", "amount")))}</span></td><td><span class="sub-cell">拆分 ${escapeHtml(info.split ? money(info.split.properties?.amount) : "-")}</span><small class="sub-cell">结算 ${escapeHtml(info.settlement ? money(info.settlement.properties?.amount) : "-")}</small></td><td>${statusPill(status)}</td><td><button class="row-more" aria-label="查看详情"><i data-lucide="chevron-right"></i></button></td></tr>`; }
+function eventFacility(event) { if (!event) return ""; const facility = firstTarget(event.id, "references"); return facility?.name || event.name || event.properties?.stage_label || event.properties?.stage; }
+function incomingTargets(id, type, role) { return (state.data?.relations || []).filter((rel) => rel.to === id && (!type || rel.type === type) && (!role || rel.properties?.role === role)).map((rel) => objectById(rel.from)).filter(Boolean); }
+function sumRelatedMoney(source, type, field) { if (!source) return 0; return incomingTargets(source.id, "references").filter((item) => item.type === type).reduce((sum, item) => sum + amountOf(item.properties?.[field]), 0); }
+
+function renderAccounts() {
+  if (!state.data) return; const accounts = state.data.objects.filter((item) => item.type === "account").filter(matchesSearch); const entries = state.data.objects.filter((item) => item.type === "account_entry").filter(matchesSearch).sort((a, b) => String(b.properties?.occurred_at || "").localeCompare(String(a.properties?.occurred_at || "")));
+  const allAccounts = state.data.objects.filter((item) => item.type === "account"); const allEntries = state.data.objects.filter((item) => item.type === "account_entry"); const debits = allEntries.filter((item) => ["debit", "扣款"].includes(String(item.properties?.entry_kind || "").toLowerCase()));
+  $("#accountsTotal").textContent = allAccounts.length; $("#accountsBalance").textContent = sumMoney(allAccounts, "balance"); $("#accountEntryCount").textContent = allEntries.length; $("#accountDebitTotal").textContent = sumMoney(debits, "amount"); $("#accountResultCount").textContent = `${accounts.length} 个`;
+  $("#accountList").innerHTML = accounts.map((account) => { const ledger = targets(account.id, "contains").filter((item) => item.type === "account_entry"); const p = account.properties || {}; return `<button class="account-item" type="button" data-id="${escapeAttr(account.id)}"><span class="account-item-icon"><i data-lucide="wallet-cards"></i></span><span><strong>${escapeHtml(account.name || account.id)}</strong><small>${escapeHtml(p.code || account.id)} · ${escapeHtml(p.account_kind || "未分类")}</small></span><span class="account-balance"><small>当前余额</small><strong>${escapeHtml(money(p.balance))}</strong><em>${ledger.length} 条明细</em></span><i data-lucide="chevron-right"></i></button>`; }).join("");
+  $("#accountEntriesTable").innerHTML = entries.map(accountEntryRowMarkup).join(""); $("#accountsEmpty").classList.toggle("hidden", accounts.length + entries.length > 0); $$('[data-id]', $("#accountList")).forEach((row) => row.addEventListener("click", () => showDetail("object", row.dataset.id))); $$("#accountEntriesTable tr").forEach((row) => row.addEventListener("click", () => showDetail("object", row.dataset.id))); icons();
 }
+function accountEntryRowMarkup(entry) { const p = entry.properties || {}; const payment = firstTarget(entry.id, "references", "payment"); const passage = firstTarget(entry.id, "references", "passage"); const account = incomingTargets(entry.id, "contains").find((item) => item.type === "account"); const sources = [payment, passage].filter(Boolean).map((item) => item.name || item.id).join(" / "); return `<tr data-id="${escapeAttr(entry.id)}"><td><div class="object-main"><strong>${escapeHtml(entry.name || entry.id)}</strong><span>${escapeHtml(account?.name || formatEventTime(p.occurred_at))}</span></div></td><td>${statusPill(p.entry_kind)}</td><td><span class="money-cell">${escapeHtml(money(p.amount))}</span></td><td><span class="source-cell">${escapeHtml(sources || "未关联来源")}</span></td><td><span class="money-cell">${escapeHtml(money(p.balance_after))}</span></td><td><button class="row-more" aria-label="查看详情"><i data-lucide="chevron-right"></i></button></td></tr>`; }
 
-function renderCurrentView() {
-  ({ objects: renderObjects, relations: renderRelations, model: renderModel }[state.view] || renderObjects)();
+function renderSettlement() {
+  if (!state.data) return; const splits = state.data.objects.filter((item) => item.type === "split_result"); const settlements = state.data.objects.filter((item) => item.type === "settlement"); const splitTotal = splits.reduce((sum, item) => sum + amountOf(item.properties?.amount), 0); const allocated = settlements.reduce((sum, item) => sum + amountOf(item.properties?.allocated_amount), 0);
+  $("#settlementSplitTotal").textContent = money(splitTotal); $("#settlementSplitCount").textContent = `${splits.length} 条拆分`; $("#settlementDueTotal").textContent = money(splitTotal); $("#settlementAllocatedTotal").textContent = money(allocated); $("#settlementRecordCount").textContent = `${settlements.length} 条结算`; $("#settlementPendingTotal").textContent = money(Math.max(0, splitTotal - allocated));
+  let charges = state.data.objects.filter((item) => item.type === "charge" && targets(item.id, "derives").some((target) => target.type === "split_result")); charges = charges.filter((charge) => matchesSearch({ charge, splits: targets(charge.id, "derives") })); $("#settlementFlowCount").textContent = `${charges.length} 条计费链`; $("#settlementEmpty").classList.toggle("hidden", charges.length > 0); $("#settlementFlows").innerHTML = charges.map(settlementFlowMarkup).join(""); $$('[data-object-id]', $("#settlementFlows")).forEach((row) => row.addEventListener("click", () => showDetail("object", row.dataset.objectId))); $$('[data-settlement-action]', $("#settlementFlows")).forEach((button) => button.addEventListener("click", () => openActionLauncher(button.dataset.settlementAction, "highway.clearing_settlement"))); icons();
 }
+function settlementFlowMarkup(charge) { const splits = targets(charge.id, "derives").filter((item) => item.type === "split_result"); const passage = incomingTargets(charge.id, "derives").find((item) => item.type === "passage"); return `<article class="settlement-flow"><div class="flow-origin"><button class="flow-origin-main" type="button" data-object-id="${escapeAttr(charge.id)}"><span class="flow-icon"><i data-lucide="calculator"></i></span><span><small>计费来源</small><strong>${escapeHtml(charge.name || charge.id)}</strong><em>${escapeHtml(passage?.name || "未关联通行")}</em></span><b>${escapeHtml(money(charge.properties?.receivable_amount || charge.properties?.paid_amount))}</b></button><button class="flow-business-action" type="button" data-settlement-action="${escapeAttr(charge.id)}"><i data-lucide="plus"></i><span>登记拆分</span></button></div><div class="flow-branches">${splits.map(splitBranchMarkup).join("")}</div></article>`; }
+function splitBranchMarkup(split) { const settlement = targets(split.id, "derives").find((item) => item.type === "settlement"); const owner = firstTarget(split.id, "references", "owner"); const interval = firstTarget(split.id, "references", "toll_interval"); const recipient = settlement ? firstTarget(settlement.id, "references", "recipient") : null; return `<div class="flow-branch"><div class="flow-stage-card"><button type="button" data-object-id="${escapeAttr(split.id)}"><span class="flow-stage"><i data-lucide="split"></i><small>拆分</small></span><span><strong>${escapeHtml(split.name || split.id)}</strong><small>${escapeHtml(interval?.name || "未关联收费单元")} · ${escapeHtml(owner?.name || "未关联业主")}</small></span><b>${escapeHtml(money(split.properties?.amount))}</b></button><button class="flow-business-action compact" type="button" data-settlement-action="${escapeAttr(split.id)}"><i data-lucide="plus"></i><span>登记结算</span></button></div><i data-lucide="arrow-right"></i><button type="button" class="${settlement ? "" : "missing"}" ${settlement ? `data-object-id="${escapeAttr(settlement.id)}"` : "disabled"}><span class="flow-stage"><i data-lucide="badge-check"></i><small>结算</small></span><span><strong>${escapeHtml(settlement?.name || "尚未形成结算")}</strong><small>${escapeHtml(recipient?.name || (settlement ? "未关联接收方" : "等待资金划拨"))}</small></span><b>${escapeHtml(settlement ? money(settlement.properties?.allocated_amount ?? settlement.properties?.amount) : "-")}</b></button></div>`; }
 
-function matchesSearch(item) {
-  if (!state.search) return true;
-  return JSON.stringify(item).toLowerCase().includes(state.search);
+function renderPricing() {
+  if (!state.data) return; const versions = state.data.objects.filter((item) => item.type === "rate_version").filter(matchesSearch); const rules = state.data.objects.filter((item) => item.type === "rate_rule"); const controls = state.data.objects.filter((item) => item.type === "control_record").filter(matchesSearch); const pricedCharges = state.data.objects.filter((item) => item.type === "charge" && outgoing(item.id, "references").some((rel) => ["rate_version", "fare_basis"].includes(rel.properties?.role)));
+  $("#pricingVersionCount").textContent = versions.length; $("#pricingRuleCount").textContent = rules.filter((item) => item.properties?.status !== "inactive").length; $("#pricingChargeCount").textContent = pricedCharges.length; $("#pricingControlCount").textContent = controls.filter((item) => item.properties?.status === "active").length;
+  $("#pricingVersions").innerHTML = versions.map(pricingVersionMarkup).join("") || '<div class="empty-inline">暂无费率版本</div>'; $("#pricingControlsTable").innerHTML = controls.map(pricingControlRowMarkup).join(""); $("#pricingEmpty").classList.toggle("hidden", versions.length + controls.length > 0); $$('[data-object-id]', $("#pricingView")).forEach((row) => row.addEventListener("click", () => showDetail("object", row.dataset.objectId))); icons();
 }
+function pricingVersionMarkup(version) { const p = version.properties || {}; const rules = targets(version.id, "references", "rate_rule").filter((item) => item.type === "rate_rule"); return `<article class="pricing-version"><button type="button" data-object-id="${escapeAttr(version.id)}"><span class="pricing-version-icon"><i data-lucide="file-cog"></i></span><span><small>${escapeHtml(p.version || "未标版本")}</small><strong>${escapeHtml(version.name || version.id)}</strong><em>${escapeHtml(p.valid_from || "-")} 至 ${escapeHtml(p.valid_to || "长期有效")}</em></span>${statusPill(p.status)}</button><div class="pricing-rules">${rules.map((rule) => `<button type="button" data-object-id="${escapeAttr(rule.id)}"><span><strong>${escapeHtml(rule.name || rule.id)}</strong><small>${escapeHtml(rule.properties?.vehicle_type || "通用车型")} · ${escapeHtml(rule.properties?.fee_type || "计费规则")}</small></span><b>${escapeHtml(String(rule.properties?.unit_rate ?? "-"))}</b><em>单位费率</em></button>`).join("") || '<span class="subtle">尚未关联具体规则</span>'}</div></article>`; }
+function pricingControlRowMarkup(control) { const p = control.properties || {}; const target = firstTarget(control.id, "references", "controlled_object"); return `<tr data-object-id="${escapeAttr(control.id)}"><td><div class="object-main"><strong>${escapeHtml(control.name || control.id)}</strong><span>${escapeHtml(p.reason || control.id)}</span></div></td><td>${escapeHtml(p.category || "-")}</td><td><div class="object-main"><strong>${escapeHtml(target?.name || "未关联")}</strong><span>${escapeHtml(target ? typeName(target.type) : "-")}</span></div></td><td>${escapeHtml(p.valid_from || "-")} → ${escapeHtml(p.valid_to || "长期")}</td><td>${statusPill(p.status)}</td><td><button class="row-more" aria-label="查看详情"><i data-lucide="chevron-right"></i></button></td></tr>`; }
 
-function renderObjects() {
-  if (!state.data) return;
-  const items = state.data.objects
-    .filter((item) => state.objectFilter === "all" || item.type === state.objectFilter)
-    .filter(matchesSearch);
-  $("#objectResultCount").textContent = `${items.length} 项`;
-  $("#objectsEmpty").classList.toggle("hidden", items.length > 0);
-  $("#objectsTable").innerHTML = items.map((item) => {
-    const props = item.properties || {};
-    const amount = props.amount ? money(props.amount.amount, props.amount.currency) : "-";
-    const period = props.period || props.occurred_on || props.details?.due_date || "-";
-    const label = typeNames()[item.type]?.name || item.type;
-    return `<tr data-object-id="${escapeAttr(item.id)}">
-      <td><div class="object-cell"><div class="type-icon ${escapeAttr(item.type)}"><i data-lucide="${typeIcon(item.type)}"></i></div><div class="object-main"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.id)}</span></div></div></td>
-      <td><span class="type-code" title="${escapeAttr(item.type)}">${escapeHtml(label)}</span></td>
-      <td class="money">${escapeHtml(amount)}</td><td>${escapeHtml(period)}</td>
-      <td>${statusPill(props.status)}</td><td>${relationCount(item.id)}</td>
-      <td><button class="row-more" aria-label="查看详情"><i data-lucide="chevron-right"></i></button></td>
-    </tr>`;
-  }).join("");
-  $$("#objectsTable tr").forEach((row) => row.addEventListener("click", () => showDetail("object", row.dataset.objectId)));
-  icons();
-}
+function renderNetwork() { if (!state.data) return; const types = objectTypeIds.map((id) => [id, typeName(id), state.data.objects.filter((item) => item.type === id).length]); $("#networkFilters").innerHTML = [["all", "全部", objectTypeIds.reduce((n, id) => n + state.data.objects.filter((item) => item.type === id).length, 0)], ...types].map(([id, label, count]) => `<button class="${(state.networkFilter || "all") === id ? "active" : ""}" data-filter="${id}">${escapeHtml(label)}<span class="count">${count}</span></button>`).join(""); $$("#networkFilters button").forEach((button) => button.addEventListener("click", () => { state.networkFilter = button.dataset.filter; renderNetwork(); })); let items = state.data.objects.filter((item) => objectTypeIds.includes(item.type)); if (state.networkFilter && state.networkFilter !== "all") items = items.filter((item) => item.type === state.networkFilter); items = items.filter(matchesSearch); $("#networkResultCount").textContent = `${items.length} 个`; $("#networkList").innerHTML = items.map(networkItemMarkup).join(""); $$("#networkList .network-item").forEach((row) => row.addEventListener("click", () => showDetail("object", row.dataset.id))); const topology = state.data.relations.filter((item) => item.type === "route_next"); $("#networkStats").innerHTML = [["toll_road", "收费公路"], ["section", "收费路段"], ["toll_station", "收费站"], ["toll_gantry", "收费门架"], ["toll_lane", "收费车道"], ["route_next", "有向路网边"]].map(([key, label]) => `<div class="network-stat"><strong>${state.data.stats.object_types?.[key] || state.data.stats.relation_types?.[key] || 0}</strong><span>${label}</span></div>`).join(""); const path = topology.slice(0, 5).map((rel) => `<span>${escapeHtml(objectById(rel.from)?.name || rel.from)}</span><i data-lucide="arrow-right"></i><span>${escapeHtml(objectById(rel.to)?.name || rel.to)}</span>`).join(""); $("#networkPath").innerHTML = `<div class="network-path-title">示例后继关系</div><div class="network-path-line">${path || "暂无路网后继关系"}</div>`; icons(); }
+function networkItemMarkup(item) { const p = item.properties || {}; return `<div class="network-item" data-id="${escapeAttr(item.id)}"><span class="object-icon"><i data-lucide="${typeIcon(item.type)}"></i></span><div><strong>${escapeHtml(item.name || item.id)}</strong><small>${escapeHtml(typeName(item.type))} · ${escapeHtml(p.code || item.id)}${p.longitude ? ` · ${escapeHtml(String(p.longitude))}, ${escapeHtml(String(p.latitude))}` : ""}</small></div><i data-lucide="chevron-right"></i></div>`; }
 
-function renderRelations() {
-  if (!state.data) return;
-  const items = state.data.relations
-    .filter((item) => state.relationFilter === "all" || item.type === state.relationFilter)
-    .filter(matchesSearch);
-  const index = objectIndex();
-  $("#relationResultCount").textContent = `${items.length} 项`;
-  $("#relationsEmpty").classList.toggle("hidden", items.length > 0);
-  $("#relationsTable").innerHTML = items.map((item) => {
-    const source = index[item.from] || { id: item.from, name: "未知对象", type: "unknown" };
-    const target = index[item.to] || { id: item.to, name: "未知对象", type: "unknown" };
-    const definition = relationNames()[item.type];
-    const props = item.properties || {};
-    const fact = props.amount ? money(props.amount.amount, props.amount.currency) : (props.status || "-");
-    return `<tr data-relation-id="${escapeAttr(item.id)}">
-      <td><div class="object-main"><strong>${escapeHtml(definition?.name || item.type)}</strong><span>${escapeHtml(item.type)}</span></div></td>
-      <td>${endpoint(source)}</td><td class="direction-arrow"><i data-lucide="arrow-right"></i></td><td>${endpoint(target)}</td>
-      <td>${escapeHtml(fact)}</td><td><button class="row-more" aria-label="查看详情"><i data-lucide="chevron-right"></i></button></td>
-    </tr>`;
-  }).join("");
-  $$("#relationsTable tr").forEach((row) => row.addEventListener("click", () => showDetail("relation", row.dataset.relationId)));
-  const summary = [
-    ["boxes", state.data.relations.filter((item) => item.type === "contains").length, "结构关系"],
-    ["waypoints", state.data.relations.filter((item) => item.type === "derives").length, "派生追溯关系"],
-    ["link-2", state.data.relations.filter((item) => ["references", "associates"].includes(item.type)).length, "引用与关联"],
-  ];
-  $("#relationSummary").innerHTML = summary.map(([icon, count, label]) => `<article><div class="summary-icon"><i data-lucide="${icon}"></i></div><div><strong>${count}</strong><span>${label}</span></div></article>`).join("");
-  icons();
-}
+function renderObjectFilters() { const counts = state.data.stats?.object_types || {}; const defs = Object.entries(modelObjectTypes()).map(([id, def]) => [id, def.name || id, counts[id] || 0]); const extra = Object.keys(counts).filter((id) => !modelObjectTypes()[id]).map((id) => [id, `${id}（未定义）`, counts[id]]); $("#objectFilters").innerHTML = [["all", "全部", state.data.stats.object_count], ...defs, ...extra].map(([id, label, count]) => `<button class="${state.objectFilter === id ? "active" : ""}" data-filter="${escapeAttr(id)}">${escapeHtml(label)}<span class="count">${count}</span></button>`).join(""); $$("#objectFilters button").forEach((button) => button.addEventListener("click", () => { state.objectFilter = button.dataset.filter; renderGraph(); })); }
+function renderRelationFilters() { const counts = state.data.stats?.relation_types || {}; const defs = Object.entries(modelRelationTypes()).map(([id, def]) => [id, def.name || id, counts[id] || 0]); $("#relationFilters").innerHTML = [["all", "全部", state.data.stats.relation_count], ...defs].map(([id, label, count]) => `<button class="${state.relationFilter === id ? "active" : ""}" data-filter="${escapeAttr(id)}">${escapeHtml(label)}<span class="count">${count}</span></button>`).join(""); $$("#relationFilters button").forEach((button) => button.addEventListener("click", () => { state.relationFilter = button.dataset.filter; renderGraph(); })); }
+function renderGraph() { if (!state.data) return; renderObjectFilters(); renderRelationFilters(); let objects = state.data.objects.filter((item) => state.objectFilter === "all" || item.type === state.objectFilter).filter(matchesSearch); $("#objectResultCount").textContent = `${objects.length} 个对象`; $("#objectsEmpty").classList.toggle("hidden", objects.length > 0); $("#objectsTable").innerHTML = objects.map(objectRowMarkup).join(""); $$("#objectsTable tr").forEach((row) => row.addEventListener("click", () => showDetail("object", row.dataset.id))); let relations = state.data.relations.filter((item) => state.relationFilter === "all" || item.type === state.relationFilter).filter(matchesSearch); $("#relationsEmpty").classList.toggle("hidden", relations.length > 0); $("#relationsList").innerHTML = relations.slice(0, 100).map(relationRowMarkup).join(""); $$("#relationsList .relation-item").forEach((row) => row.addEventListener("click", () => showDetail("relation", row.dataset.id))); icons(); }
+function objectRowMarkup(item) { const props = item.properties || {}; const important = Object.entries(props).filter(([key]) => !["details"].includes(key)).slice(0, 2).map(([key, value]) => `${key}: ${formatValue(value)}`).join(" · "); return `<tr data-id="${escapeAttr(item.id)}"><td><div class="object-cell"><span class="object-icon"><i data-lucide="${typeIcon(item.type)}"></i></span><div class="object-main"><strong>${escapeHtml(item.name || item.id)}</strong><span>${escapeHtml(item.id)}</span></div></div></td><td>${escapeHtml(typeName(item.type))}</td><td>${escapeHtml(important || "-")}</td><td>${relationCount(item.id)}</td><td>${statusPill(props.status)}</td><td><button class="row-more" aria-label="查看详情"><i data-lucide="chevron-right"></i></button></td></tr>`; }
+function relationRowMarkup(rel) { const source = objectById(rel.from); const target = objectById(rel.to); return `<div class="relation-item" data-id="${escapeAttr(rel.id)}"><div><span class="relation-type">${escapeHtml(relationName(rel.type))}</span><strong>${escapeHtml(source?.name || rel.from)}</strong><small>${escapeHtml(rel.from)}</small></div><span class="relation-arrow"><i data-lucide="arrow-right"></i></span><div><span class="relation-type">${escapeHtml(rel.properties?.role || rel.type)}</span><strong>${escapeHtml(target?.name || rel.to)}</strong><small>${escapeHtml(rel.to)}</small></div></div>`; }
 
-function renderModel() {
-  if (!state.data) return;
-  const definitions = state.modelKind === "object"
-    ? state.data.model.object_types
-    : state.modelKind === "relation"
-      ? state.data.model.relation_types
-      : state.data.model.actions;
-  const usage = state.data.model_usage[state.modelKind] || {};
-  const entries = Object.entries(definitions || {}).filter(([id, definition]) => matchesSearch({ id, ...definition }));
-  $("#typeGrid").innerHTML = entries.map(([id, definition]) => {
-    const props = state.modelKind === "action"
-      ? Object.keys(definition.inputs || {}).map((id) => [id, {}])
-      : Object.entries(definition.properties || {});
-    const endpoints = state.modelKind === "relation" && (definition.from_types?.length || definition.to_types?.length) ? `${(definition.from_types || ["*"]).join(", ")} → ${(definition.to_types || ["*"]).join(", ")}` : "";
-    const availability = state.modelKind === "action"
-      ? (definition.available_on?.length ? `适用于 ${definition.available_on.join(", ")}` : "全局操作")
-      : "";
-    return `<article class="type-card" data-type-id="${escapeAttr(id)}">
-      <div class="type-card-header"><div><span class="type-id">${escapeHtml(id)}</span><h3>${escapeHtml(definition.name)}</h3></div>${state.modelKind === "action" ? `<span class="action-card-icon"><i data-lucide="${actionIcon(definition.icon)}"></i></span>` : `<span class="usage-badge">${usage[id]?.count || 0} 条数据</span>`}</div>
-      <p>${escapeHtml(definition.description)}</p>
-      ${endpoints ? `<div class="property-list endpoint-types"><span>${escapeHtml(endpoints)}</span></div>` : ""}
-      ${availability ? `<div class="property-list endpoint-types"><span>${escapeHtml(availability)}</span></div>` : ""}
-      <div class="property-list">${props.slice(0, 5).map(([id, usage]) => `<span>${escapeHtml(id)}${usage?.required ? " *" : ""}</span>`).join("")}</div>
-    </article>`;
-  }).join("");
-  $$(".type-card").forEach((card) => card.addEventListener("click", () => showDetail("model", card.dataset.typeId)));
-  icons();
-}
+function renderModel() { if (!state.data) return; renderModelDomainFilters(); const definitions = state.modelKind === "object" ? modelObjectTypes() : state.modelKind === "relation" ? modelRelationTypes() : state.data.model.actions || {}; const usage = state.data.model_usage?.[state.modelKind] || {}; const ownershipKind = state.modelKind === "action" ? "actions" : `${state.modelKind}s`; const entries = Object.entries(definitions).filter(([id, def]) => (state.modelDomain === "all" || ownersFor(ownershipKind, id).includes(state.modelDomain)) && matchesSearch({ id, ...def })); $("#modelGrid").innerHTML = entries.map(([id, def]) => { const action = state.modelKind === "action"; const props = action ? Object.keys(def.inputs || {}) : Object.keys(def.properties || {}); const endpoints = !action && state.modelKind === "relation" && (def.from_types?.length || def.to_types?.length) ? `${(def.from_types || ["*"]).join(", ")} → ${(def.to_types || ["*"]).join(", ")}` : ""; const owners = ownersFor(ownershipKind, id); return `<article class="model-card" data-id="${escapeAttr(id)}"><div class="model-card-domain">${(owners.length ? owners : ["shared"]).map((owner) => `<span>${escapeHtml(owner === "shared" ? "共享契约" : domainName(owner))}</span>`).join("")}</div><div class="model-card-header"><div><span class="type-id">${escapeHtml(id)}</span><h3>${escapeHtml(def.name || id)}</h3></div><span class="model-card-icon ${action ? "action" : ""}"><i data-lucide="${action ? actionIcon(def.icon) : typeIcon(id)}"></i></span></div><p>${escapeHtml(def.description || "暂无业务描述")}</p>${endpoints ? `<div class="model-endpoint">${escapeHtml(endpoints)}</div>` : ""}${action && (def.available_on?.length || def.on?.length) ? `<div class="model-endpoint">适用于：${escapeHtml((def.available_on || def.on).map(typeName).join("、"))}</div>` : ""}<div class="model-card-foot">${props.slice(0, 6).map((property) => `<span class="model-token ${def.properties?.[property]?.required ? "required" : ""}">${escapeHtml(property)}</span>`).join("")}${!action && !props.length ? '<span class="model-token">无公共属性</span>' : ""}${!action ? `<span class="model-token">${usage[id]?.count || 0} 条数据</span>` : ""}</div></article>`; }).join("") || '<div class="empty-state"><i data-lucide="search-x"></i><strong>该业务域没有此类定义</strong></div>'; $$("#modelGrid .model-card").forEach((card) => card.addEventListener("click", () => showDetail("model", card.dataset.id))); icons(); }
+function renderModelDomainFilters() { const domains = state.data.domains || []; $("#modelDomainFilters").innerHTML = [["all", "全部业务域"], ...domains.map((domain) => [domain.id, shortDomainName(domain)])].map(([id, name]) => `<button class="${state.modelDomain === id ? "active" : ""}" data-domain-filter="${escapeAttr(id)}">${escapeHtml(name)}</button>`).join(""); $$("#modelDomainFilters button").forEach((button) => button.addEventListener("click", () => { state.modelDomain = button.dataset.domainFilter; renderModel(); })); }
 
-function showDetail(kind, id) {
-  let item;
-  if (kind === "object") item = state.data.objects.find((entry) => entry.id === id);
-  if (kind === "relation") item = state.data.relations.find((entry) => entry.id === id);
-  if (kind === "model") item = (state.modelKind === "object" ? state.data.model.object_types : state.modelKind === "relation" ? state.data.model.relation_types : state.data.model.actions)[id];
-  if (!item) return;
-  state.selected = { kind, id, item };
-  const title = item.name || item.id || id;
-  $("#detailEyebrow").textContent = kind === "model" ? ({ object: "对象类型", relation: "关系类型", action: "业务操作" }[state.modelKind]) : `${kind === "object" ? "对象" : "关系"}详情`;
-  $("#detailTitle").textContent = title;
-  $("#detailBody").innerHTML = detailMarkup(kind, id, item);
-  $("#detailDrawer").classList.remove("spatial");
-  $("#contextActionBtn").classList.toggle("hidden", kind !== "object");
-  $("#detailDrawer").classList.add("open");
-  $("#scrim").classList.remove("hidden");
-  updateAgentContext();
-  icons();
-  if (kind === "object" && isSpatialCandidate(item)) loadSpatialView(id);
-}
+function showDetail(kind, id) { let item; if (kind === "object") item = objectById(id); if (kind === "relation") item = state.data.relations.find((entry) => entry.id === id); if (kind === "model") item = (state.modelKind === "object" ? modelObjectTypes() : state.modelKind === "relation" ? modelRelationTypes() : state.data.model.actions || {})[id]; if (!item) return; state.selected = { kind, id, item }; $("#detailEyebrow").textContent = kind === "model" ? ({ object: "对象类型", relation: "关系类型", action: "业务操作" }[state.modelKind]) : `${kind === "object" ? "对象" : "关系"}详情`; $("#detailTitle").textContent = item.name || item.id || id; $("#detailBody").innerHTML = detailMarkup(kind, id, item); $("#contextActionBtn").classList.toggle("hidden", kind !== "object"); $$("[data-related-object]", $("#detailBody")).forEach((link) => link.addEventListener("click", () => { if (link.dataset.relatedObject) showDetail("object", link.dataset.relatedObject); })); $("#detailDrawer").classList.add("open"); $("#scrim").classList.remove("hidden"); updateAgentContext(); icons(); if (kind === "object" && isSpatialCandidate(item)) loadSpatialView(id); }
+function detailMarkup(kind, id, item) { if (kind === "model") return detailSection(state.modelKind === "action" ? "业务操作定义" : "类型定义", { id, ...item }) + `<div class="detail-section"><h3>语义边界</h3><p class="panel-note">${state.modelKind === "action" ? "该 Action 会产生可预览的对象或关系变更，执行前需要确认。" : "该定义是领域业务词汇，实例通过 Object / Relation 进入图数据。"}</p></div>`; const links = (state.data.relations || []).filter((rel) => rel.from === id || rel.to === id); const linkMarkup = relationshipGroupsMarkup(id, links); if (item.type === "passage") return spatialPlaceholder(item) + passageDetailMarkup(item) + `<div class="detail-section"><h3>跨域证据与关系 · ${links.length}</h3>${linkMarkup}</div>`; return spatialPlaceholder(item) + detailSection("基本信息", Object.fromEntries(Object.entries(item).filter(([key]) => !["properties", "lifecycle"].includes(key)))) + detailSection("Properties", item.properties || {}) + `<div class="detail-section"><h3>相邻关系 · ${links.length}</h3>${linkMarkup}</div>`; }
+function relationshipGroupsMarkup(id, links) { if (!links.length) return '<span class="subtle">暂无关系</span>'; const groups = new Map(); links.forEach((rel) => { const outbound = rel.from === id; const other = objectById(outbound ? rel.to : rel.from); const owners = other ? ownersFor("objects", other.type) : []; const key = owners[0] || "shared"; if (!groups.has(key)) groups.set(key, []); groups.get(key).push({ rel, outbound, other }); }); return [...groups.entries()].map(([owner, items]) => `<section class="relation-domain-group"><div class="relation-domain-heading"><span>${escapeHtml(owner === "shared" ? "跨域共享" : domainName(owner))}</span><b>${items.length}</b></div>${items.map(({ rel, outbound, other }) => `<button type="button" class="relation-link" data-related-object="${escapeAttr(other?.id || "")}"><i data-lucide="${outbound ? "arrow-right" : "arrow-left"}"></i><div><strong>${escapeHtml(relationName(rel.type))}${rel.properties?.role ? ` · ${escapeHtml(rel.properties.role)}` : ""} · ${escapeHtml(other?.name || (outbound ? rel.to : rel.from))}</strong><span>${escapeHtml(rel.id)}</span></div></button>`).join("")}</section>`).join(""); }
+function passageDetailMarkup(item) { const info = passageFacts(item); const p = item.properties || {}; const payment = info.charge && incomingTargets(info.charge.id, "references").find((entry) => entry.type === "payment"); const chain = [["通行", item, "route"], ["计费", info.charge, "calculator"], ["支付", payment, "circle-dollar-sign"], ["拆分", info.split, "split"], ["结算", info.settlement, "badge-check"]]; return `<div class="detail-section"><h3>通行摘要</h3><div class="detail-list"><div class="detail-row"><span>车辆</span><code>${escapeHtml(info.vehicle?.properties?.plate_no || info.vehicle?.name || "未识别")}</code></div><div class="detail-row"><span>通行介质</span><code>${escapeHtml(info.medium?.properties?.medium_kind || info.medium?.name || "未识别")}</code></div><div class="detail-row"><span>通行方式</span><code>${escapeHtml(p.mode || "-")}</code></div><div class="detail-row"><span>链状态</span><code>${info.complete ? "完整" : "待完善"}</code></div></div></div><div class="detail-section"><h3>费用链</h3><div class="detail-chain">${chain.map(([label, object, icon]) => `<div class="detail-chain-row ${object ? "present" : "missing"}"><span class="detail-chain-icon"><i data-lucide="${icon}"></i></span><div><strong>${label}</strong><small>${object ? `${escapeHtml(object.name || object.id)}${object.properties?.amount || object.properties?.paid_amount ? ` · ${escapeHtml(money(object.properties.amount || object.properties.paid_amount))}` : ""}` : "尚未形成"}</small></div><i data-lucide="${object ? "check" : "minus"}"></i></div>`).join("")}</div></div>${info.events.length ? `<div class="detail-section"><h3>通行事实 · ${info.events.length}</h3>${info.events.map((event) => `<div class="detail-row"><span>${escapeHtml(event.properties?.stage || "事实")}</span><code>${escapeHtml(formatEventTime(event.properties?.occurred_at))} · ${escapeHtml(eventFacility(event) || event.name || event.id)}</code></div>`).join("")}</div>` : ""}`; }
+function detailSection(title, values) { const rows = Object.entries(values || {}).map(([key, value]) => `<div class="detail-row"><span>${escapeHtml(key)}</span><code>${escapeHtml(formatValue(value))}</code></div>`).join(""); return `<div class="detail-section"><h3>${escapeHtml(title)}</h3><div class="detail-list">${rows || '<div class="detail-row"><span>-</span><code>无</code></div>'}</div></div>`; }
+function isSpatialCandidate(item) { const p = item.properties || {}; return (Number.isFinite(Number(p.longitude)) && Number.isFinite(Number(p.latitude))) || ["toll_road", "section", "toll_interval", "toll_station", "toll_gantry", "toll_lane", "passage", "passage_event"].includes(item.type); }
+function spatialPlaceholder(item) { if (!isSpatialCandidate(item)) return ""; return `<div class="spatial-section" id="spatialSection"><div class="spatial-heading"><h3>${item.type === "passage" ? "通行路线" : "空间位置"}</h3><span>正在读取位置</span></div><div class="spatial-loading"><i data-lucide="loader-circle"></i><span>加载地图</span></div></div>`; }
 
-function detailMarkup(kind, id, item) {
-  if (kind === "model") {
-    const title = state.modelKind === "action" ? "操作定义" : "类型定义";
-    return detailSection(title, { id, ...item }) + `<div class="detail-section"><h3>设计边界</h3><p class="muted-text">${state.modelKind === "action" ? "业务操作生成 Object / Relation 变更，但自身不进入业务关系图。" : "该定义是用户业务词汇，不会增加新的本体概念。Object / Relation 的结构保持不变。"}</p></div>`;
-  }
-  const links = state.data.relations.filter((rel) => rel.from === id || rel.to === id);
-  const index = objectIndex();
-  const linkMarkup = links.length ? links.map((rel) => {
-    const outbound = rel.from === id;
-    const other = index[outbound ? rel.to : rel.from];
-    return `<div class="relation-link"><i data-lucide="${outbound ? "arrow-right" : "arrow-left"}"></i><div><strong>${escapeHtml(relationNames()[rel.type]?.name || rel.type)} · ${escapeHtml(other?.name || (outbound ? rel.to : rel.from))}</strong><span>${escapeHtml(rel.id)}</span></div></div>`;
-  }).join("") : `<span class="muted-text">暂无关系</span>`;
-  return spatialPlaceholder(item)
-    + detailSection("基本信息", Object.fromEntries(Object.entries(item).filter(([key]) => !["properties", "tags", "source_refs"].includes(key))))
-    + detailSection("Properties", item.properties || {})
-    + (item.tags?.length ? detailSection("Tags", { tags: item.tags }) : "")
-    + (item.source_refs?.length ? detailSection("来源引用", { source_refs: item.source_refs }) : "")
-    + `<div class="detail-section"><h3>相邻关系 · ${links.length}</h3><div>${linkMarkup}</div></div>`;
-}
-
-function isSpatialCandidate(item) {
-  const props = item?.properties || {};
-  return (Number.isFinite(props.longitude) && Number.isFinite(props.latitude))
-    || ["toll_road", "section", "toll_interval", "passage"].includes(item?.type);
-}
-
-function spatialPlaceholder(item) {
-  if (!isSpatialCandidate(item)) return "";
-  return `<div class="detail-section spatial-section" id="spatialSection">
-    <div class="spatial-heading"><h3>空间视图</h3><span>正在推导位置...</span></div>
-    <div class="spatial-loading"><i data-lucide="loader-circle"></i><span>正在加载地图</span></div>
-  </div>`;
-}
-
-async function loadSpatialView(objectId) {
-  const request = ++state.spatialRequest;
-  try {
-    const view = await api(`/api/spatial/objects/${encodeURIComponent(objectId)}`);
-    if (request !== state.spatialRequest || state.selected?.id !== objectId) return;
-    if (!view.available) {
-      $("#spatialSection")?.remove();
-      return;
-    }
-    const section = $("#spatialSection");
-    if (!section) return;
-    $("#detailDrawer").classList.add("spatial");
-    section.innerHTML = spatialMarkup(view);
-    bindSpatialEvents(view);
-    icons();
-    await renderDetailMap(view, request);
-  } catch (error) {
-    if (request !== state.spatialRequest) return;
-    $("#spatialSection")?.remove();
-    console.warn("Unable to load spatial view", error);
-  }
-}
-
-function spatialMarkup(view) {
-  const sourceLabel = view.route_source === "amap_route_planning"
-    ? "高德规划推导"
-    : view.derived ? "按业务节点推导" : "对象位置";
-  const events = (view.events || []).map((event, index) => `<button class="passage-event" type="button" data-spatial-point="${index}">
-    <span class="event-node ${escapeAttr(event.stage)}"><i data-lucide="${passageEventIcon(event.stage)}"></i></span>
-    <span class="event-main"><strong>${escapeHtml(event.stage_label)} · ${escapeHtml(event.facility_name)}</strong><small>${escapeHtml(formatEventTime(event.occurred_at))}${event.amount ? ` · ${escapeHtml(money(event.amount.amount, event.amount.currency))}` : ""}</small></span>
-    <i data-lucide="locate-fixed"></i>
-  </button>`).join("");
-  return `<div class="spatial-heading"><h3>${view.mode === "passage" ? "通行路线" : "空间视图"}</h3><span>${escapeHtml(sourceLabel)}</span></div>
-    <div class="detail-map" id="detailMap" aria-label="${view.mode === "passage" ? "通行路线地图" : "对象位置地图"}"><div class="map-loading">正在加载地图...</div></div>
-    ${view.derived ? '<p class="spatial-note"><i data-lucide="info"></i><span>线路是根据收费节点推导的展示结果，不代表车辆 GPS 轨迹或权威路网边界。</span></p>' : ""}
-    ${events ? `<div class="passage-timeline"><h3>通行过程 · ${view.events.length}</h3>${events}</div>` : ""}`;
-}
-
-function bindSpatialEvents(view) {
-  $$("[data-spatial-point]", $("#spatialSection")).forEach((button) => button.addEventListener("click", () => {
-    const point = view.points[Number(button.dataset.spatialPoint)];
-    if (!point || !state.detailMap) return;
-    state.detailMap.setZoomAndCenter(15, [point.longitude, point.latitude], false, 280);
-    $$(".passage-event", $("#spatialSection")).forEach((item) => item.classList.toggle("active", item === button));
-  }));
-}
-
-async function renderDetailMap(view, request) {
-  destroyDetailMap();
-  const container = $("#detailMap");
-  if (!container) return;
-  try {
-    const AMap = await loadAmap();
-    if (request !== state.spatialRequest || !container.isConnected) return;
-    container.innerHTML = "";
-    const map = new AMap.Map(container, {
-      viewMode: "2D",
-      zoom: 11,
-      resizeEnable: true,
-      showLabel: true,
-      mapStyle: "amap://styles/normal",
-    });
-    state.detailMap = map;
-    const overlays = [];
-    (view.lines || []).forEach((line) => {
-      const polyline = new AMap.Polyline({
-        path: line.coordinates,
-        strokeColor: "#156b4a",
-        strokeWeight: view.mode === "passage" ? 7 : 6,
-        strokeOpacity: .88,
-        lineJoin: "round",
-        lineCap: "round",
-        showDir: view.mode === "passage",
-        zIndex: 40,
-      });
-      map.add(polyline);
-      overlays.push(polyline);
-    });
-    (view.points || []).forEach((point, index) => {
-      const marker = new AMap.Marker({
-        position: [point.longitude, point.latitude],
-        anchor: "center",
-        content: mapMarkerMarkup(point, index, view.mode),
-        zIndex: 60 + index,
-        title: point.name,
-      });
-      marker.on("click", () => {
-        map.setZoomAndCenter(15, [point.longitude, point.latitude], false, 250);
-        const eventButton = $(`[data-spatial-point="${index}"]`, $("#spatialSection"));
-        if (eventButton) {
-          $$(".passage-event", $("#spatialSection")).forEach((item) => item.classList.toggle("active", item === eventButton));
-          eventButton.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        }
-      });
-      map.add(marker);
-      overlays.push(marker);
-    });
-    if (overlays.length) map.setFitView(overlays, false, [34, 34, 34, 34], view.mode === "point" ? 16 : 14);
-    setTimeout(() => state.detailMap?.resize(), 230);
-  } catch (error) {
-    container.innerHTML = fallbackMapMarkup(view);
-    console.warn("Unable to initialize AMap", error);
-  }
-}
-
+async function loadSpatialView(objectId) { const request = ++state.spatialRequest; try { const view = await api(`/api/spatial/objects/${encodeURIComponent(objectId)}`); if (request !== state.spatialRequest || state.selected?.id !== objectId) return; if (!view.available) { $("#spatialSection")?.remove(); return; } const section = $("#spatialSection"); if (!section) return; $("#detailDrawer").classList.add("spatial"); section.innerHTML = spatialMarkup(view); bindSpatialEvents(view); icons(); await renderDetailMap(view, request); } catch (error) { if (request === state.spatialRequest) $("#spatialSection")?.remove(); console.warn(error); } }
+function spatialMarkup(view) { const events = (view.events || []).map((event, index) => `<button class="passage-event" type="button" data-spatial-point="${index}"><span class="event-node ${escapeAttr(event.stage || "location")}"><i data-lucide="${passageEventIcon(event.stage)}"></i></span><span class="event-main"><strong>${escapeHtml(event.stage_label || event.facility_name || event.name || "通行节点")}</strong><small>${escapeHtml(formatEventTime(event.occurred_at))}</small></span><i data-lucide="locate-fixed"></i></button>`).join(""); return `<div class="spatial-heading"><h3>${view.mode === "passage" ? "通行路线" : "空间位置"}</h3><span>${view.derived ? "按业务节点推导" : "对象位置"}</span></div><div class="detail-map" id="detailMap"><div class="map-loading">正在加载地图…</div></div>${view.derived ? '<p class="spatial-note"><i data-lucide="info"></i><span>路线根据收费节点推导，仅用于业务查看，不代表 GPS 轨迹。</span></p>' : ""}${events ? `<div class="passage-timeline"><h3>通行过程 · ${(view.events || []).length}</h3>${events}</div>` : ""}`; }
+function bindSpatialEvents(view) { $$('[data-spatial-point]', $("#spatialSection")).forEach((button) => button.addEventListener("click", () => { const point = view.points?.[Number(button.dataset.spatialPoint)]; if (!point || !state.detailMap) return; state.detailMap.setZoomAndCenter(15, [point.longitude, point.latitude], false, 280); $$(".passage-event", $("#spatialSection")).forEach((item) => item.classList.toggle("active", item === button)); })); }
+async function renderDetailMap(view, request) { destroyDetailMap(); const container = $("#detailMap"); if (!container) return; try { const AMap = await loadAmap(); if (request !== state.spatialRequest || !container.isConnected) return; container.innerHTML = ""; const map = new AMap.Map(container, { viewMode: "2D", zoom: 11, resizeEnable: true, showLabel: true }); state.detailMap = map; const overlays = []; (view.lines || []).forEach((line) => { const polyline = new AMap.Polyline({ path: line.coordinates, strokeColor: "#3979a8", strokeWeight: view.mode === "passage" ? 7 : 5, strokeOpacity: .88, showDir: view.mode === "passage", zIndex: 40 }); map.add(polyline); overlays.push(polyline); }); (view.points || []).forEach((point, index) => { const marker = new AMap.Marker({ position: [point.longitude, point.latitude], anchor: "center", content: mapMarkerMarkup(point, index, view.mode), zIndex: 60 + index, title: point.name }); marker.on("click", () => { map.setZoomAndCenter(15, [point.longitude, point.latitude], false, 250); const eventButton = $(`[data-spatial-point="${index}"]`, $("#spatialSection")); eventButton?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }); map.add(marker); overlays.push(marker); }); if (overlays.length) map.setFitView(overlays, false, [34, 34, 34, 34], view.mode === "point" ? 16 : 14); setTimeout(() => state.detailMap?.resize(), 230); } catch (error) { container.innerHTML = fallbackMapMarkup(view); icons(); console.warn(error); } }
 let amapPromise;
-async function loadAmap() {
-  if (window.AMap) return window.AMap;
-  if (amapPromise) return amapPromise;
-  amapPromise = (async () => {
-    const config = await api("/api/map/config");
-    if (!config.enabled || !config.api_key) throw new Error("未配置高德地图 JS API Key");
-    if (config.security_key) window._AMapSecurityConfig = { securityJsCode: config.security_key };
-    await new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(config.api_key)}`;
-      script.onload = resolve;
-      script.onerror = () => reject(new Error("高德地图脚本加载失败"));
-      document.head.appendChild(script);
-    });
-    return window.AMap;
-  })();
-  return amapPromise;
-}
-
-function mapMarkerMarkup(point, index, mode) {
-  const label = mode === "passage" ? (point.label || index + 1) : (point.name || index + 1);
-  return `<div class="oms-map-marker ${escapeAttr(point.role || "location")}"><span>${escapeHtml(String(index + 1))}</span><b>${escapeHtml(label)}</b></div>`;
-}
-
-function fallbackMapMarkup(view) {
-  const points = (view.points || []).map((point, index) => `<span><b>${index + 1}</b>${escapeHtml(point.name)}</span>`).join('<i data-lucide="arrow-right"></i>');
-  return `<div class="map-fallback"><i data-lucide="map-off"></i><strong>底图暂不可用</strong><div>${points}</div></div>`;
-}
-
-function passageEventIcon(stage) {
-  return ({ entry: "log-in", gantry: "scan-line", exit: "log-out" })[stage] || "map-pin";
-}
-
-function formatEventTime(value) {
-  if (!value) return "时间未知";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
-}
-
-function destroyDetailMap() {
-  if (state.detailMap) state.detailMap.destroy();
-  state.detailMap = null;
-}
-
-function detailSection(title, values) {
-  const rows = Object.entries(values).map(([key, value]) => `<div class="detail-row"><span>${escapeHtml(key)}</span><code>${escapeHtml(formatValue(value))}</code></div>`).join("");
-  return `<div class="detail-section"><h3>${escapeHtml(title)}</h3><div class="detail-list">${rows || '<div class="detail-row"><span>-</span><code>无</code></div>'}</div></div>`;
-}
-
-function closeDetail() {
-  state.spatialRequest += 1;
-  destroyDetailMap();
-  $("#detailDrawer").classList.remove("open", "spatial");
-  $("#scrim").classList.add("hidden");
-}
+async function loadAmap() { if (window.AMap) return window.AMap; if (amapPromise) return amapPromise; amapPromise = (async () => { const config = await api("/api/map/config"); if (!config.enabled || !config.api_key) throw new Error("未配置高德地图 JS API Key"); if (config.security_key) window._AMapSecurityConfig = { securityJsCode: config.security_key }; await new Promise((resolve, reject) => { const script = document.createElement("script"); script.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(config.api_key)}`; script.onload = resolve; script.onerror = () => reject(new Error("高德地图脚本加载失败")); document.head.appendChild(script); }); return window.AMap; })(); return amapPromise; }
+function mapMarkerMarkup(point, index, mode) { return `<div class="oms-map-marker ${escapeAttr(point.role || "location")} "><span>${index + 1}</span><b>${escapeHtml(mode === "passage" ? point.label || point.name || "节点" : point.name || "位置")}</b></div>`; }
+function fallbackMapMarkup(view) { const points = (view.points || []).map((point, index) => `<span><b>${index + 1}</b>${escapeHtml(point.name || "位置")}</span>`).join('<i data-lucide="arrow-right"></i>'); return `<div class="map-fallback"><i data-lucide="map-off"></i><strong>底图暂不可用</strong><div>${points}</div></div>`; }
+function passageEventIcon(stage) { return ({ entry: "log-in", gantry: "scan-line", exit: "log-out" })[stage] || "map-pin"; }
+function formatEventTime(value) { if (!value) return "时间未知"; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(date); }
+function destroyDetailMap() { state.detailMap?.destroy?.(); state.detailMap = null; }
+function closeDetail() { state.spatialRequest += 1; destroyDetailMap(); $("#detailDrawer").classList.remove("open", "spatial"); if (!$("#agentPanel").classList.contains("open")) $("#scrim").classList.add("hidden"); }
 function closeOverlays() { closeDetail(); closeAgent(); }
-function openAgent() { $(".app-shell").classList.remove("agent-collapsed"); $("#agentPanel").classList.add("open"); if (window.innerWidth <= 1180) $("#scrim").classList.remove("hidden"); }
-function closeAgent() { $("#agentPanel").classList.remove("open"); if (window.innerWidth > 1180) $(".app-shell").classList.add("agent-collapsed"); if (!$("#detailDrawer").classList.contains("open")) $("#scrim").classList.add("hidden"); }
+function openAgent() { $("#appShell").classList.remove("agent-collapsed"); $("#agentPanel").classList.add("open"); if (window.innerWidth <= 1280) $("#scrim").classList.remove("hidden"); $("#agentInput").focus(); }
+function closeAgent() { $("#agentPanel").classList.remove("open"); if (window.innerWidth > 1280) $("#appShell").classList.add("agent-collapsed"); if (!$("#detailDrawer").classList.contains("open")) $("#scrim").classList.add("hidden"); }
+function updateAgentContext() { const labels = { overview: "业务总览 · 自动跨域", passages: "通行收费域", accounts: "客户账户域", settlement: "清分结算域", network: "设施运营域", pricing: "费率控制域", graph: "数据浏览器 · 全部业务域", model: "模型管理 · 全部业务域" }; $("#agentContext span").textContent = state.selected ? `当前对象：${state.selected.item?.name || state.selected.id}` : `页面上下文：${labels[state.view] || "全部业务域"}`; }
+function applyAgentDomainContext(context = {}) { if (Array.isArray(context.domains)) state.agentDomains = context.domains; if (Array.isArray(context.selected)) state.agentDomainIds = context.selected; if (context.mode) state.agentDomainMode = context.mode; if (typeof context.locked === "boolean") state.agentDomainLocked = context.locked; renderAgentDomains(); }
+function renderAgentDomains() { const selected = new Set(state.agentDomainIds); const disabled = state.agentDomainLocked || state.agentPending || state.agentBusy; const automatic = `<button type="button" class="${state.agentDomainMode === "auto" ? "active" : ""}" data-agent-domain-auto ${disabled ? "disabled" : ""} title="根据每条消息自动选择业务域"><i data-lucide="wand-sparkles"></i>自动识别</button>`; const domains = state.agentDomains.map((domain) => `<button type="button" class="${selected.has(domain.id) ? "active" : ""}" data-agent-domain-id="${escapeAttr(domain.id)}" ${disabled ? "disabled" : ""} title="${escapeAttr(domain.description || domain.name)}">${escapeHtml(shortDomainName(domain))}</button>`).join(""); $("#agentDomainOptions").innerHTML = automatic + domains; icons(); }
+function shortDomainName(domain) { const known = { "highway.passage_charging": "通行收费", "highway.customer_accounts": "客户账户", "highway.clearing_settlement": "清分结算", "highway.facility_operations": "设施运营", "highway.pricing_control": "费率控制" }; return known[domain.id] || String(domain.name || domain.id).replace(/^Highway\s*/, "").replace(/业务域$/, ""); }
+async function handleAgentDomainClick(event) { const button = event.target.closest("button"); if (!button || button.disabled || state.agentBusy || state.agentPending) return; const automatic = button.hasAttribute("data-agent-domain-auto"); const domainId = button.dataset.agentDomainId; if (!automatic && !domainId) return; state.agentBusy = true; renderAgentDomains(); try { const context = await api("/api/agent/domains/select", { method: "POST", body: JSON.stringify({ session_id: state.sessionId, domain_ids: domainId ? [domainId] : [], automatic }) }); applyAgentDomainContext(context); } catch (error) { toast(error.message, true); } finally { state.agentBusy = false; renderAgentDomains(); } }
+function askAgent(message) { openAgent(); $("#agentInput").value = message; autoGrowTextarea({ target: $("#agentInput") }); $("#agentForm").requestSubmit(); }
+function initializeAgentPreferences() { let width = 370; let font = "medium"; try { const storedWidth = Number(localStorage.getItem(AGENT_WIDTH_STORAGE_KEY)); if (Number.isFinite(storedWidth)) width = storedWidth; const storedFont = localStorage.getItem(AGENT_FONT_STORAGE_KEY); if (["small", "medium", "large"].includes(storedFont)) font = storedFont; } catch { /* localStorage may be unavailable in private browsing */ } applyAgentWidth(width); setAgentFontSize(font, false); }
+function applyAgentWidth(width, persist = false) { const value = Math.round(Math.min(AGENT_WIDTH_MAX, Math.max(AGENT_WIDTH_MIN, Number(width) || 370))); $("#appShell").style.setProperty("--agent-width", `${value}px`); $("#agentResizer").setAttribute("aria-valuenow", String(value)); if (persist) { try { localStorage.setItem(AGENT_WIDTH_STORAGE_KEY, String(value)); } catch { /* ignore storage failures */ } } }
+function startAgentResize(event) { if (window.innerWidth <= 1280) return; event.preventDefault(); agentResizeState = { startX: event.clientX, startWidth: $("#agentPanel").getBoundingClientRect().width }; document.body.classList.add("agent-resizing"); document.addEventListener("pointermove", handleAgentResize, { passive: false }); document.addEventListener("pointerup", stopAgentResize, { once: true }); document.addEventListener("pointercancel", stopAgentResize, { once: true }); }
+function handleAgentResize(event) { if (!agentResizeState) return; event.preventDefault(); applyAgentWidth(agentResizeState.startWidth - (event.clientX - agentResizeState.startX)); }
+function stopAgentResize() { if (!agentResizeState) return; applyAgentWidth($("#agentPanel").getBoundingClientRect().width, true); agentResizeState = null; document.body.classList.remove("agent-resizing"); document.removeEventListener("pointermove", handleAgentResize); document.removeEventListener("pointerup", stopAgentResize); document.removeEventListener("pointercancel", stopAgentResize); }
+function handleAgentResizeKeydown(event) { if (window.innerWidth <= 1280) return; const current = $("#agentPanel").getBoundingClientRect().width; if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); applyAgentWidth(current + (event.key === "ArrowLeft" ? 16 : -16), true); } else if (event.key === "Home" || event.key === "End") { event.preventDefault(); applyAgentWidth(event.key === "Home" ? AGENT_WIDTH_MIN : AGENT_WIDTH_MAX, true); } }
+function handleAgentSettingsClick(event) { const button = event.target.closest("[data-agent-font]"); if (!button) return; setAgentFontSize(button.dataset.agentFont); }
+function setAgentFontSize(size, persist = true) { const value = ["small", "medium", "large"].includes(size) ? size : "medium"; const panel = $("#agentPanel"); panel.classList.remove("agent-font-small", "agent-font-medium", "agent-font-large"); panel.classList.add(`agent-font-${value}`); $$("[data-agent-font]", $("#agentSettings")).forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.agentFont === value))); if (persist) { try { localStorage.setItem(AGENT_FONT_STORAGE_KEY, value); } catch { /* ignore storage failures */ } } }
 
-async function openActionLauncher(contextId = "") {
-  state.actionContextType = "";
-  state.actionContextCandidates = [];
-  state.actionContextId = contextId;
-  state.currentAction = null;
-  $("#actionDialogTitle").textContent = "选择业务操作";
-  $("#actionForm").classList.add("hidden");
-  $("#actionCatalog").classList.remove("hidden");
-  $("#actionCatalog").innerHTML = '<div class="action-loading"><i data-lucide="loader-circle"></i><span>正在读取业务操作</span></div>';
-  $("#actionDialog").showModal();
-  icons();
-  try {
-    const result = await api("/api/actions/available", {
-      method: "POST",
-      body: JSON.stringify({ context_id: contextId }),
-    });
-    state.availableActions = contextId
-      ? (result.actions || []).filter((action) => action.available_on?.length)
-      : result.actions || [];
-    const context = result.context;
-    renderActionContext(context);
-    renderActionCatalog();
-  } catch (error) {
-    $("#actionCatalog").innerHTML = `<div class="action-empty"><i data-lucide="circle-x"></i><span>${escapeHtml(error.message)}</span></div>`;
-    icons();
-  }
-}
+async function openActionLauncher(contextId = "", domainId = "") { state.actionDomainIds = domainId ? [domainId] : []; state.actionContextId = contextId; state.actionContextType = objectById(contextId)?.type || ""; state.actionContextCandidates = []; state.currentAction = null; $("#actionDialogTitle").textContent = domainId ? `${domainName(domainId)} · 业务操作` : "选择业务操作"; $("#actionCatalog").innerHTML = '<div class="action-loading"><i data-lucide="loader-circle"></i><span>正在读取业务操作</span></div>'; $("#actionCatalog").classList.remove("hidden"); $("#actionForm").classList.add("hidden"); $("#actionDialog").showModal(); icons(); try { const result = await api("/api/actions/available", { method: "POST", body: JSON.stringify({ context_id: contextId, domain_ids: state.actionDomainIds }) }); state.availableActions = result.actions || []; renderActionContext(result.context, domainId); renderActionCatalog(); } catch (error) { $("#actionCatalog").innerHTML = `<div class="action-empty"><i data-lucide="circle-x"></i><span>${escapeHtml(error.message)}</span></div>`; icons(); } }
+function renderActionContext(context, domainId = state.actionDomainIds[0]) { const element = $("#actionContext"); element.classList.toggle("hidden", !context && !domainId); element.innerHTML = context || domainId ? `<i data-lucide="focus"></i><span>${domainId ? `${escapeHtml(domainName(domainId))}${context ? " · " : ""}` : ""}${context ? `${escapeHtml(context.name || typeName(context.type))}${context.type ? ` · ${escapeHtml(typeName(context.type))}` : ""}` : "仅显示本域业务操作"}</span>` : ""; icons(); }
+function renderActionCatalog() { state.currentAction = null; $("#actionDialogTitle").textContent = state.actionDomainIds[0] ? `${domainName(state.actionDomainIds[0])} · 业务操作` : "选择业务操作"; $("#actionForm").classList.add("hidden"); $("#actionCatalog").classList.remove("hidden"); $("#actionCatalog").innerHTML = state.availableActions.length ? state.availableActions.map((action) => `<button class="action-card" type="button" data-action-id="${escapeAttr(action.id)}"><span class="action-card-icon"><i data-lucide="${actionIcon(action.icon)}"></i></span><span><strong>${escapeHtml(action.name || action.id)}</strong><small>${escapeHtml(action.description || "")}${action.executable === false ? ` · ${escapeHtml((action.blocked_reasons || []).join("；"))}` : ""}</small></span><i data-lucide="chevron-right"></i></button>`).join("") : '<div class="action-empty"><i data-lucide="circle-slash"></i><span>当前上下文没有可用操作</span></div>'; icons(); }
+function handleActionCatalogClick(event) { const button = event.target.closest("[data-action-id]"); if (!button) return; const action = state.availableActions.find((item) => item.id === button.dataset.actionId); if (action) openActionForm(action); }
+function openActionForm(action, initialInputs = {}) { state.currentAction = action; state.actionDomainIds = [...(action.domain_ids || state.actionDomainIds || [])]; $("#actionDialogTitle").textContent = action.name || action.id; $("#actionCatalog").classList.add("hidden"); $("#actionForm").classList.remove("hidden"); $("#actionFormError").classList.add("hidden"); $("#actionFormBody").innerHTML = Object.entries(action.inputs || {}).map(([inputId, definition]) => actionInputField(inputId, definition, initialInputs[inputId])).join(""); icons(); }
+function actionInputField(inputId, definition, initialValue) { const property = definition.property ? propertyDefinitions()[definition.property] : null; const valueType = property?.type || definition.type || (definition.object_types ? "object" : "string"); const value = initialValue === undefined ? definition.default : initialValue; const label = definition.name || property?.name || inputId; const required = definition.required === true; const attrs = `class="field action-input ${["money", "json", "object"].includes(valueType) ? "full" : ""}" data-action-input="${escapeAttr(inputId)}" data-value-type="${escapeAttr(valueType)}"`; const requiredLabel = required ? " <em>*</em>" : ""; if (valueType === "object") { const options = state.data.objects.filter((item) => (definition.object_types || []).includes(item.type)); return `<div ${attrs}><label>${escapeHtml(label)}${requiredLabel}</label><div class="object-choice-list">${options.map((item) => `<label class="object-choice"><input type="radio" name="action_${escapeAttr(inputId)}" value="${escapeAttr(item.id)}" ${required ? "required" : ""} ${value === item.id ? "checked" : ""}><span><strong>${escapeHtml(item.name || item.id)}</strong><small>${escapeHtml(typeName(item.type))} · ${escapeHtml(item.id)}</small></span><i data-lucide="check"></i></label>`).join("") || '<span class="subtle">没有符合类型的对象</span>'}</div></div>`; } if (valueType === "money") return `<div ${attrs}><label>${escapeHtml(label)}${requiredLabel}</label><div class="money-property-grid"><input data-action-value type="number" step="any" value="${escapeAttr(value?.amount ?? "")}" placeholder="0" ${required ? "required" : ""}><input data-action-currency type="text" maxlength="3" value="${escapeAttr(value?.currency || "CNY")}" aria-label="币种"></div></div>`; if (valueType === "boolean") return `<div ${attrs}><label class="boolean-action-input"><input data-action-value type="checkbox" ${value === true ? "checked" : ""}><span>${escapeHtml(label)}${requiredLabel}</span></label></div>`; const inputType = { number: "number", date: "date", datetime: "datetime-local", period: "month" }[valueType] || "text"; const control = valueType === "json" ? `<textarea data-action-value ${required ? "required" : ""}>${value === undefined ? "" : escapeHtml(typeof value === "string" ? value : JSON.stringify(value, null, 2))}</textarea>` : `<input data-action-value type="${inputType}" value="${escapeAttr(value ?? "")}" ${valueType === "number" ? 'step="any"' : ""} ${required ? "required" : ""}>`; return `<div ${attrs}><label>${escapeHtml(label)}${requiredLabel}</label>${control}${property?.description ? `<small>${escapeHtml(property.description)}</small>` : ""}</div>`; }
+function buildActionInputs(action, form) { const result = {}; Object.entries(action.inputs || {}).forEach(([inputId]) => { const row = $(`[data-action-input="${CSS.escape(inputId)}"]`, form); if (!row) return; const valueType = row.dataset.valueType; if (valueType === "object") { const value = $("input:checked", row)?.value; if (value) result[inputId] = value; return; } const input = $("[data-action-value]", row); if (valueType === "boolean") { result[inputId] = Boolean(input?.checked); return; } if (!input || input.value === "") return; if (valueType === "money") result[inputId] = { amount: Number(input.value), currency: $("[data-action-currency]", row).value.trim().toUpperCase() || "CNY" }; else if (valueType === "number") result[inputId] = Number(input.value); else if (valueType === "json") { try { result[inputId] = JSON.parse(input.value); } catch { throw new Error(`${inputId} 必须是有效 JSON`); } } else result[inputId] = input.value; }); return result; }
+async function submitAction(event) { event.preventDefault(); if (!state.currentAction || !event.currentTarget.reportValidity()) return; try { const preview = await api("/api/actions/preview", { method: "POST", body: JSON.stringify({ action_id: state.currentAction.id, inputs: buildActionInputs(state.currentAction, event.currentTarget), context_id: state.actionContextId, domain_ids: state.actionDomainIds }) }); state.previewMode = "action"; state.preview = preview; state.pendingOperations = preview.operations || []; $("#changeCount").textContent = state.pendingOperations.length; closeActionDialog(); renderChangePreview(); $("#changeDialog").showModal(); } catch (error) { $("#actionFormError").textContent = error.message; $("#actionFormError").classList.remove("hidden"); } }
+function openPresentedActionForm(payload, domainIds = []) { if (!payload?.action?.id) return; state.actionDomainIds = [...domainIds]; state.actionContextId = payload.context_id || ""; state.availableActions = [payload.action]; renderActionContext(payload.context || null); if (!$("#actionDialog").open) $("#actionDialog").showModal(); openActionForm(payload.action, payload.initial_inputs || {}); }
+function closeActionDialog() { if ($("#actionDialog").open) $("#actionDialog").close(); }
 
-function openActionsForCurrentView() {
-  if (state.view === "objects" && state.objectFilter !== "all") {
-    openActionLauncherForType(state.objectFilter);
-    return;
-  }
-  openActionLauncher("");
-}
-
-function openActionLauncherForType(contextType) {
-  const candidates = (state.data?.objects || []).filter((item) => item.type === contextType);
-  state.actionContextType = contextType;
-  state.actionContextCandidates = candidates;
-  state.actionContextId = candidates.length === 1 ? candidates[0].id : "";
-  state.currentAction = null;
-  state.availableActions = Object.entries(state.data?.model?.actions || {})
-    .filter(([, action]) => action.available_on?.some((type) => type === "*" || type === contextType))
-    .map(([id, action]) => ({ id, ...action }));
-  $("#actionDialogTitle").textContent = "选择业务操作";
-  $("#actionForm").classList.add("hidden");
-  renderActionContext(candidates.length === 1 ? candidates[0] : {
-    kind: "object_type",
-    type: contextType,
-    count: candidates.length,
-  });
-  renderActionCatalog();
-  $("#actionDialog").showModal();
-  icons();
-}
-
-function renderActionCatalog() {
-  state.currentAction = null;
-  $("#actionDialogTitle").textContent = "选择业务操作";
-  $("#actionForm").classList.add("hidden");
-  const catalog = $("#actionCatalog");
-  catalog.classList.remove("hidden");
-  catalog.innerHTML = state.availableActions.length
-    ? state.availableActions.map((action) => `<button class="action-card" type="button" data-action-id="${escapeAttr(action.id)}">
-        <span class="action-card-icon"><i data-lucide="${actionIcon(action.icon)}"></i></span>
-        <span><strong>${escapeHtml(action.name)}</strong><small>${escapeHtml(action.description)}</small></span>
-        <i data-lucide="chevron-right"></i>
-      </button>`).join("")
-    : '<div class="action-empty"><i data-lucide="circle-slash"></i><span>当前上下文没有可用操作</span></div>';
-  icons();
-}
-
-function handleActionCatalogClick(event) {
-  const button = event.target.closest("[data-action-id]");
-  if (!button) return;
-  const action = state.availableActions.find((item) => item.id === button.dataset.actionId);
-  if (action) openActionForm(action);
-}
-
-function openActionForm(action, initialInputs = {}) {
-  state.currentAction = action;
-  $("#actionDialogTitle").textContent = action.name;
-  $("#actionCatalog").classList.add("hidden");
-  $("#actionForm").classList.remove("hidden");
-  $("#actionFormError").classList.add("hidden");
-  $("#actionFormBody").innerHTML = actionContextField() + Object.entries(action.inputs || {})
-    .map(([inputId, definition]) => actionInputField(
-      inputId,
-      definition,
-      Object.prototype.hasOwnProperty.call(initialInputs, inputId) ? initialInputs[inputId] : undefined,
-    ))
-    .join("");
-  icons();
-}
-
-function actionContextField() {
-  if (!state.actionContextType || state.actionContextId) return "";
-  const choices = state.actionContextCandidates.map((item) => `<label class="object-choice"><input type="radio" name="action_context_id" value="${escapeAttr(item.id)}" required><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(typeNames()[item.type]?.name || item.type)} · ${escapeHtml(item.id)}</small></span><i data-lucide="check"></i></label>`).join("");
-  return `<div class="field action-input full" data-action-context><label>操作对象 <em>*</em></label><div class="object-choice-list">${choices || '<span class="muted-text">当前类型还没有可操作的对象</span>'}</div></div>`;
-}
-
-function actionInputField(inputId, definition, initialValue = undefined) {
-  const property = definition.property ? propertyDefinitions()[definition.property] : null;
-  const valueType = property?.type || definition.type || (definition.object_types ? "object" : "string");
-  const value = initialValue === undefined ? definition.default : initialValue;
-  const label = definition.name || property?.name || inputId;
-  const required = definition.required === true;
-  const requiredLabel = required ? " <em>*</em>" : "";
-  const requiredAttr = required ? "required" : "";
-  const hint = property?.description ? `<small>${escapeHtml(property.description)}</small>` : "";
-  const attrs = `class="field action-input ${valueType === "money" || valueType === "json" || valueType === "object" ? "full" : ""}" data-action-input="${escapeAttr(inputId)}" data-value-type="${escapeAttr(valueType)}"`;
-  if (valueType === "object") {
-    const options = (state.data?.objects || []).filter((item) => definition.object_types.includes(item.type));
-    const choices = options.map((item, index) => `<label class="object-choice"><input type="radio" name="action_${escapeAttr(inputId)}" value="${escapeAttr(item.id)}" ${required && index === 0 ? "required" : ""} ${value === item.id ? "checked" : ""}><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(typeNames()[item.type]?.name || item.type)} · ${escapeHtml(item.id)}</small></span><i data-lucide="check"></i></label>`).join("");
-    return `<div ${attrs}><label>${escapeHtml(label)}${requiredLabel}</label><div class="object-choice-list">${choices || '<span class="muted-text">没有符合类型的对象</span>'}</div></div>`;
-  }
-  if (valueType === "money") {
-    const amount = value?.amount ?? "";
-    const currency = value?.currency || "CNY";
-    return `<div ${attrs}><label>${escapeHtml(label)}${requiredLabel}</label><div class="money-property-grid"><input data-action-value type="number" step="any" value="${escapeAttr(amount)}" placeholder="0" ${requiredAttr}><input data-action-currency type="text" value="${escapeAttr(currency)}" maxlength="3" pattern="[A-Z]{3}" aria-label="币种"></div>${hint}</div>`;
-  }
-  if (valueType === "boolean") {
-    return `<div ${attrs}><label class="boolean-action-input"><input data-action-value type="checkbox" ${value === true ? "checked" : ""}><span>${escapeHtml(label)}${requiredLabel}</span></label>${hint}</div>`;
-  }
-  const defaultValue = value ?? "";
-  const inputType = { number: "number", date: "date", datetime: "datetime-local", period: "month" }[valueType] || "text";
-  const control = valueType === "json"
-    ? `<textarea data-action-value placeholder='["customer"]' ${requiredAttr}>${defaultValue === "" ? "" : escapeHtml(JSON.stringify(defaultValue, null, 2))}</textarea>`
-    : `<input data-action-value type="${inputType}" value="${escapeAttr(defaultValue)}" ${valueType === "number" ? 'step="any"' : ""} ${requiredAttr}>`;
-  return `<div ${attrs}><label>${escapeHtml(label)}${requiredLabel}</label>${control}${hint}</div>`;
-}
-
-async function submitAction(event) {
-  event.preventDefault();
-  const form = event.currentTarget;
-  if (!form.reportValidity() || !state.currentAction) return;
-  try {
-    const selectedContext = $('input[name="action_context_id"]:checked', form);
-    const contextId = selectedContext?.value || state.actionContextId;
-    if (state.actionContextType && !contextId) throw new Error("请选择要执行操作的对象");
-    const inputs = buildActionInputs(state.currentAction, form);
-    const preview = await api("/api/actions/preview", {
-      method: "POST",
-      body: JSON.stringify({
-        action_id: state.currentAction.id,
-        inputs,
-        context_id: contextId,
-      }),
-    });
-    state.previewMode = "action";
-    state.preview = preview;
-    state.pendingOperations = preview.operations || [];
-    $("#changeCount").textContent = state.pendingOperations.length;
-    closeActionDialog();
-    renderChangePreview();
-    $("#changeDialog").showModal();
-  } catch (error) {
-    $("#actionFormError").textContent = error.message;
-    $("#actionFormError").classList.remove("hidden");
-  }
-}
-
-function buildActionInputs(action, form) {
-  const result = {};
-  Object.entries(action.inputs || {}).forEach(([inputId]) => {
-    const row = $(`[data-action-input="${CSS.escape(inputId)}"]`, form);
-    const valueType = row.dataset.valueType;
-    if (valueType === "object") {
-      const selected = $('input[type="radio"]:checked', row);
-      if (selected) result[inputId] = selected.value;
-      return;
-    }
-    const input = $("[data-action-value]", row);
-    if (valueType === "boolean") {
-      result[inputId] = input.checked;
-      return;
-    }
-    if (!input || input.value === "") return;
-    if (valueType === "money") {
-      result[inputId] = {
-        amount: Number(input.value),
-        currency: $("[data-action-currency]", row).value.trim().toUpperCase(),
-      };
-    } else if (valueType === "number") {
-      result[inputId] = Number(input.value);
-    } else if (valueType === "json") {
-      try { result[inputId] = JSON.parse(input.value); }
-      catch { throw new Error(`${inputId} 必须是有效的 JSON`); }
-    } else {
-      result[inputId] = input.value;
-    }
-  });
-  return result;
-}
-
-function renderActionContext(context) {
-  const contextElement = $("#actionContext");
-  contextElement.classList.toggle("hidden", !context);
-  contextElement.innerHTML = context
-    ? context.kind === "object_type"
-      ? `<i data-lucide="list-filter"></i><span>${escapeHtml(typeNames()[context.type]?.name || context.type)} · ${context.count} 个可选对象</span>`
-      : `<i data-lucide="focus"></i><span>${escapeHtml(context.name)} · ${escapeHtml(typeNames()[context.type]?.name || context.type)}</span>`
-    : "";
-}
-
-function openPresentedActionForm(payload) {
-  if (payload?.kind !== "action_form" || !payload.action?.id) return;
-  state.actionContextType = "";
-  state.actionContextCandidates = [];
-  state.actionContextId = payload.context_id || "";
-  state.availableActions = [payload.action];
-  renderActionContext(payload.context || null);
-  const dialog = $("#actionDialog");
-  if (!dialog.open) dialog.showModal();
-  openActionForm(payload.action, payload.initial_inputs || {});
-}
-
-function closeActionDialog() {
-  if ($("#actionDialog").open) $("#actionDialog").close();
-}
-
-function openEditor(kind) {
-  const definitions = kind === "object" ? objectTypeOptions() : relationTypeOptions();
-  $("#formEyebrow").textContent = kind === "model" ? "业务词汇" : "业务数据";
-  $("#formTitle").textContent = { object: "新增业务对象", relation: "新增业务关系", model: "扩展用户模型" }[kind];
-  $("#editorForm").dataset.kind = kind;
-  $("#formError").classList.add("hidden");
-  if (kind === "object") $("#formBody").innerHTML = objectForm(definitions);
-  if (kind === "relation") $("#formBody").innerHTML = relationForm(definitions);
-  if (kind === "model") $("#formBody").innerHTML = modelForm();
-  $("#editorDialog").showModal();
-  if (kind === "relation") updateRelationEndpoints();
-  if (["object", "relation"].includes(kind)) updateInstancePropertyFields();
-  if (kind === "model") addModelPropertyRow();
-  icons();
-}
-
-function objectForm(definitions) {
-  return `
-    ${field("对象 ID", "id", "text", "例如 passage:customer-a-2026-08", true)}
-    ${selectField("对象类型", "type", Object.entries(definitions).map(([id, def]) => [id, def.name]), true)}
-    ${field("名称", "name", "text", "面向业务人员的清晰名称", true, "full")}
-    ${instancePropertiesContainer()}
-    ${field("Tags", "tags", "text", "多个标签用逗号分隔", false, "full")}
-    ${field("其他 Properties", "extra_properties", "textarea", '{\n  "key": "value"\n}', false, "full", "填写 JSON 对象；会与上方属性合并。")}`;
-}
-
-function relationForm(definitions) {
-  const objectOptions = state.data.objects.map((item) => [item.id, `${item.name} · ${typeNames()[item.type]?.name || item.type}`]);
-  return `
-    ${field("关系 ID", "id", "text", "例如 rel:passage-split-002", true)}
-    ${selectField("关系类型", "type", Object.entries(definitions).map(([id, def]) => [id, def.name]), true)}
-    ${selectField("From", "from", objectOptions, true, "full")}
-    ${selectField("To", "to", objectOptions, true, "full")}
-    ${instancePropertiesContainer()}
-    ${field("Tags", "tags", "text", "多个标签用逗号分隔", false, "full")}
-    ${field("其他 Properties", "extra_properties", "textarea", '{\n  "key": "value"\n}', false, "full", "填写 JSON 对象；会与上方属性合并。")}`;
-}
-
-function modelForm() {
-  const objectOptions = Object.entries(typeNames()).map(([id, def]) => [id, def.name]);
-  return `
-    ${selectField("类型种类", "model_kind", [["object", "对象类型"], ["relation", "关系类型"]], true)}
-    ${field("Type ID", "type_id", "text", "例如 channel_commission", true)}
-    ${field("显示名称", "display_name", "text", "渠道返佣", true, "full")}
-    ${field("业务定义", "description", "textarea", "说明它在联网收费中的含义", true, "full")}
-    <div class="field model-relation-fields hidden">${selectInner("From 类型", "from_type", [["", "不限"], ...objectOptions], false)}</div>
-    <div class="field model-relation-fields hidden">${selectInner("To 类型", "to_type", [["", "不限"], ...objectOptions], false)}</div>
-    <div class="field full property-editor">
-      <div class="property-editor-header"><div><label>Properties</label><small>选择已有属性，或定义带值类型的新属性。</small></div><button type="button" class="secondary-button compact" data-add-property><i data-lucide="plus"></i>添加属性</button></div>
-      <datalist id="propertyDefinitionOptions">${Object.entries(propertyDefinitions()).map(([id, definition]) => `<option value="${escapeAttr(id)}">${escapeHtml(definition.name)} · ${escapeHtml(definition.type)}</option>`).join("")}</datalist>
-      <div class="model-property-rows" id="modelPropertyRows"></div>
-    </div>`;
-}
-
-function instancePropertiesContainer() {
-  return `<div class="field full instance-properties"><div class="property-editor-header"><div><label>Properties</label><small>字段由所选业务类型生成。</small></div></div><div class="instance-property-grid" id="instancePropertyFields"></div></div>`;
-}
-
-function modelPropertyRow() {
-  return `<div class="model-property-row">
-    <div class="mini-field property-key"><label>Property ID</label><input name="property_id" list="propertyDefinitionOptions" placeholder="例如 amount" required></div>
-    <div class="mini-field"><label>显示名称</label><input name="property_name" placeholder="金额" required></div>
-    <div class="mini-field"><label>值类型</label><select name="property_type">${propertyTypeOptions.map(([value, text]) => `<option value="${value}">${text} · ${value}</option>`).join("")}</select></div>
-    <label class="required-toggle"><input name="property_required" type="checkbox"><span>必填</span></label>
-    <button type="button" class="icon-button remove-property" data-remove-property title="删除属性" aria-label="删除属性"><i data-lucide="trash-2"></i></button>
-    <div class="mini-field property-description"><label>属性说明</label><input name="property_description" placeholder="说明属性在业务语境中的含义"></div>
-    <small class="property-definition-status">新属性将写入用户模型</small>
-  </div>`;
-}
-
-function field(label, name, type, placeholder, required = false, className = "", hint = "") { return `<div class="field ${className}">${fieldInner(label, name, type, placeholder, required, hint)}</div>`; }
-function fieldInner(label, name, type, placeholder, required = false, hint = "") { const input = type === "textarea" ? `<textarea name="${name}" placeholder="${escapeAttr(placeholder)}" ${required ? "required" : ""}></textarea>` : `<input name="${name}" type="${type}" placeholder="${escapeAttr(placeholder)}" ${required ? "required" : ""}>`; return `<label>${escapeHtml(label)}${required ? " <em>*</em>" : ""}</label>${input}${hint ? `<small>${escapeHtml(hint)}</small>` : ""}`; }
-function selectField(label, name, options, required = false, className = "") { return `<div class="field ${className}">${selectInner(label, name, options, required)}</div>`; }
-function selectInner(label, name, options, required = false) { return `<label>${escapeHtml(label)}${required ? " <em>*</em>" : ""}</label><select name="${name}" ${required ? "required" : ""}>${options.map(([value, text]) => `<option value="${escapeAttr(value)}">${escapeHtml(text)} · ${escapeHtml(value)}</option>`).join("")}</select>`; }
-
-function handleEditorClick(event) {
-  if (event.target.closest("[data-add-property]")) addModelPropertyRow();
-  const remove = event.target.closest("[data-remove-property]");
-  if (remove) remove.closest(".model-property-row")?.remove();
-}
-
-function handleEditorInput(event) {
-  if (event.target.name === "property_id") syncModelPropertyRow(event.target.closest(".model-property-row"));
-}
-
-function addModelPropertyRow() {
-  const rows = $("#modelPropertyRows");
-  if (!rows) return;
-  rows.insertAdjacentHTML("beforeend", modelPropertyRow());
-  icons();
-}
-
-function syncModelPropertyRow(row) {
-  if (!row) return;
-  const id = $('[name="property_id"]', row).value.trim();
-  const definition = propertyDefinitions()[id];
-  const name = $('[name="property_name"]', row);
-  const type = $('[name="property_type"]', row);
-  const description = $('[name="property_description"]', row);
-  const status = $(".property-definition-status", row);
-  const wasExisting = row.dataset.existing === "true";
-  if (definition) {
-    name.value = definition.name || "";
-    type.value = definition.type || "string";
-    description.value = definition.description || "";
-    name.readOnly = true;
-    type.disabled = true;
-    description.readOnly = true;
-    status.textContent = `已有属性定义 · ${definition.type}`;
-    row.dataset.existing = "true";
-    return;
-  }
-  if (wasExisting) {
-    name.value = "";
-    type.value = "string";
-    description.value = "";
-  }
-  name.readOnly = false;
-  type.disabled = false;
-  description.readOnly = false;
-  status.textContent = "新属性将写入用户模型";
-  row.dataset.existing = "false";
-}
-
-function updateInstancePropertyFields() {
-  const form = $("#editorForm");
-  const kind = form.dataset.kind;
-  const container = $("#instancePropertyFields");
-  if (!container || !["object", "relation"].includes(kind)) return;
-  const typeId = $('select[name="type"]', form)?.value;
-  const definition = (kind === "object" ? typeNames() : relationNames())[typeId] || {};
-  const usages = Object.entries(definition.properties || {});
-  container.innerHTML = usages.length
-    ? usages.map(([propertyId, usage]) => instancePropertyField(propertyId, usage)).join("")
-    : '<span class="muted-text empty-properties">该类型尚未声明属性，可在“其他 Properties”中补充。</span>';
-}
-
-function instancePropertyField(propertyId, usage) {
-  const definition = propertyDefinitions()[propertyId] || { name: propertyId, type: "json" };
-  const required = usage?.required === true;
-  const requiredAttr = required ? "required" : "";
-  const label = `${escapeHtml(definition.name || propertyId)}${required ? " <em>*</em>" : ""}`;
-  const hint = definition.description ? `<small>${escapeHtml(definition.description)}</small>` : "";
-  const attrs = `data-property-id="${escapeAttr(propertyId)}" data-property-type="${escapeAttr(definition.type)}"`;
-  if (definition.type === "money") {
-    return `<div class="field full instance-property" ${attrs}><label>${label}</label><div class="money-property-grid"><input data-property-value type="number" step="any" placeholder="0" ${requiredAttr}><input data-property-currency type="text" value="CNY" maxlength="3" pattern="[A-Z]{3}" aria-label="币种"></div>${hint}</div>`;
-  }
-  if (definition.type === "boolean") {
-    return `<div class="field instance-property" ${attrs}><label>${label}</label><select data-property-value ${requiredAttr}><option value="">未设置</option><option value="true">是</option><option value="false">否</option></select>${hint}</div>`;
-  }
-  const inputType = { number: "number", date: "date", datetime: "datetime-local", period: "month" }[definition.type] || "text";
-  const control = definition.type === "json"
-    ? `<textarea data-property-value placeholder='{\n  "key": "value"\n}' ${requiredAttr}></textarea>`
-    : `<input data-property-value type="${inputType}" ${definition.type === "number" ? 'step="any"' : ""} ${requiredAttr}>`;
-  return `<div class="field instance-property ${definition.type === "json" ? "full" : ""}" ${attrs}><label>${label}</label>${control}${hint}</div>`;
-}
-
-$("#editorDialog").addEventListener("change", (event) => {
-  if (event.target.name === "model_kind") {
-    const relation = event.target.value === "relation";
-    $$(".model-object-fields").forEach((field) => field.classList.toggle("hidden", relation));
-    $$(".model-relation-fields").forEach((field) => field.classList.toggle("hidden", !relation));
-  }
-  if (event.target.name === "type" && $("#editorForm").dataset.kind === "relation") {
-    updateRelationEndpoints();
-  }
-  if (event.target.name === "type" && ["object", "relation"].includes($("#editorForm").dataset.kind)) {
-    updateInstancePropertyFields();
-  }
-});
-
-async function submitEditor(event) {
-  event.preventDefault();
-  if (event.submitter?.value === "cancel") {
-    $("#editorDialog").close();
-    return;
-  }
-  const form = event.currentTarget;
-  if (!form.reportValidity()) return;
-  try {
-    const values = Object.fromEntries(new FormData(form).entries());
-    const operations = buildOperations(form.dataset.kind, values, form);
-    $("#editorDialog").close();
-    await previewOperations(operations);
-  } catch (error) {
-    $("#formError").textContent = error.message;
-    $("#formError").classList.remove("hidden");
-  }
-}
-
-function objectTypeOptions() {
-  const result = { ...typeNames() };
-  state.data.objects.forEach((item) => { result[item.type] ||= { name: item.type }; });
-  return result;
-}
-
-function relationTypeOptions() {
-  const result = { ...relationNames() };
-  state.data.relations.forEach((item) => { result[item.type] ||= { name: item.type }; });
-  return result;
-}
-
-function updateRelationEndpoints() {
-  const typeId = $('#editorForm select[name="type"]')?.value;
-  const definition = relationNames()[typeId] || {};
-  const update = (name, allowed) => {
-    const select = $(`#editorForm select[name="${name}"]`);
-    if (!select) return;
-    const current = select.value;
-    const objects = state.data.objects.filter((item) => !allowed?.length || allowed.includes(item.type));
-    select.innerHTML = objects.map((item) => `<option value="${escapeAttr(item.id)}">${escapeHtml(item.name)} · ${escapeHtml(typeNames()[item.type]?.name || item.type)}</option>`).join("");
-    if (objects.some((item) => item.id === current)) select.value = current;
-  };
-  update("from", definition.from_types);
-  update("to", definition.to_types);
-}
-
-function buildOperations(kind, values, form) {
-  if (kind === "model") return buildModelOperations(values, form);
-  return [buildOperation(kind, values, form)];
-}
-
-function buildOperation(kind, values, form) {
-  if (kind === "object") {
-    const properties = buildInstanceProperties(form, values.extra_properties);
-    const record = { id: values.id, type: values.type, name: values.name };
-    if (Object.keys(properties).length) record.properties = properties;
-    const tags = splitList(values.tags); if (tags.length) record.tags = tags;
-    return { action: "create_object", record };
-  }
-  if (kind === "relation") {
-    const properties = buildInstanceProperties(form, values.extra_properties);
-    const record = { id: values.id, type: values.type, from: values.from, to: values.to };
-    if (Object.keys(properties).length) record.properties = properties;
-    const tags = splitList(values.tags); if (tags.length) record.tags = tags;
-    return { action: "create_relation", record };
-  }
-  throw new Error(`不支持的编辑类型：${kind}`);
-}
-
-function buildInstanceProperties(form, extraProperties) {
-  const properties = parseExtraProperties(extraProperties);
-  $$(".instance-property", form).forEach((row) => {
-    const propertyId = row.dataset.propertyId;
-    const valueType = row.dataset.propertyType;
-    const input = $("[data-property-value]", row);
-    if (!input || input.value === "") return;
-    if (valueType === "money") {
-      const currency = $("[data-property-currency]", row)?.value.trim().toUpperCase() || "CNY";
-      properties[propertyId] = { amount: Number(input.value), currency };
-    } else if (valueType === "number") {
-      properties[propertyId] = Number(input.value);
-    } else if (valueType === "boolean") {
-      properties[propertyId] = input.value === "true";
-    } else if (valueType === "json") {
-      try { properties[propertyId] = JSON.parse(input.value); }
-      catch { throw new Error(`${propertyId} 必须是有效的 JSON`); }
-    } else {
-      properties[propertyId] = input.value;
-    }
-  });
-  return properties;
-}
-
-function buildModelOperations(values, form) {
-  const relation = values.model_kind === "relation";
-  const definition = { name: values.display_name, description: values.description, properties: {} };
-  const operations = [];
-  const seen = new Set();
-  $$(".model-property-row", form).forEach((row) => {
-    const propertyId = $('[name="property_id"]', row).value.trim();
-    if (!propertyId) return;
-    if (seen.has(propertyId)) throw new Error(`Property ${propertyId} 重复`);
-    seen.add(propertyId);
-    definition.properties[propertyId] = { required: $('[name="property_required"]', row).checked };
-    if (propertyDefinitions()[propertyId]) return;
-    const propertyDefinition = {
-      name: $('[name="property_name"]', row).value.trim(),
-      type: $('[name="property_type"]', row).value,
-    };
-    const description = $('[name="property_description"]', row).value.trim();
-    if (description) propertyDefinition.description = description;
-    operations.push({ action: "upsert_property_definition", property_id: propertyId, definition: propertyDefinition });
-  });
-  if (relation) {
-    const from = splitList(values.from_type); const to = splitList(values.to_type);
-    if (from.length) definition.from_types = from;
-    if (to.length) definition.to_types = to;
-  }
-  operations.push({ action: relation ? "upsert_relation_type" : "upsert_object_type", type_id: values.type_id, definition });
-  return operations;
-}
-
-async function previewOperations(operations) {
-  state.previewMode = "changeset";
-  state.pendingOperations = operations;
-  $("#changeCount").textContent = operations.length;
-  try {
-    state.preview = await api("/api/changes/preview", { method: "POST", body: JSON.stringify({ operations }) });
-    renderChangePreview();
-    $("#changeDialog").showModal();
-  } catch (error) { toast(error.message, true); }
-}
-
-function renderChangePreview() {
-  const preview = state.preview;
-  const isAction = state.previewMode === "action";
-  $("#changeEyebrow").textContent = isAction ? "业务操作" : "ChangeSet";
-  $("#changeTitle").textContent = isAction ? `确认${preview.action?.name || "业务操作"}` : "确认本次变更";
-  const outcome = $("#businessOutcome");
-  outcome.classList.toggle("hidden", !isAction);
-  outcome.innerHTML = isAction
-    ? `<i data-lucide="${actionIcon(preview.action?.icon)}"></i><div><strong>${escapeHtml(preview.summary || preview.action?.name)}</strong>${preview.context ? `<span>当前对象：${escapeHtml(preview.context.name)} · ${escapeHtml(preview.context.id)}</span>` : ""}</div>`
-    : "";
-  $("#changeSummary").innerHTML = (preview.changes || []).map((text) => `<div><i data-lucide="plus-circle"></i><span>${escapeHtml(text)}</span></div>`).join("");
-  $("#changeCode").textContent = JSON.stringify(state.pendingOperations, null, 2);
-  const box = $("#validationBox");
-  box.classList.toggle("invalid", !preview.valid);
-  box.innerHTML = preview.valid ? `<i data-lucide="shield-check"></i><span>结构与业务约束校验通过，将更新 ${preview.changed_files.join("、")}。</span>` : `<i data-lucide="circle-x"></i><span>${escapeHtml(preview.errors.join("\n"))}</span>`;
-  $("#actionReasonField").classList.toggle("hidden", !isAction);
-  if (!isAction) $("#actionReason").value = "";
-  $("#applyChangesBtn").disabled = !preview.valid;
-  $("#applyChangesBtn").innerHTML = isAction ? '<i data-lucide="check"></i>确认执行' : '<i data-lucide="check"></i>应用变更';
-  icons();
-}
-
-function returnFromChanges() {
-  $("#changeDialog").close();
-  if (state.previewMode === "action" && state.currentAction) {
-    $("#actionDialog").showModal();
-    openActionForm(state.currentAction);
-  }
-}
-
-async function applyPendingChanges() {
-  if (!state.pendingOperations.length || !state.preview?.valid) return;
-  const button = $("#applyChangesBtn"); button.disabled = true;
-  try {
-    const isAction = state.previewMode === "action";
-    const result = isAction
-      ? await api("/api/actions/apply", {
-          method: "POST",
-          body: JSON.stringify({
-            preview_token: state.preview.preview_token,
-            reason: $("#actionReason").value.trim(),
-            actor: "web_user",
-          }),
-        })
-      : await api("/api/changes/apply", { method: "POST", body: JSON.stringify({ operations: state.pendingOperations }) });
-    $("#changeDialog").close();
-    state.pendingOperations = []; state.preview = null; state.previewMode = "changeset"; $("#changeCount").textContent = "0";
-    toast(result.summary || result.changes.join("；"));
-    await loadData();
-  } catch (error) { toast(error.message, true); button.disabled = false; }
-}
-
-async function loadAgentStatus() {
-  try {
-    const status = await api("/api/agent/status");
-    const element = $("#agentStatus");
-    element.className = `agent-status ${status.available ? "ready" : "error"}`;
-    element.title = status.message || "";
-    element.innerHTML = `<span class="status-dot"></span><span>${escapeHtml(status.available ? "oag-agent 已连接" : "模型服务未配置")}</span>`;
-    $("#agentRuntimeLabel").textContent = status.available ? "oag-agent · 在线" : "oag-agent · 未配置";
-  } catch (error) { $("#agentStatus").classList.add("error"); $("#agentStatus").lastElementChild.textContent = error.message; }
-}
-
-async function sendAgentMessage(event) {
-  event.preventDefault();
-  if (state.agentBusy || state.agentPending) return;
-  const input = $("#agentInput"); const message = input.value.trim();
-  if (!message) return;
-  input.value = ""; autoGrowTextarea({ target: input });
-  appendMessage("user", message);
-  await streamAgent("/api/agent/chat", { message: contextualMessage(message), session_id: state.sessionId });
-}
-
-function contextualMessage(message) {
-  if (!state.selected) return message;
-  return `${message}\n\n[当前 UI 上下文：${state.selected.kind} ${state.selected.id}]`;
-}
-
-async function streamAgent(path, payload) {
-  state.agentBusy = true; $(".send-button").disabled = true;
-  let assistantBody = null; let assistantMarkdown = ""; let toolGroup = null; let waitingForConfirmation = false;
-  try {
-    const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    if (!response.ok) throw new Error(await response.text());
-    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-      const lines = buffer.split("\n"); buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const event = JSON.parse(line);
-        if (event.type === "assistant_delta") {
-          if (!assistantBody) assistantBody = appendMessage("assistant", "");
-          assistantMarkdown += event.content || "";
-          renderAssistantMarkdown(assistantBody, assistantMarkdown);
-          scrollAgent(true);
-        } else if (event.type === "assistant_end") {
-          if (event.kind === "progress") {
-            if (assistantMarkdown) {
-              toolGroup = appendToolEvent({ type: "progress", content: assistantMarkdown }, toolGroup);
-            }
-            assistantBody?.closest(".message")?.remove();
-          }
-          assistantBody = null;
-          assistantMarkdown = "";
-        } else if (event.type === "text") {
-          appendMessage("assistant", event.content || "");
-        } else if (event.type === "confirmation_required" || event.type === "question") {
-          waitingForConfirmation = true;
-          setAgentPending(true);
-          appendConfirmation(event);
-        } else if (event.type === "tool_call" || event.type === "tool_result") {
-          toolGroup = appendToolEvent(event, toolGroup);
-        } else if (event.type === "interaction" && event.name === "request_action_input") {
-          if (assistantBody) {
-            assistantBody.closest(".message")?.remove();
-            assistantBody = null;
-            assistantMarkdown = "";
-          }
-          openPresentedActionForm(event.payload);
-        } else if (event.type === "error") {
-          appendMessage("assistant", event.message || "Agent 暂不可用。");
-        }
-      }
-      if (done) break;
-    }
-    if (path.includes("confirm") && payload.approved) await loadData();
-  } catch (error) { appendMessage("assistant", `无法完成请求：${error.message}`); }
-  finally {
-    if (!waitingForConfirmation) collapseToolEvents();
-    state.agentBusy = false;
-    $(".send-button").disabled = state.agentPending;
-  }
-}
-
-function appendMessage(role, text) {
-  const wrapper = document.createElement("div"); wrapper.className = `message ${role}`;
-  wrapper.innerHTML = role === "assistant" ? '<div class="message-avatar"><i data-lucide="sparkles"></i></div><div class="message-body markdown-content"></div>' : `<div class="message-body"><p>${escapeHtml(text)}</p></div>`;
-  const body = wrapper.querySelector(".message-body");
-  if (role === "assistant") renderAssistantMarkdown(body, text);
-  $("#agentMessages").append(wrapper); icons(); scrollAgent(true); return body;
-}
-
-function renderAssistantMarkdown(container, markdown) {
-  if (!window.marked || !window.DOMPurify) {
-    container.innerHTML = `<p>${escapeHtml(markdown).replace(/\n/g, "<br>")}</p>`;
-    return;
-  }
-  const parsed = window.marked.parse(markdown, { gfm: true, breaks: true });
-  container.innerHTML = window.DOMPurify.sanitize(parsed, { USE_PROFILES: { html: true } });
-  container.querySelectorAll("a[href]").forEach((link) => {
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-  });
-}
-
-function appendToolEvent(event, group = null) {
-  if (!group || !group.isConnected) {
-    group = document.createElement("details");
-    group.className = "tool-events";
-    group.open = true;
-    group.innerHTML = '<summary><i data-lucide="wrench"></i><span class="tool-event-summary-label">正在调用工具</span><b class="tool-event-count">0</b></summary><div class="tool-event-list"></div>';
-    $("#agentMessages").append(group);
-  }
-  const name = event.name || event.tool_name || "工具";
-  const element = document.createElement("div");
-  element.className = `tool-event ${event.type === "tool_result" ? "result" : event.type === "progress" ? "progress" : "call"}`;
-  element.innerHTML = event.type === "progress"
-    ? `<i data-lucide="loader-circle"></i><span>${escapeHtml(event.content || "正在处理")}</span>`
-    : event.type === "tool_call"
-      ? `<i data-lucide="play"></i><span>调用 ${escapeHtml(name)}</span>`
-      : `<i data-lucide="${event.blocked ? "circle-x" : "check"}"></i><span>${escapeHtml(name)} 已返回${event.blocked ? "（已阻止）" : ""}</span>`;
-  $(".tool-event-list", group).append(element);
-  const count = $$(".tool-event", group).length;
-  $(".tool-event-count", group).textContent = count;
-  $(".tool-event-summary-label", group).textContent = "正在调用工具";
-  icons();
-  scrollAgent(true);
-  return group;
-}
-
-function collapseToolEvents() {
-  $$(".tool-events[open]", $("#agentMessages")).forEach((group) => {
-    group.open = false;
-    $(".tool-event-summary-label", group).textContent = "工具调用已完成";
-  });
-}
-
-function appendConfirmation(event) {
-  const wrapper = document.createElement("div"); wrapper.className = "message assistant";
-  if (event.type === "question") {
-    const options = Array.isArray(event.options) ? event.options.filter((option) => option?.label) : [];
-    const inputType = event.multi_select ? "checkbox" : "radio";
-    const choices = options.map((option) => `<label class="agent-question-option"><input type="${inputType}" name="agent_question_${state.sessionId}" value="${escapeAttr(option.label)}"><span><strong>${escapeHtml(option.label)}</strong>${option.description ? `<small>${escapeHtml(option.description)}</small>` : ""}</span><i data-lucide="check"></i></label>`).join("");
-    const answerControl = choices || '<input class="agent-question-text" data-agent-answer-text type="text" aria-label="回答" autocomplete="off">';
-    wrapper.innerHTML = `<div class="message-avatar"><i data-lucide="message-circle-question"></i></div><div class="message-body question-card" data-agent-question data-multi-select="${event.multi_select === true}"><strong>${escapeHtml(event.question || "请选择")}</strong><div class="agent-question-options">${answerControl}</div><div class="question-error hidden">请选择后再继续</div><div class="confirmation-actions"><button class="confirm-deny" data-agent-confirm="false">取消</button><button class="confirm-approve" data-agent-answer>继续</button></div></div>`;
-  } else {
-    const question = `Agent 请求执行 ${event.tool_name}`;
-    wrapper.innerHTML = `<div class="message-avatar"><i data-lucide="shield-check"></i></div><div class="message-body confirmation-card"><strong>${escapeHtml(question)}</strong><pre>${escapeHtml(JSON.stringify(event.args || {}, null, 2))}</pre><div class="confirmation-actions"><button class="confirm-deny" data-agent-confirm="false">取消</button><button class="confirm-approve" data-agent-confirm="true">确认执行</button></div></div>`;
-  }
-  $("#agentMessages").append(wrapper); icons(); scrollAgent(true);
-}
-
-async function handleAgentClick(event) {
-  const suggestion = event.target.closest(".suggestions button");
-  if (suggestion) { $("#agentInput").value = suggestion.textContent; $("#agentForm").requestSubmit(); return; }
-  const answerButton = event.target.closest("[data-agent-answer]");
-  if (answerButton) {
-    const card = answerButton.closest("[data-agent-question]");
-    const textAnswer = $("[data-agent-answer-text]", card)?.value.trim();
-    const selected = $$('input[type="radio"]:checked, input[type="checkbox"]:checked', card).map((input) => input.value);
-    const answer = textAnswer || (card.dataset.multiSelect === "true" ? JSON.stringify(selected) : selected[0]);
-    const error = $(".question-error", card);
-    if (!answer || answer === "[]") { error.classList.remove("hidden"); return; }
-    error.classList.add("hidden");
-    $(".confirmation-actions", card).remove();
-    $(".agent-question-options", card).insertAdjacentHTML("afterend", `<div class="question-answer"><i data-lucide="check"></i><span>${escapeHtml(card.dataset.multiSelect === "true" ? selected.join("、") : answer)}</span></div>`);
-    setAgentPending(false);
-    icons();
-    await streamAgent("/api/agent/confirm", { session_id: state.sessionId, approved: true, answer });
-    return;
-  }
-  const confirm = event.target.closest("[data-agent-confirm]");
-  if (confirm) { confirm.closest(".confirmation-actions").remove(); setAgentPending(false); await streamAgent("/api/agent/confirm", { session_id: state.sessionId, approved: confirm.dataset.agentConfirm === "true" }); }
-}
-
-function setAgentPending(pending) {
-  state.agentPending = pending;
-  $("#agentInput").disabled = pending;
-  $(".send-button").disabled = pending || state.agentBusy;
-}
-
-function askAboutSelection() { if (!state.selected) return; closeDetail(); openAgent(); $("#agentInput").value = `解释这个${state.selected.kind === "relation" ? "关系" : "对象"}及其业务含义：${state.selected.id}`; $("#agentInput").focus(); }
-function clearAgentContext() { state.selected = null; updateAgentContext(); }
-function updateAgentContext() { $("#agentContext span").textContent = state.selected ? `当前上下文：${state.selected.id}` : "当前上下文：全部业务对象"; }
-function autoGrowTextarea(event) { const input = event.target; input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 160)}px`; }
-function isAgentNearBottom() { const messages = $("#agentMessages"); return messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80; }
-function scrollAgent(force = false) { const messages = $("#agentMessages"); if (force || isAgentNearBottom()) messages.scrollTop = messages.scrollHeight; }
-
-function endpoint(item) { return `<div class="endpoint"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.id)} · ${escapeHtml(typeNames()[item.type]?.name || item.type)}</span></div>`; }
-function actionIcon(icon) { return String(icon || "play").replaceAll("_", "-"); }
-function typeIcon(type) {
-  if (["toll_road", "section", "toll_interval", "toll_station", "toll_plaza", "toll_lane", "toll_gantry"].includes(type)) return "route";
-  if (["vehicle", "passage"].includes(type)) return "car-front";
-  if (type === "obu") return "radio-tower";
-  if (type === "etc_card") return "credit-card";
-  if (type === "cpc_card") return "contact";
-  if (type === "paper_ticket") return "ticket";
-  if (["toll_transaction", "vehicle_id_record", "consumption_detail"].includes(type)) return "scan-line";
-  if (["split_record", "clearing_result", "invoice_basis_data"].includes(type)) return "waypoints";
-  if (["user_account", "card_account", "account_transaction", "bill", "bill_settlement"].includes(type)) return "wallet-cards";
-  if (["stock_account", "stock_movement"].includes(type)) return "warehouse";
-  if (type === "party") return "building-2";
-  if (["fee_module", "fee_rule", "control_record", "operating_parameter"].includes(type)) return "shield-check";
-  return "box";
-}
-function statusPill(status) { return status ? `<span class="status-pill ${escapeAttr(status)}">${escapeHtml(status)}</span>` : '<span class="muted-text">-</span>'; }
-function money(amount, currency = "CNY") { if (amount === null || amount === undefined || Number.isNaN(Number(amount))) return "-"; return new Intl.NumberFormat("zh-CN", { style: "currency", currency, maximumFractionDigits: 0 }).format(Number(amount)); }
-function formatValue(value) { return typeof value === "object" ? JSON.stringify(value, null, 2) : String(value ?? "-"); }
+function domainField() { return selectField("所属业务域", "domain_id", (state.data.domains || []).map((domain) => [domain.id, shortDomainName(domain)]), true, "full"); }
+function openEditor(kind) { $("#editorForm").dataset.kind = kind; state.changeDomainIds = []; $("#formEyebrow").textContent = kind === "model" ? "业务词汇" : "业务数据"; $("#formTitle").textContent = ({ object: "新增业务对象", relation: "新增业务关系", model: "扩展用户模型" })[kind]; $("#formError").classList.add("hidden"); $("#formBody").innerHTML = kind === "object" ? objectForm() : kind === "relation" ? relationForm() : modelForm(); $("#editorDialog").showModal(); if (kind === "object" || kind === "relation") { updateInstancePropertyFields(); suggestEditorDomain(); } if (kind === "relation") updateRelationEndpoints(); if (kind === "model") addModelPropertyRow(); icons(); }
+function objectForm() { return `${domainField()}${field("对象 ID", "id", "text", "例如 passage:new-001", true)}${selectField("对象类型", "type", Object.entries(modelObjectTypes()).map(([id, def]) => [id, def.name]), true)}${field("名称", "name", "text", "业务人员可读的名称", true, "full")}${instancePropertiesContainer()}${field("Tags", "tags", "text", "多个标签用逗号分隔", false, "full")}${field("其他 Properties", "extra_properties", "textarea", '{\n  "key": "value"\n}', false, "full", "填写 JSON 对象；与上方属性合并。")}`; }
+function relationForm() { const options = state.data.objects.map((item) => [item.id, `${item.name || item.id} · ${typeName(item.type)}`]); return `${domainField()}${field("关系 ID", "id", "text", "例如 rel:custom-001", true)}${selectField("关系类型", "type", Object.entries(modelRelationTypes()).map(([id, def]) => [id, def.name]), true)}${selectField("From", "from", options, true, "full")}${selectField("To", "to", options, true, "full")}${instancePropertiesContainer()}${field("其他 Properties", "extra_properties", "textarea", '{\n  "role": "example"\n}', false, "full")}`; }
+function modelForm() { return `${domainField()}${selectField("类型种类", "model_kind", [["object", "对象类型"], ["relation", "关系类型"]], true)}${field("Type ID", "type_id", "text", "例如 toll_operator", true)}${field("显示名称", "display_name", "text", "业务名称", true, "full")}${field("业务定义", "description", "textarea", "说明它在业务中的含义", true, "full")}${field("From 类型", "from_type", "text", "可填多个类型，用逗号分隔", false, "model-relation-fields hidden")}${field("To 类型", "to_type", "text", "可填多个类型，用逗号分隔", false, "model-relation-fields hidden")}<div class="field full property-editor"><div class="property-editor-header"><div><label>Properties</label><small>选择已有属性，或定义带值类型的新属性。</small></div><button type="button" class="secondary-button compact" data-add-property><i data-lucide="plus"></i>添加属性</button></div><datalist id="propertyDefinitionOptions">${Object.entries(propertyDefinitions()).map(([id, def]) => `<option value="${escapeAttr(id)}">${escapeHtml(def.name || id)} · ${escapeHtml(def.type)}</option>`).join("")}</datalist><div class="model-property-rows" id="modelPropertyRows"></div></div>`; }
+function instancePropertiesContainer() { return `<div class="field full instance-properties"><div class="property-editor-header"><div><label>Properties</label><small>字段由所选业务类型生成。</small></div></div><div class="instance-property-grid" id="instancePropertyFields"></div></div>`; }
+function modelPropertyRow() { return `<div class="model-property-row"><div class="mini-field property-key"><label>Property ID</label><input name="property_id" list="propertyDefinitionOptions" placeholder="例如 amount" required></div><div class="mini-field"><label>显示名称</label><input name="property_name" placeholder="金额" required></div><div class="mini-field"><label>值类型</label><select name="property_type">${propertyTypeOptions.map(([value, text]) => `<option value="${value}">${text}</option>`).join("")}</select></div><label class="required-toggle"><input name="property_required" type="checkbox"><span>必填</span></label><button type="button" class="icon-button remove-property" data-remove-property title="删除属性" aria-label="删除属性"><i data-lucide="trash-2"></i></button><div class="mini-field property-description"><label>属性说明</label><input name="property_description" placeholder="说明业务含义"></div><small class="property-definition-status">新属性将写入用户模型</small></div>`; }
+function handleEditorClick(event) { if (event.target.closest("[data-add-property]")) { $("#modelPropertyRows").insertAdjacentHTML("beforeend", modelPropertyRow()); icons(); } const remove = event.target.closest("[data-remove-property]"); if (remove) remove.closest(".model-property-row")?.remove(); }
+function handleEditorInput(event) { if (event.target.name === "property_id") syncModelPropertyRow(event.target.closest(".model-property-row")); }
+function handleEditorChange(event) { const form = $("#editorForm"); if (event.target.name === "model_kind") $$(".model-relation-fields", form).forEach((field) => field.classList.toggle("hidden", event.target.value !== "relation")); if (event.target.name === "type" && ["object", "relation"].includes(form.dataset.kind)) { updateInstancePropertyFields(); suggestEditorDomain(); if (form.dataset.kind === "relation") updateRelationEndpoints(); } }
+function suggestEditorDomain() { const form = $("#editorForm"); const typeId = $("select[name=type]", form)?.value; const section = form.dataset.kind === "object" ? "objects" : "relations"; const owners = state.data.domain_ownership?.[section]?.[typeId] || []; const select = $("select[name=domain_id]", form); if (select && owners.length === 1) select.value = owners[0]; }
+function syncModelPropertyRow(row) { if (!row) return; const id = $("[name=property_id]", row).value.trim(); const definition = propertyDefinitions()[id]; const name = $("[name=property_name]", row); const type = $("[name=property_type]", row); const description = $("[name=property_description]", row); const status = $(".property-definition-status", row); if (definition) { name.value = definition.name || ""; type.value = definition.type || "string"; description.value = definition.description || ""; name.readOnly = true; type.disabled = true; description.readOnly = true; status.textContent = `已有属性定义 · ${definition.type}`; row.dataset.existing = "true"; } else { name.readOnly = false; type.disabled = false; description.readOnly = false; status.textContent = "新属性将写入用户模型"; row.dataset.existing = "false"; } }
+function updateInstancePropertyFields() { const form = $("#editorForm"); const container = $("#instancePropertyFields"); if (!container) return; const typeId = $("select[name=type]", form)?.value; const definition = (form.dataset.kind === "object" ? modelObjectTypes() : modelRelationTypes())[typeId] || {}; container.innerHTML = Object.entries(definition.properties || {}).map(([id, usage]) => instancePropertyField(id, usage)).join("") || '<span class="empty-properties">该类型尚未声明属性，可在其他 Properties 中补充。</span>'; }
+function instancePropertyField(id, usage) { const def = propertyDefinitions()[id] || { name: id, type: "json" }; const required = usage?.required === true; const attrs = `data-property-id="${escapeAttr(id)}" data-property-type="${escapeAttr(def.type)}"`; if (def.type === "money") return `<div class="field full instance-property" ${attrs}><label>${escapeHtml(def.name || id)}${required ? " <em>*</em>" : ""}</label><div class="money-property-grid"><input data-property-value type="number" step="any" ${required ? "required" : ""}><input data-property-currency type="text" maxlength="3" value="CNY" aria-label="币种"></div></div>`; if (def.type === "boolean") return `<div class="field instance-property" ${attrs}><label>${escapeHtml(def.name || id)}${required ? " <em>*</em>" : ""}</label><select data-property-value><option value="">未设置</option><option value="true">是</option><option value="false">否</option></select></div>`; const inputType = { number: "number", date: "date", datetime: "datetime-local", period: "month" }[def.type] || "text"; const control = def.type === "json" ? `<textarea data-property-value ${required ? "required" : ""}></textarea>` : `<input data-property-value type="${inputType}" ${def.type === "number" ? 'step="any"' : ""} ${required ? "required" : ""}>`; return `<div class="field instance-property ${def.type === "json" ? "full" : ""}" ${attrs}><label>${escapeHtml(def.name || id)}${required ? " <em>*</em>" : ""}</label>${control}</div>`; }
+function updateRelationEndpoints() { const form = $("#editorForm"); const definition = modelRelationTypes()[$("select[name=type]", form)?.value] || {}; ["from", "to"].forEach((side) => { const select = $(`select[name=${side}]`, form); if (!select) return; const current = select.value; const allowed = definition[`${side}_types`]; const items = state.data.objects.filter((item) => !allowed?.length || allowed.includes(item.type)); select.innerHTML = items.map((item) => `<option value="${escapeAttr(item.id)}">${escapeHtml(item.name || item.id)} · ${escapeHtml(typeName(item.type))}</option>`).join(""); if (items.some((item) => item.id === current)) select.value = current; }); }
+function field(label, name, type, placeholder, required = false, className = "", hint = "") { const isTextarea = type === "textarea"; return `<div class="field ${className}"><label>${escapeHtml(label)}${required ? " <em>*</em>" : ""}</label>${isTextarea ? `<textarea name="${name}" placeholder="${escapeAttr(placeholder)}" ${required ? "required" : ""}></textarea>` : `<input name="${name}" type="${type}" placeholder="${escapeAttr(placeholder)}" ${required ? "required" : ""}>`}${hint ? `<small>${escapeHtml(hint)}</small>` : ""}</div>`; }
+function selectField(label, name, options, required = false, className = "") { return `<div class="field ${className}"><label>${escapeHtml(label)}${required ? " <em>*</em>" : ""}</label><select name="${name}" ${required ? "required" : ""}>${options.map(([value, text]) => `<option value="${escapeAttr(value)}">${escapeHtml(text || value)}</option>`).join("")}</select></div>`; }
+function buildInstanceProperties(form, extra) { const properties = parseExtraProperties(extra); $$(".instance-property", form).forEach((row) => { const input = $("[data-property-value]", row); if (!input || input.value === "") return; const type = row.dataset.propertyType; if (type === "money") properties[row.dataset.propertyId] = { amount: Number(input.value), currency: $("[data-property-currency]", row)?.value.trim().toUpperCase() || "CNY" }; else if (type === "number") properties[row.dataset.propertyId] = Number(input.value); else if (type === "boolean") properties[row.dataset.propertyId] = input.value === "true"; else if (type === "json") { try { properties[row.dataset.propertyId] = JSON.parse(input.value); } catch { throw new Error(`${row.dataset.propertyId} 必须是有效 JSON`); } } else properties[row.dataset.propertyId] = input.value; }); return properties; }
+function buildOperations(kind, values, form) { if (kind === "model") { const relation = values.model_kind === "relation"; const definition = { name: values.display_name, description: values.description, properties: {} }; const operations = []; const seen = new Set(); $$(".model-property-row", form).forEach((row) => { const id = $("[name=property_id]", row).value.trim(); if (!id) return; if (seen.has(id)) throw new Error(`Property ${id} 重复`); seen.add(id); definition.properties[id] = { required: $("[name=property_required]", row).checked }; if (!propertyDefinitions()[id]) operations.push({ action: "upsert_property_definition", property_id: id, definition: { name: $("[name=property_name]", row).value.trim(), type: $("[name=property_type]", row).value, description: $("[name=property_description]", row).value.trim() } }); }); if (relation) { definition.from_types = splitList(values.from_type); definition.to_types = splitList(values.to_type); } operations.push({ action: relation ? "upsert_relation_type" : "upsert_object_type", type_id: values.type_id, definition }); return operations; } const properties = buildInstanceProperties(form, values.extra_properties); const record = kind === "object" ? { id: values.id, type: values.type, name: values.name } : { id: values.id, type: values.type, from: values.from, to: values.to }; if (Object.keys(properties).length) record.properties = properties; const tags = splitList(values.tags); if (tags.length) record.tags = tags; return [{ action: kind === "object" ? "create_object" : "create_relation", record }]; }
+async function submitEditor(event) { event.preventDefault(); if (event.submitter?.value === "cancel") return $("#editorDialog").close(); const form = event.currentTarget; if (!form.reportValidity()) return; try { const values = Object.fromEntries(new FormData(form).entries()); state.changeDomainIds = [values.domain_id]; await previewOperations(buildOperations(form.dataset.kind, values, form)); $("#editorDialog").close(); } catch (error) { $("#formError").textContent = error.message; $("#formError").classList.remove("hidden"); } }
 function parseExtraProperties(value) { if (!value?.trim()) return {}; const parsed = JSON.parse(value); if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("其他 Properties 必须是 JSON 对象"); return parsed; }
 function splitList(value) { return String(value || "").split(",").map((item) => item.trim()).filter(Boolean); }
+
+async function previewOperations(operations) { state.previewMode = "changeset"; state.pendingOperations = operations; $("#changeCount").textContent = operations.length; try { state.preview = await api("/api/changes/preview", { method: "POST", body: JSON.stringify({ operations, domain_ids: state.changeDomainIds }) }); state.changeDomainIds = [...(state.preview.domain_ids || state.changeDomainIds)]; renderChangePreview(); $("#changeDialog").showModal(); } catch (error) { toast(error.message, true); } }
+function renderChangePreview() { const preview = state.preview || {}; const isAction = state.previewMode === "action"; $("#changeEyebrow").textContent = isAction ? "业务操作" : "ChangeSet"; $("#changeTitle").textContent = isAction ? `确认${preview.action?.name || "业务操作"}` : "确认本次变更"; const outcome = $("#businessOutcome"); outcome.classList.toggle("hidden", !isAction); outcome.innerHTML = isAction ? `<i data-lucide="${actionIcon(preview.action?.icon)}"></i><div><strong>${escapeHtml(preview.summary || preview.action?.name || "业务操作")}</strong>${preview.context ? `<span>当前对象：${escapeHtml(preview.context.name || preview.context.id)}</span>` : ""}</div>` : ""; $("#changeSummary").innerHTML = (preview.changes || []).map((item) => `<div><i data-lucide="plus-circle"></i><span>${escapeHtml(item)}</span></div>`).join(""); $("#changeCode").textContent = JSON.stringify(state.pendingOperations, null, 2); const box = $("#validationBox"); box.classList.toggle("invalid", !preview.valid); box.innerHTML = preview.valid ? `<i data-lucide="shield-check"></i><span>结构与业务约束校验通过，将更新 ${(preview.changed_files || []).join("、") || "业务图"}。</span>` : `<i data-lucide="circle-x"></i><span>${escapeHtml((preview.errors || ["校验未通过"]).join("\n"))}</span>`; $("#actionReasonField").classList.toggle("hidden", !isAction); $("#applyChangesBtn").disabled = !preview.valid; $("#applyChangesBtn").innerHTML = isAction ? '<i data-lucide="check"></i>确认执行' : '<i data-lucide="check"></i>应用变更'; icons(); }
+function returnFromChanges() { $("#changeDialog").close(); if (state.previewMode === "action" && state.currentAction) { $("#actionDialog").showModal(); openActionForm(state.currentAction); } }
+async function applyPendingChanges() { if (!state.pendingOperations.length || !state.preview?.valid) return; const button = $("#applyChangesBtn"); button.disabled = true; try { const isAction = state.previewMode === "action"; const result = isAction ? await api("/api/actions/apply", { method: "POST", body: JSON.stringify({ preview_token: state.preview.preview_token, reason: $("#actionReason").value.trim(), actor: "web_user", domain_ids: state.actionDomainIds }) }) : await api("/api/changes/apply", { method: "POST", body: JSON.stringify({ operations: state.pendingOperations, domain_ids: state.changeDomainIds }) }); $("#changeDialog").close(); state.pendingOperations = []; state.preview = null; state.previewMode = "changeset"; state.actionDomainIds = []; state.changeDomainIds = []; $("#changeCount").textContent = "0"; toast(result.summary || (result.changes || []).join("；") || "变更已应用"); await loadData(); } catch (error) { toast(error.message, true); button.disabled = false; } }
+
+async function loadAgentStatus() { try { const status = await api(`/api/agent/status?session_id=${encodeURIComponent(state.sessionId)}`); applyAgentDomainContext(status.domain_context || {}); const element = $("#agentStatus"); element.className = `agent-status ${status.available ? "ready" : "error"}`; element.innerHTML = `<span class="status-dot"></span><span>${escapeHtml(status.available ? "oag-agent 已连接" : "模型服务未配置")}</span>`; $("#agentRuntimeLabel").textContent = status.available ? "oag-agent · 在线" : "oag-agent · 未配置"; } catch (error) { $("#agentStatus").classList.add("error"); $("#agentStatus").lastElementChild.textContent = error.message; } }
+async function sendAgentMessage(event) { event.preventDefault(); if (state.agentBusy || state.agentPending) return; const input = $("#agentInput"); const message = input.value.trim(); if (!message) return; input.value = ""; autoGrowTextarea({ target: input }); appendMessage("user", message); await streamAgent("/api/agent/chat", { message: contextualMessage(message), session_id: state.sessionId }); }
+function contextualMessage(message) { return state.selected ? `${message}\n\n[当前 UI 上下文：${state.selected.kind} ${state.selected.id}]` : message; }
+async function streamAgent(path, payload) { state.agentBusy = true; $(".send-button").disabled = true; renderAgentDomains(); let assistantBody = null; let markdown = ""; let toolGroup = null; let waiting = false; try { const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); if (!response.ok) throw new Error(await response.text()); const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ""; while (true) { const { value, done } = await reader.read(); buffer += decoder.decode(value || new Uint8Array(), { stream: !done }); const lines = buffer.split("\n"); buffer = lines.pop(); for (const line of lines) { if (!line.trim()) continue; const event = JSON.parse(line); if (event.type === "domain_context") applyAgentDomainContext(event); else if (event.type === "assistant_delta") { assistantBody ||= appendMessage("assistant", ""); markdown += event.content || ""; renderAssistantMarkdown(assistantBody, markdown); scrollAgent(); } else if (event.type === "assistant_end") { if (event.kind === "progress") { if (markdown) toolGroup = appendToolEvent({ type: "progress", content: markdown }, toolGroup); assistantBody?.closest(".message")?.remove(); } assistantBody = null; markdown = ""; } else if (event.type === "text") appendMessage("assistant", event.content || ""); else if (event.type === "confirmation_required" || event.type === "question") { waiting = true; setAgentPending(true); appendConfirmation(event); } else if (event.type === "tool_call" || event.type === "tool_result") toolGroup = appendToolEvent(event, toolGroup); else if (event.type === "interaction" && event.name === "request_action_input") { assistantBody?.closest(".message")?.remove(); assistantBody = null; markdown = ""; openPresentedActionForm(event.payload, event.domain_ids || state.agentDomainIds); } else if (event.type === "error") appendMessage("assistant", event.message || "Agent 暂不可用。"); } if (done) break; } } catch (error) { appendMessage("assistant", `无法完成请求：${error.message}`); } finally { if (!waiting) collapseToolEvents(); state.agentBusy = false; $(".send-button").disabled = state.agentPending; renderAgentDomains(); } }
+function appendMessage(role, text) { const wrapper = document.createElement("div"); wrapper.className = `message ${role}`; wrapper.innerHTML = role === "assistant" ? '<div class="message-avatar"><i data-lucide="sparkles"></i></div><div class="message-body markdown-content"></div>' : `<div class="message-body"><p>${escapeHtml(text)}</p></div>`; const body = $(".message-body", wrapper); if (role === "assistant") renderAssistantMarkdown(body, text); $("#agentMessages").append(wrapper); icons(); scrollAgent(role === "user"); return body; }
+function renderAssistantMarkdown(container, markdown) { if (!window.marked || !window.DOMPurify) { container.innerHTML = `<p>${escapeHtml(markdown).replace(/\n/g, "<br>")}</p>`; return; } const parsed = window.marked.parse(markdown, { gfm: true, breaks: true }); container.innerHTML = window.DOMPurify.sanitize(parsed, { USE_PROFILES: { html: true } }); container.querySelectorAll("a[href]").forEach((link) => { link.target = "_blank"; link.rel = "noopener noreferrer"; }); }
+function appendToolEvent(event, group = null) { if (!group || !group.isConnected) { group = document.createElement("details"); group.className = "tool-events"; group.open = true; group.innerHTML = '<summary><i data-lucide="wrench"></i><span class="tool-event-summary-label">正在调用工具</span><b class="tool-event-count">0</b></summary><div class="tool-event-list"></div>'; $("#agentMessages").append(group); } const name = event.name || event.tool_name || "工具"; const row = document.createElement("div"); row.className = `tool-event ${event.type === "tool_result" ? "result" : event.type === "progress" ? "progress" : "call"}`; row.innerHTML = event.type === "progress" ? `<i data-lucide="loader-circle"></i><span>${escapeHtml(event.content || "正在处理")}</span>` : event.type === "tool_call" ? `<i data-lucide="play"></i><span>调用 ${escapeHtml(name)}</span>` : `<i data-lucide="${event.blocked ? "circle-x" : "check"}"></i><span>${escapeHtml(name)} 已返回${event.blocked ? "（已阻止）" : ""}</span>`; $(".tool-event-list", group).append(row); $(".tool-event-count", group).textContent = $$(".tool-event", group).length; icons(); scrollAgent(); return group; }
+function collapseToolEvents() { $$(".tool-events[open]", $("#agentMessages")).forEach((group) => { group.open = false; $(".tool-event-summary-label", group).textContent = "工具调用已完成"; }); }
+function appendConfirmation(event) { const wrapper = document.createElement("div"); wrapper.className = "message assistant"; if (event.type === "question") { const options = (event.options || []).filter((option) => option?.label); const controls = options.map((option) => `<label class="agent-question-option"><input type="radio" name="agent-question-${state.sessionId}" value="${escapeAttr(option.label)}"><span><strong>${escapeHtml(option.label)}</strong><small>${escapeHtml(option.description || "")}</small></span><i data-lucide="check"></i></label>`).join("") || '<input class="agent-question-text" data-agent-answer-text type="text" aria-label="回答">'; wrapper.innerHTML = `<div class="message-avatar"><i data-lucide="message-circle-question"></i></div><div class="message-body question-card" data-agent-question><strong>${escapeHtml(event.question || "请选择")}</strong><div class="agent-question-options">${controls}</div><div class="question-error hidden">请选择后再继续</div><div class="confirmation-actions"><button data-agent-confirm="false">取消</button><button class="confirm-approve" data-agent-answer>继续</button></div></div>`; } else { wrapper.innerHTML = `<div class="message-avatar"><i data-lucide="shield-check"></i></div><div class="message-body confirmation-card"><strong>Agent 请求执行 ${escapeHtml(event.tool_name || "工具")}</strong><pre>${escapeHtml(JSON.stringify(event.args || {}, null, 2))}</pre><div class="confirmation-actions"><button data-agent-confirm="false">取消</button><button class="confirm-approve" data-agent-confirm="true">确认执行</button></div></div>`; } $("#agentMessages").append(wrapper); icons(); scrollAgent(); }
+async function handleAgentClick(event) { const suggestion = event.target.closest(".suggestions button"); if (suggestion) return askAgent(suggestion.textContent); const answer = event.target.closest("[data-agent-answer]"); if (answer) { const card = answer.closest("[data-agent-question]"); const text = $("[data-agent-answer-text]", card)?.value.trim(); const selected = $("input:checked", card)?.value; const value = text || selected; if (!value) return $(".question-error", card).classList.remove("hidden"); $(".confirmation-actions", card).remove(); setAgentPending(false); await streamAgent("/api/agent/confirm", { session_id: state.sessionId, approved: true, answer: value }); } const confirm = event.target.closest("[data-agent-confirm]"); if (confirm) { confirm.closest(".confirmation-actions")?.remove(); setAgentPending(false); await streamAgent("/api/agent/confirm", { session_id: state.sessionId, approved: confirm.dataset.agentConfirm === "true" }); } }
+function setAgentPending(value) { state.agentPending = value; $("#agentInput").disabled = value; $(".send-button").disabled = value || state.agentBusy; renderAgentDomains(); }
+function handleAgentKeydown(event) { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); $("#agentForm").requestSubmit(); } }
+function autoGrowTextarea(event) { const input = event.target; input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 160)}px`; }
+function isAgentNearBottom() { const box = $("#agentMessages"); return box.scrollHeight - box.scrollTop - box.clientHeight < 80; }
+function handleAgentScroll() { if (!state.agentScrollProgrammatic) state.agentPinned = isAgentNearBottom(); }
+function scrollAgent(force = false) { const box = $("#agentMessages"); if (!force && !state.agentPinned) return; state.agentScrollProgrammatic = true; state.agentPinned = true; box.scrollTop = box.scrollHeight; requestAnimationFrame(() => { state.agentScrollProgrammatic = false; }); }
+
+function typeIcon(type) { if (["toll_road", "section", "toll_interval", "toll_station", "toll_gantry", "toll_lane"].includes(type)) return "route"; if (["vehicle", "passage"].includes(type)) return "car-front"; if (["toll_medium", "account"].includes(type)) return "credit-card"; if (type === "passage_event") return "scan-line"; if (["charge", "payment", "settlement"].includes(type)) return "wallet-cards"; if (type === "split_result") return "split"; if (type === "party") return "building-2"; if (type === "rate_rule") return "calculator"; if (["equipment", "control_record", "rate_version"].includes(type)) return "settings-2"; return "box"; }
+function actionIcon(icon) { return String(icon || "play").replaceAll("_", "-"); }
+function statusPill(status) { return status ? `<span class="status-pill ${escapeAttr(status)}">${escapeHtml(status)}</span>` : '<span class="subtle">-</span>'; }
+function formatValue(value) { return typeof value === "object" ? JSON.stringify(value, null, 2) : String(value ?? "-"); }
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]); }
 function escapeAttr(value) { return escapeHtml(value); }
-function toast(message, error = false) { const item = document.createElement("div"); item.className = `toast ${error ? "error" : ""}`; item.textContent = message; $("#toastRegion").append(item); setTimeout(() => item.remove(), 3200); }
+function toast(message, error = false) { const item = document.createElement("div"); item.className = `toast ${error ? "error" : ""}`; item.textContent = message; $("#toastRegion").append(item); setTimeout(() => item.remove(), 3400); }

@@ -1,0 +1,162 @@
+schema: uom.domain.v1
+name: Highway 清分结算业务域
+version: 1.0.0
+description: >-
+  面向通行费拆分、业主分配和资金结算的业务域。计费和支付作为来源事实，拆分结果与结算结果形成可追溯的资金链。
+imports:
+  - path: ../../contracts/highway_core.yaml
+    properties: [category, code, reference_no, status, details, mode, occurred_at, result, paid_amount, payment_type, amount, period, version, role, relation_status, source_system, source_type, source_id]
+    objects: [party, passage, charge, payment, toll_interval]
+    relations: [associates, references, derives]
+repositories:
+  graph:
+    type: sqlite_graph
+    mode: writable
+    config:
+      database: ../../data/graph.db
+default_repository: graph
+properties:
+  code: {name: 编码, type: string, description: 业务主体、路段或收费单元编码。}
+  category: {name: 类别, type: string, description: 主体类别或业务分类。}
+  status: {name: 状态, type: string, description: 当前业务状态。}
+  details: {name: 补充信息, type: json, description: 来源系统补充信息。}
+  reference_no: {name: 流水号, type: string, description: 拆分或结算流水号。}
+  amount: {name: 金额, type: money, description: 计费、拆分或结算金额。}
+  due_amount: {name: 应结金额, type: money, description: 根据拆分结果应结算的金额。}
+  allocated_amount: {name: 已划拨金额, type: money, description: 实际划拨或入账金额。}
+  local_amount: {name: 本地金额, type: money, description: 归属本地经营方的金额。}
+  external_amount: {name: 外部金额, type: money, description: 归属其他经营方的金额。}
+  split_basis: {name: 拆分依据, type: string, description: 收费单元、路段或业主分配口径。}
+  version: {name: 业务版本, type: string, description: 费率或清分规则版本。}
+  period: {name: 业务期间, type: period, description: 结算所属月份。}
+  occurred_at: {name: 发生时间, type: datetime, description: 业务事实发生的 ISO 日期时间。}
+  result: {name: 处理结果, type: string, description: 清分或结算结果。}
+  role: {name: 关系角色, type: string, description: 关系端点在清分链中的角色。}
+  relation_status: {name: 关系状态, type: string, description: 关系当前状态。}
+  mode: {name: 通行方式, type: string, description: ETC 或 MTC。}
+  paid_amount: {name: 实收金额, type: money, description: 计费结果的实收金额。}
+  payment_type: {name: 支付类型, type: string, description: 支付方式。}
+  source_system: {name: 来源系统, type: string, description: 产生该事实的外部系统。}
+  source_type: {name: 来源记录类型, type: string, description: 外部系统中的记录类别。}
+  source_id: {name: 来源记录标识, type: string, description: 外部系统中的稳定记录标识。}
+objects:
+  split_result:
+    name: 拆分结果
+    description: 将一笔计费结果按收费单元、路段或业主分配形成的结果。
+    properties:
+      reference_no: required
+      amount: required
+      occurred_at: required
+      version: optional
+      split_basis: optional
+      local_amount: optional
+      external_amount: optional
+      status: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
+  settlement:
+    name: 清分结算
+    description: 根据拆分结果确认应结金额和实际划拨结果的资金事实。
+    properties:
+      reference_no: required
+      amount: required
+      period: optional
+      occurred_at: required
+      result: required
+      due_amount: optional
+      allocated_amount: optional
+      status: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
+relations:
+  derives:
+    name: 派生
+    description: 通行产生计费，计费产生拆分，拆分产生结算。
+    from: [passage, charge, split_result]
+    to: [charge, split_result, settlement]
+    properties:
+      role: optional
+      amount: optional
+      relation_status: optional
+    acyclic: true
+  references:
+    name: 引用
+    description: 业务结果引用收费单元、业主、计费或支付来源。
+    from: [charge, payment, split_result, settlement]
+    to: []
+    properties:
+      role: required
+      amount: optional
+      relation_status: optional
+  associates:
+    name: 关联
+    description: 结算事实与结算主体之间的业务联系。
+    from: [settlement]
+    to: [party]
+    properties:
+      role: required
+      relation_status: optional
+functions:
+  get_settlement_trace:
+    name: 获取清分结算追溯链
+    description: 返回指定清分结算向上关联的拆分结果、计费、支付和通行，并列出拆分对应的收费单元与业主。
+    usage_prompt: 用户询问某笔结算如何产生、对应哪笔通行或由哪些收费单元和业主分配时使用。
+    inputs:
+      settlement_id: {type: string, description: 清分结算对象 ID}
+    reads:
+      objects: [settlement, split_result, charge, payment, passage, toll_interval, party]
+      relations: [derives, references]
+actions:
+  record_split:
+    name: 登记拆分结果
+    description: 为当前计费结果登记一条收费单元或业主拆分明细。
+    icon: split
+    "on": [charge]
+    inputs:
+      reference_no: {name: 拆分流水号, property: reference_no, required: true}
+      amount: {name: 拆分金额, property: amount, required: true}
+      occurred_at: {name: 拆分时间, property: occurred_at, required: true}
+      version: {name: 拆分版本, property: version, required: false}
+      split_basis: {name: 拆分依据, property: split_basis, required: false}
+      local_amount: {name: 本地金额, property: local_amount, required: false}
+      external_amount: {name: 外部金额, property: external_amount, required: false}
+      interval_id: {name: 收费单元, objects: [toll_interval], required: false}
+      owner_id: {name: 业主, objects: [party], required: false}
+      status: {name: 状态, property: status, required: false, default: completed}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 拆分详情, property: details, required: false}
+    changes:
+      create: {objects: [split_result], relations: [derives, references]}
+    confirmation: 登记拆分结果。
+  record_settlement:
+    name: 登记清分结算
+    description: 根据当前拆分结果登记应结和已划拨的结算事实。
+    icon: badge_check
+    "on": [split_result]
+    inputs:
+      reference_no: {name: 结算流水号, property: reference_no, required: true}
+      amount: {name: 结算金额, property: amount, required: true}
+      period: {name: 结算期间, property: period, required: false}
+      occurred_at: {name: 结算时间, property: occurred_at, required: true}
+      result: {name: 结算结果, property: result, required: true}
+      due_amount: {name: 应结金额, property: due_amount, required: false}
+      allocated_amount: {name: 已划拨金额, property: allocated_amount, required: false}
+      recipient_id: {name: 接收主体, objects: [party], required: false}
+      status: {name: 状态, property: status, required: false, default: completed}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 结算详情, property: details, required: false}
+    changes:
+      create: {objects: [settlement], relations: [derives, references]}
+    confirmation: 登记清分结算。
+agent:
+  instructions:
+  - 一笔计费可以对应多条 split_result，不能把拆分结果汇总成一个业主。
+  - 清分金额沿 passage -> charge -> split_result -> settlement 追溯。

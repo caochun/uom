@@ -1,0 +1,154 @@
+schema: uom.domain.v1
+name: Highway 费率与业务控制域
+version: 1.0.0
+description: >-
+  面向计费依据发布以及车辆、通行介质和设备的运营控制。本域维护费率规则、费率版本和控制记录；
+  计费结果只引用这些对象，不在本域形成通行收费事实。
+imports:
+  - path: ../../contracts/highway_core.yaml
+    properties: [category, code, reference_no, status, details, plate_no, vehicle_type, medium_kind, valid_from, valid_to, mode, occurred_at, result, paid_amount, fee_type, version, reason, role, relation_status, source_system, source_type, source_id, unit_rate, discount_rule]
+    objects: [vehicle, toll_medium, passage, charge, equipment, rate_version, rate_rule]
+    relations: [references, derives]
+repositories:
+  graph:
+    type: sqlite_graph
+    mode: writable
+    config: {database: ../../data/graph.db}
+default_repository: graph
+properties:
+  category: {name: 类别, type: string, description: 业务控制类别。}
+  code: {name: 编码, type: string, description: 费率规则稳定编码。}
+  reference_no: {name: 流水号, type: string, description: 通行或计费来源流水号。}
+  status: {name: 状态, type: string, description: 规则、版本或控制记录状态。}
+  details: {name: 补充信息, type: json, description: 规则内容或来源补充信息。}
+  plate_no: {name: 车牌号, type: string, description: 受控车辆的车牌标识。}
+  vehicle_type: {name: 车型, type: string, description: 费率规则适用车型。}
+  medium_kind: {name: 介质类型, type: string, description: 受控通行介质类型。}
+  mode: {name: 通行方式, type: string, description: ETC 或 MTC。}
+  occurred_at: {name: 发生时间, type: datetime, description: 计费事实发生时间。}
+  result: {name: 处理结果, type: string, description: 计费结果。}
+  paid_amount: {name: 实收金额, type: money, description: 计费结果实收金额。}
+  valid_from: {name: 生效时间, type: date, description: 规则或控制开始有效的日期。}
+  valid_to: {name: 失效时间, type: date, description: 规则或控制结束有效的日期。}
+  fee_type: {name: 计费类型, type: string, description: 按里程、车型等计费口径。}
+  version: {name: 版本, type: string, description: 费率版本号。}
+  reason: {name: 原因, type: string, description: 控制或调整原因。}
+  role: {name: 关系角色, type: string, description: 被引用对象在规则或控制中的角色。}
+  relation_status: {name: 关系状态, type: string, description: 关系当前状态。}
+  source_system: {name: 来源系统, type: string, description: 产生数据的外部系统。}
+  source_type: {name: 来源记录类型, type: string, description: 外部系统记录类别。}
+  source_id: {name: 来源记录标识, type: string, description: 外部系统稳定记录标识。}
+  unit_rate: {name: 单位费率, type: number, description: 费率规则基础单价。}
+  discount_rule: {name: 优惠规则, type: json, description: 优惠、折扣或减免条件。}
+objects:
+  rate_version:
+    name: 费率版本
+    description: 一次发布的一组版本化费率与优惠规则。
+    properties: {version: required, valid_from: required, valid_to: optional, status: optional, source_system: optional, source_type: optional, source_id: optional, details: required}
+  rate_rule:
+    name: 费率规则
+    description: 可被费率版本和计费结果引用的车型、单价和优惠规则。
+    properties: {code: required, vehicle_type: required, unit_rate: required, fee_type: required, discount_rule: optional, valid_from: required, valid_to: optional, status: optional, source_system: optional, source_type: optional, source_id: optional, details: optional}
+  control_record:
+    name: 业务控制记录
+    description: 针对车辆、通行介质或设备生效的状态、追缴、预约或白名单控制事实。
+    properties:
+      category: required
+      status: required
+      valid_from: optional
+      valid_to: optional
+      reason: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
+relations:
+  references:
+    name: 引用
+    description: 费率版本引用具体费率规则，控制记录引用被控制对象。
+    from: [rate_version, control_record, charge]
+    to: [rate_version, rate_rule, vehicle, toll_medium, equipment]
+    properties: {role: required, relation_status: optional}
+  derives:
+    name: 派生
+    description: 通行产生可引用费率依据的计费结果。
+    from: [passage]
+    to: [charge]
+    properties: {role: optional, relation_status: optional}
+    acyclic: true
+functions:
+  get_pricing_control_overview:
+    name: 获取费率与控制概览
+    description: 汇总费率版本、费率规则和业务控制记录；指定计费依据或受控对象时返回其关联关系。
+    usage_prompt: 用户询问当前费率版本、车型单价、优惠规则、追缴名单或车辆介质控制时使用。
+    inputs:
+      object_id: {type: string, description: 可选的费率、控制记录或受控对象 ID, default: ""}
+    reads: {objects: [rate_version, rate_rule, control_record, vehicle, toll_medium, equipment], relations: [references]}
+  get_passage_fare_basis:
+    name: 获取通行计费依据
+    description: 返回指定通行的计费结果所引用的费率版本与具体费率规则。
+    usage_prompt: 用户询问某次通行按什么车型、单价、费率版本或优惠规则计费时使用。
+    inputs: {passage_id: {type: string, description: 通行过程对象 ID}}
+    reads: {objects: [passage, charge, rate_version, rate_rule], relations: [derives, references]}
+actions:
+  register_rate_rule:
+    name: 登记费率规则
+    description: 登记一条车型、单价和优惠规则。
+    usage_prompt: 用户需要新增具体车型费率、计费单价或优惠口径时使用。
+    icon: calculator
+    inputs:
+      name: {name: 规则名称, type: string, required: true}
+      code: {name: 规则编码, property: code, required: true}
+      vehicle_type: {name: 适用车型, property: vehicle_type, required: true}
+      unit_rate: {name: 单位费率, property: unit_rate, required: true}
+      fee_type: {name: 计费类型, property: fee_type, required: true}
+      discount_rule: {name: 优惠规则, property: discount_rule, required: false}
+      valid_from: {name: 生效日期, property: valid_from, required: true}
+      valid_to: {name: 失效日期, property: valid_to, required: false}
+      status: {name: 状态, property: status, required: false, default: active}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 规则详情, property: details, required: false}
+    changes: {create: {objects: [rate_rule], relations: []}}
+    confirmation: 登记费率规则。
+  register_rate_version:
+    name: 发布费率版本
+    description: 发布一版用于计费的规则集合，并可引用已有费率规则。
+    icon: file_cog
+    inputs:
+      name: {name: 版本名称, type: string, required: true}
+      version: {name: 版本号, property: version, required: true}
+      valid_from: {name: 生效日期, property: valid_from, required: true}
+      valid_to: {name: 失效日期, property: valid_to, required: false}
+      status: {name: 状态, property: status, required: false, default: published}
+      rate_rule_id: {name: 费率规则, objects: [rate_rule], required: false}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 版本内容, property: details, required: true}
+    changes: {create: {objects: [rate_version], relations: [references]}}
+    confirmation: 发布费率版本。
+  add_control_record:
+    name: 登记业务控制
+    description: 为车辆、通行介质或设备登记状态、追缴、预约或白名单控制事实。
+    icon: shield_check
+    inputs:
+      name: {name: 控制记录名称, type: string, required: true}
+      category: {name: 控制类别, property: category, required: true}
+      status: {name: 状态, property: status, required: true}
+      target_id: {name: 受控对象, objects: [vehicle, toll_medium, equipment], required: true}
+      valid_from: {name: 生效日期, property: valid_from, required: false}
+      valid_to: {name: 失效日期, property: valid_to, required: false}
+      reason: {name: 原因, property: reason, required: false}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 控制详情, property: details, required: false}
+    changes: {create: {objects: [control_record], relations: [references]}}
+    confirmation: 登记业务控制记录并关联受控对象。
+agent:
+  instructions:
+  - 费率规则是具体车型、单价和优惠口径；费率版本是一次发布的规则集合，二者不能合并为同一对象。
+  - 计费结果由经营主链域维护，本域只提供被计费结果引用的依据。
+  - 业务控制记录是针对车辆、通行介质或设备的控制事实，不应改写被控制对象的身份。

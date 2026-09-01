@@ -7,11 +7,13 @@ ConditionPathExists=%h/Develop/highway-oms/.env
 Type=simple
 WorkingDirectory=%h/Develop/highway-oms
 Environment="PYTHONPATH=%h/Develop/highway-oms/oag-agent:%h/Develop/highway-oms"
+# Application root used to discover all concrete domains below highway/domains.
 Environment=UOM_DOMAIN_DIR=highway
+Environment=UOM_DOMAIN_IDS=highway.passage_charging
 Environment=PYTHONUNBUFFERED=1
 UMask=0077
-ExecStartPre=%h/.local/bin/uv run --project %h/Develop/highway-oms/oag-agent -- python -m uom.validation --root %h/Develop/highway-oms/highway
-ExecStart=%h/.local/bin/uv run --project %h/Develop/highway-oms/oag-agent --env-file %h/Develop/highway-oms/.env -- python -m highway.app.server --host 0.0.0.0 --port 5678
+ExecStartPre=%h/.local/bin/uv run --project %h/Develop/highway-oms/oag-agent --with pyyaml -- python -m uom.validation --root %h/Develop/highway-oms/highway
+ExecStart=%h/.local/bin/uv run --project %h/Develop/highway-oms/oag-agent --with pyyaml --env-file %h/Develop/highway-oms/.env -- python -m highway.app.server --host 0.0.0.0 --port 5678
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=20s

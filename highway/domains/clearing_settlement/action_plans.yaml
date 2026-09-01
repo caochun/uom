@@ -1,0 +1,77 @@
+schema: uom.action_plans.v1
+actions:
+  record_split:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: split
+          type: split_result
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            amount: $input.amount
+            occurred_at: $input.occurred_at
+            version: $input.version
+            split_basis: $input.split_basis
+            local_amount: $input.local_amount
+            external_amount: $input.external_amount
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: derives
+          from: $context
+          to: $split
+          properties:
+            role: split
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $split
+          to: $input.interval_id
+          properties:
+            role: toll_interval
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $split
+          to: $input.owner_id
+          properties:
+            role: owner
+            relation_status: confirmed
+  record_settlement:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: settlement
+          type: settlement
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            amount: $input.amount
+            period: $input.period
+            occurred_at: $input.occurred_at
+            result: $input.result
+            due_amount: $input.due_amount
+            allocated_amount: $input.allocated_amount
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: derives
+          from: $context
+          to: $settlement
+          properties:
+            role: settlement
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $settlement
+          to: $input.recipient_id
+          properties:
+            role: recipient
+            relation_status: confirmed

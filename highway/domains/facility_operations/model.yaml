@@ -1,0 +1,282 @@
+schema: uom.domain.v1
+name: Highway 收费设施运营业务域
+version: 1.0.0
+description: >-
+  面向收费公路、路段、收费单元、收费站、门架、车道和设备的设施运营业务域；路网拓扑与设施组成关系在本域维护。
+imports:
+  - path: ../../contracts/highway_core.yaml
+    properties: [category, code, status, details, longitude, latitude, coordinate_system, mileage, direction, role, relation_status]
+    objects: [party, toll_interval, equipment]
+    relations: [contains, associates, references]
+repositories:
+  graph:
+    type: sqlite_graph
+    mode: writable
+    config:
+      database: ../../data/graph.db
+default_repository: graph
+properties:
+  code: {name: 编码, type: string, description: 设施或业务主体稳定编码。}
+  category: {name: 类别, type: string, description: 车道或设备类别。}
+  status: {name: 状态, type: string, description: 当前运营状态。}
+  details: {name: 补充信息, type: json, description: 设施技术或来源信息。}
+  longitude: {name: 经度, type: number, description: GCJ-02 或声明坐标系下的经度。}
+  latitude: {name: 纬度, type: number, description: GCJ-02 或声明坐标系下的纬度。}
+  coordinate_system: {name: 坐标系, type: string, description: 经纬度坐标系。}
+  mileage: {name: 里程, type: number, description: 路段、收费单元或相邻节点的里程。}
+  direction: {name: 方向, type: string, description: 行驶或设施方向。}
+  relation_status: {name: 关系状态, type: string, description: 关系当前状态。}
+  role: {name: 关系角色, type: string, description: 主体或设施在关系中的角色。}
+objects:
+  toll_road:
+    name: 收费公路
+    description: 承载收费路段和设施层级的顶层道路资源。
+    properties:
+      code: required
+      longitude: optional
+      latitude: optional
+      coordinate_system: optional
+      status: optional
+      details: optional
+  section:
+    name: 收费路段
+    description: 收费公路下具有统一运营边界的连续路段。
+    properties:
+      code: required
+      mileage: optional
+      longitude: optional
+      latitude: optional
+      coordinate_system: optional
+      status: optional
+      details: optional
+  toll_interval:
+    name: 收费单元
+    description: 收费路段下用于分段计费、路径表达和费用拆分的最小业务单元。
+    properties:
+      code: required
+      direction: optional
+      mileage: optional
+      longitude: optional
+      latitude: optional
+      coordinate_system: optional
+      status: optional
+      details: optional
+  toll_station:
+    name: 收费站
+    description: 车辆进出收费公路的设施节点。
+    properties:
+      code: required
+      longitude: optional
+      latitude: optional
+      coordinate_system: optional
+      status: optional
+      details: optional
+  toll_gantry:
+    name: 收费门架
+    description: 沿线完成分段计费和车辆识别的设施节点。
+    properties:
+      code: required
+      direction: optional
+      mileage: optional
+      longitude: optional
+      latitude: optional
+      coordinate_system: optional
+      status: optional
+      details: optional
+  toll_lane:
+    name: 收费车道
+    description: 收费站内实际发生入口或出口作业的车道设施。
+    properties:
+      code: required
+      category: required
+      direction: optional
+      longitude: optional
+      latitude: optional
+      coordinate_system: optional
+      status: optional
+      details: optional
+  equipment:
+    name: 业务设备
+    description: 部署在收费站、车道或门架上的设备。
+    properties:
+      category: required
+      code: required
+      status: optional
+      details: optional
+relations:
+  contains:
+    name: 包含
+    description: 道路层级和设施部署组成关系。
+    from: [toll_road, section, toll_station, toll_lane, toll_gantry]
+    to: [section, toll_interval, toll_station, toll_lane, toll_gantry, equipment]
+    properties:
+      relation_status: optional
+  route_next:
+    name: 路网后继
+    description: 设施节点之间有方向的相邻拓扑关系。
+    from: [toll_station, toll_gantry, toll_interval]
+    to: [toll_station, toll_gantry, toll_interval]
+    properties:
+      direction: optional
+      mileage: optional
+      relation_status: optional
+  associates:
+    name: 关联
+    description: 运营主体与收费公路或设施之间的责任联系。
+    from: [party]
+    to: [toll_road, section, toll_station, toll_gantry, toll_lane, equipment]
+    properties:
+      role: required
+      relation_status: optional
+  references:
+    name: 引用
+    description: 收费单元引用其起点和终点收费站。
+    from: [toll_interval]
+    to: [toll_station]
+    properties:
+      role: required
+      relation_status: optional
+functions:
+  get_facility_overview:
+    name: 获取收费设施概览
+    description: 汇总收费公路、路段、收费单元、收费站、门架、车道和设备；指定设施时返回其组成和相邻路网视图。
+    usage_prompt: 用户询问设施数量、路网设施组成、某个收费站或门架的下属设备和相邻节点时使用。
+    inputs:
+      facility_id: {type: string, description: 可选的设施对象 ID；留空时返回全域设施概览, default: ""}
+    reads:
+      objects: [toll_road, section, toll_interval, toll_station, toll_gantry, toll_lane, equipment]
+      relations: [contains, route_next]
+actions:
+  register_toll_road:
+    name: 登记收费公路
+    description: 登记一条顶层收费公路。
+    icon: route
+    inputs:
+      name: {name: 公路名称, type: string, required: true}
+      code: {name: 公路编码, property: code, required: true}
+      longitude: {name: 代表点经度, property: longitude, required: false}
+      latitude: {name: 代表点纬度, property: latitude, required: false}
+      coordinate_system: {name: 坐标系, property: coordinate_system, required: false}
+      status: {name: 状态, property: status, required: false, default: operating}
+      details: {name: 公路详情, property: details, required: false}
+    changes:
+      create: {objects: [toll_road], relations: []}
+    confirmation: 登记收费公路。
+  register_section:
+    name: 登记收费路段
+    description: 在收费公路下登记一个收费路段。
+    icon: between_horizontal_start
+    "on": [toll_road]
+    inputs:
+      name: {name: 路段名称, type: string, required: true}
+      code: {name: 路段编码, property: code, required: true}
+      mileage: {name: 路段里程, property: mileage, required: false}
+      longitude: {name: 代表点经度, property: longitude, required: false}
+      latitude: {name: 代表点纬度, property: latitude, required: false}
+      coordinate_system: {name: 坐标系, property: coordinate_system, required: false}
+      status: {name: 状态, property: status, required: false, default: operating}
+      details: {name: 路段详情, property: details, required: false}
+    changes:
+      create: {objects: [section], relations: [contains]}
+    confirmation: 登记收费路段。
+  register_toll_interval:
+    name: 登记收费单元
+    description: 在收费路段下登记一个最小计费单元。
+    icon: move_horizontal
+    "on": [section]
+    inputs:
+      name: {name: 单元名称, type: string, required: true}
+      code: {name: 单元编码, property: code, required: true}
+      direction: {name: 方向, property: direction, required: false}
+      mileage: {name: 里程, property: mileage, required: false}
+      longitude: {name: 代表点经度, property: longitude, required: false}
+      latitude: {name: 代表点纬度, property: latitude, required: false}
+      coordinate_system: {name: 坐标系, property: coordinate_system, required: false}
+      status: {name: 状态, property: status, required: false, default: operating}
+      details: {name: 单元详情, property: details, required: false}
+    changes:
+      create: {objects: [toll_interval], relations: [contains]}
+    confirmation: 登记收费单元。
+  register_toll_station:
+    name: 登记收费站
+    description: 在收费路段下登记收费站。
+    icon: signpost
+    "on": [section]
+    inputs:
+      name: {name: 收费站名称, type: string, required: true}
+      code: {name: 收费站编码, property: code, required: true}
+      longitude: {name: 经度, property: longitude, required: false}
+      latitude: {name: 纬度, property: latitude, required: false}
+      coordinate_system: {name: 坐标系, property: coordinate_system, required: false}
+      status: {name: 状态, property: status, required: false, default: operating}
+      details: {name: 收费站详情, property: details, required: false}
+    changes:
+      create: {objects: [toll_station], relations: [contains]}
+    confirmation: 登记收费站。
+  register_toll_gantry:
+    name: 登记收费门架
+    description: 在收费路段下登记收费门架。
+    icon: rows_3
+    "on": [section]
+    inputs:
+      name: {name: 门架名称, type: string, required: true}
+      code: {name: 门架编码, property: code, required: true}
+      direction: {name: 方向, property: direction, required: false}
+      mileage: {name: 里程, property: mileage, required: false}
+      longitude: {name: 经度, property: longitude, required: false}
+      latitude: {name: 纬度, property: latitude, required: false}
+      coordinate_system: {name: 坐标系, property: coordinate_system, required: false}
+      status: {name: 状态, property: status, required: false, default: operating}
+      details: {name: 门架详情, property: details, required: false}
+    changes:
+      create: {objects: [toll_gantry], relations: [contains]}
+    confirmation: 登记收费门架。
+  register_toll_lane:
+    name: 登记收费车道
+    description: 在收费站下登记入口或出口车道。
+    icon: rows_3
+    "on": [toll_station]
+    inputs:
+      name: {name: 车道名称, type: string, required: true}
+      code: {name: 车道编码, property: code, required: true}
+      category: {name: 车道类型, property: category, required: true}
+      direction: {name: 方向, property: direction, required: false}
+      longitude: {name: 经度, property: longitude, required: false}
+      latitude: {name: 纬度, property: latitude, required: false}
+      coordinate_system: {name: 坐标系, property: coordinate_system, required: false}
+      status: {name: 状态, property: status, required: false, default: operating}
+      details: {name: 车道详情, property: details, required: false}
+    changes:
+      create: {objects: [toll_lane], relations: [contains]}
+    confirmation: 登记收费车道。
+  connect_route_nodes:
+    name: 连接路网节点
+    description: 在收费站、门架或收费单元之间建立有方向的相邻关系。
+    icon: route
+    "on": [toll_station, toll_gantry, toll_interval]
+    inputs:
+      next_id: {name: 后继节点, objects: [toll_station, toll_gantry, toll_interval], required: true}
+      direction: {name: 行驶方向, property: direction, required: false}
+      mileage: {name: 距离, property: mileage, required: false}
+      relation_status: {name: 状态, property: relation_status, required: false, default: active}
+    changes:
+      create: {objects: [], relations: [route_next]}
+    confirmation: 连接路网节点。
+  register_equipment:
+    name: 登记业务设备
+    description: 在收费站、车道或门架下登记业务设备。
+    icon: cpu
+    "on": [toll_station, toll_lane, toll_gantry]
+    inputs:
+      name: {name: 设备名称, type: string, required: true}
+      category: {name: 设备类别, property: category, required: true}
+      code: {name: 设备编码, property: code, required: true}
+      status: {name: 状态, property: status, required: false, default: active}
+      details: {name: 设备详情, property: details, required: false}
+    changes:
+      create: {objects: [equipment], relations: [contains]}
+    confirmation: 登记业务设备。
+agent:
+  instructions:
+  - 设施组成关系和路网拓扑属于设施运营域；路网节点本身就是收费站、门架和收费单元。
+  - 收费公路、路段和收费单元的代表点不能被解释成完整线路几何。

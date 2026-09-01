@@ -8,30 +8,45 @@ import mimetypes
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from highway.app.agent_runtime import OagAgentRuntime
-from highway.spatial import SpatialViewService
+from highway.app.services.spatial_view import SpatialViewService
+from highway.integrations.amap import AmapRoutePlanner, web_map_config
 from uom.workspace import ChangeValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 AGENT = OagAgentRuntime(ROOT)
-SPATIAL = SpatialViewService(AGENT.repository) if AGENT.repository is not None else None
+SPATIAL = (
+    SpatialViewService(AGENT.repository, AmapRoutePlanner.from_environment())
+    if AGENT.repository is not None
+    else None
+)
 
 
 class UomHandler(BaseHTTPRequestHandler):
     server_version = "HighwayOMS/0.1"
 
     def do_GET(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path
+        request = urlparse(self.path)
+        path = request.path
+        query = parse_qs(request.query)
+        session_id = query.get("session_id", ["default"])[0]
         if path == "/api/bootstrap":
             self._json(AGENT.bootstrap(include_graph=False))
+        elif path == "/api/domains":
+            context = AGENT.domain_context(session_id)
+            intent = query.get("intent", [""])[0]
+            self._json({
+                **context,
+                "matched": AGENT.match_domains(intent, limit=3) if intent else [],
+            })
         elif path == "/api/agent/status":
-            self._json(AGENT.status())
+            self._json(AGENT.status(session_id))
         elif path == "/api/map/config":
             self._json(
-                SPATIAL.map_config()
+                web_map_config()
                 if SPATIAL is not None
                 else {"provider": "none", "enabled": False}
             )
@@ -70,7 +85,15 @@ class UomHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         try:
             body = self._read_json()
-            if path in {"/api/objects/query", "/api/relations/query"}:
+            domain_ids = _domain_ids(body.get("domain_ids"))
+            session_id = str(body.get("session_id", "default"))
+            if path == "/api/agent/domains/select":
+                self._json(AGENT.select_domains(
+                    session_id,
+                    domain_ids,
+                    automatic=bool(body.get("automatic")),
+                ))
+            elif path in {"/api/objects/query", "/api/relations/query"}:
                 self._json(AGENT.workspace.query_records(
                     "object" if path == "/api/objects/query" else "relation",
                     filters=body.get("filters"),
@@ -79,10 +102,14 @@ class UomHandler(BaseHTTPRequestHandler):
                     order_by=body.get("order_by"),
                 ))
             elif path == "/api/changes/preview":
-                self._json(AGENT.workspace.preview_changes(body.get("operations")))
+                self._json(AGENT.preview_changes(
+                    body.get("operations"),
+                    domain_ids=domain_ids,
+                ))
             elif path == "/api/changes/apply":
                 self._json(AGENT.apply_changes(
                     operations=body.get("operations"),
+                    domain_ids=domain_ids,
                     reason=str(body.get("reason", "")),
                     actor=str(body.get("actor", "web_user")),
                     channel="ui",
@@ -94,21 +121,24 @@ class UomHandler(BaseHTTPRequestHandler):
                     limit=int(body.get("limit", 100)),
                 ))
             elif path == "/api/actions/available":
-                self._json(AGENT.actions.list_actions(
+                self._json(AGENT.list_actions(
                     context_id=str(body.get("context_id", "")),
+                    domain_ids=domain_ids,
                 ))
             elif path == "/api/actions/preview":
-                self._json(AGENT.actions.preview_action(
+                self._json(AGENT.preview_action(
                     action_id=str(body.get("action_id", "")),
                     inputs=body.get("inputs") or {},
                     context_id=str(body.get("context_id", "")),
+                    domain_ids=domain_ids,
                 ))
             elif path == "/api/actions/apply":
-                self._json(AGENT.actions.execute_action(
+                self._json(AGENT.execute_action(
                     preview_token=str(body.get("preview_token", "")),
                     reason=str(body.get("reason", "")),
                     actor=str(body.get("actor", "web_user")),
                     channel="ui",
+                    domain_ids=domain_ids,
                 ))
             elif path == "/api/agent/chat":
                 self._event_stream(AGENT.chat(str(body.get("message", "")), str(body.get("session_id", "default"))))
@@ -187,6 +217,16 @@ def main() -> int:
         server.server_close()
         AGENT.close()
     return 0
+
+
+def _domain_ids(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    raise ValueError("domain_ids 必须是字符串数组")
 
 
 if __name__ == "__main__":

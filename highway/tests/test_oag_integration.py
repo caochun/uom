@@ -27,7 +27,7 @@ class OagIntegrationTest(unittest.TestCase):
             self.domain_root,
             ignore=shutil.ignore_patterns("__pycache__", "*.db", "*.db-*"),
         )
-        runtime = load_domain(self.domain_root)
+        runtime = load_domain(self.domain_root / "domains" / "passage_charging")
         self.ontology = runtime.ontology
         self.repository = runtime.repository
         self.bindings = runtime.bindings
@@ -51,27 +51,40 @@ class OagIntegrationTest(unittest.TestCase):
                 "id": "passage:test",
                 "type": "passage",
                 "name": "测试通行",
-                "properties": {"reference_no": "P-001", "occurred_on": "2026-08-10"},
+                "properties": {"reference_no": "P-001", "mode": "etc"},
+            },
+            {
+                "id": "charge:test",
+                "type": "charge",
+                "name": "测试计费",
+                "properties": {
+                    "reference_no": "CHG-001",
+                    "receivable_amount": {"amount": 100, "currency": "CNY"},
+                    "paid_amount": {"amount": 100, "currency": "CNY"},
+                    "occurred_at": "2026-08-10T10:00:00+08:00",
+                    "result": "calculated",
+                },
             },
             {
                 "id": "split:test",
-                "type": "split_record",
+                "type": "split_result",
                 "name": "测试拆分",
                 "properties": {
                     "reference_no": "S-001",
                     "amount": {"amount": 100, "currency": "CNY"},
-                    "occurred_on": "2026-08-10",
+                    "occurred_at": "2026-08-10T10:05:00+08:00",
                 },
             },
             {
-                "id": "clearing:test",
-                "type": "clearing_result",
+                "id": "settlement:test",
+                "type": "settlement",
                 "name": "测试清分",
                 "properties": {
                     "reference_no": "C-001",
                     "amount": {"amount": 100, "currency": "CNY"},
                     "period": "2026-08",
-                    "occurred_on": "2026-08-10",
+                    "occurred_at": "2026-08-10T10:10:00+08:00",
+                    "result": "success",
                 },
             },
         ):
@@ -81,15 +94,23 @@ class OagIntegrationTest(unittest.TestCase):
                 "id": "rel:test-passage-split",
                 "type": "derives",
                 "from": "passage:test",
+                "to": "charge:test",
+            },
+        )
+        self.graph.create_relation(
+            {
+                "id": "rel:test-charge-split",
+                "type": "derives",
+                "from": "charge:test",
                 "to": "split:test",
             },
         )
         self.graph.create_relation(
             {
-                "id": "rel:test-split-clearing",
+                "id": "rel:test-split-settlement",
                 "type": "derives",
                 "from": "split:test",
-                "to": "clearing:test",
+                "to": "settlement:test",
             },
         )
 
@@ -101,11 +122,11 @@ class OagIntegrationTest(unittest.TestCase):
         self.assertEqual("uom_sqlite_graph", self.ontology.data_sources["graph"].type)
 
     def test_provider_loads_the_public_oag_ontology(self) -> None:
-        self.assertEqual("OMS 高速联网收费领域模型", self.ontology.name)
+        self.assertEqual("Highway 通行收费域", self.ontology.name)
         self.assertIs(self.ontology, self.repository.ontology)
         self.assertIn("get_passage_trace", self.ontology.functions)
         instructions = self.ontology.interaction_policies["user_chat"].instructions
-        self.assertTrue(any("通行、收费和清分" in item for item in instructions))
+        self.assertTrue(any("passage" in item for item in instructions))
         self.assertIsNotNone(self.workspace)
         self.assertIsNotNone(self.actions)
         self.assertFalse(hasattr(self.bindings, "get_service"))
@@ -223,15 +244,15 @@ class OagIntegrationTest(unittest.TestCase):
         self.assertIsNotNone(tool)
         self.assertEqual(["action_id"], tool.parameters["required"])
         result = json.loads(tool.handler({
-            "action_id": "register_toll_road",
-            "initial_inputs": {"name": "济青高速", "code": "G35"},
+            "action_id": "register_party",
+            "initial_inputs": {"name": "山东发行方", "category": "issuer"},
         }))
         self.assertEqual("action_form", result["interaction"]["kind"])
         self.assertEqual(
-            {"name": "济青高速", "code": "G35"},
+            {"name": "山东发行方", "category": "issuer"},
             result["interaction"]["initial_inputs"],
         )
-        self.assertIn("register_toll_road", self.ontology.actions)
+        self.assertIn("register_party", self.ontology.actions)
         self.assertNotIn("preview_action", self.ontology.functions)
         self.assertNotIn("apply_action", self.ontology.functions)
 

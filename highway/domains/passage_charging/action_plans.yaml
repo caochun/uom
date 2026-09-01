@@ -1,0 +1,49 @@
+schema: uom.action_plans.v1
+actions:
+  register_party:
+    handler: changeset
+    effects:
+      - create_object: {ref: party, type: party, name: $input.name, properties: {category: $input.category, code: $input.code, status: $input.status, details: $input.details}}
+  register_vehicle:
+    handler: changeset
+    effects:
+      - create_object: {ref: vehicle, type: vehicle, name: $input.name, properties: {plate_no: $input.plate_no, vehicle_type: $input.vehicle_type, status: $input.status, details: $input.details}}
+      - create_relation: {type: associates, from: $context, to: $vehicle, properties: {role: owner, relation_status: active}}
+  register_medium:
+    handler: changeset
+    effects:
+      - create_object: {ref: medium, type: toll_medium, name: $input.name, properties: {medium_kind: $input.medium_kind, code: $input.code, status: $input.status, valid_from: $input.valid_from, valid_to: $input.valid_to, details: $input.details}}
+  bind_vehicle_medium:
+    handler: changeset
+    effects:
+      - create_relation: {type: associates, from: $context, to: $input.medium_id, properties: {role: $input.role, relation_status: active}}
+  record_passage:
+    handler: changeset
+    effects:
+      - create_object: {ref: passage, type: passage, name: $input.reference_no, properties: {reference_no: $input.reference_no, mode: $input.mode, status: $input.status, source_system: $input.source_system, source_type: $input.source_type, source_id: $input.source_id, details: $input.details}}
+      - create_relation: {type: associates, from: $passage, to: $context, properties: {role: passage_vehicle, relation_status: confirmed}}
+      - create_relation: {type: references, from: $passage, to: $input.medium_id, properties: {role: used_medium, relation_status: confirmed}}
+  record_passage_event:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: event
+          type: passage_event
+          name: $input.reference_no
+          properties: {reference_no: $input.reference_no, event_kind: $input.event_kind, stage: $input.stage, occurred_at: $input.occurred_at, result: $input.result, charged_vehicle_type: $input.charged_vehicle_type, axle_count: $input.axle_count, transaction_type: $input.transaction_type, operation_channel: $input.operation_channel, receivable_amount: $input.receivable_amount, discount_amount: $input.discount_amount, paid_amount: $input.paid_amount, payment_type: $input.payment_type, fee_type: $input.fee_type, multi_province: $input.multi_province, source_system: $input.source_system, source_type: $input.source_type, source_id: $input.source_id, details: $input.details}
+      - create_relation: {type: contains, from: $context, to: $event, properties: {relation_status: active}}
+      - create_relation: {type: references, from: $event, to: $input.location_id, properties: {role: location, relation_status: confirmed}}
+      - create_relation: {type: references, from: $event, to: $input.medium_id, properties: {role: $input.medium_role, relation_status: confirmed}}
+  record_charge:
+    handler: changeset
+    effects:
+      - create_object: {ref: charge, type: charge, name: $input.reference_no, properties: {reference_no: $input.reference_no, receivable_amount: $input.receivable_amount, discount_amount: $input.discount_amount, paid_amount: $input.paid_amount, version: $input.version, occurred_at: $input.occurred_at, result: $input.result, source_system: $input.source_system, source_type: $input.source_type, source_id: $input.source_id, details: $input.details}}
+      - create_relation: {type: derives, from: $context, to: $charge, properties: {role: charge, relation_status: confirmed}}
+      - create_relation: {type: references, from: $charge, to: $input.rate_version_id, properties: {role: rate_version, relation_status: confirmed}}
+      - create_relation: {type: references, from: $charge, to: $input.rate_rule_id, properties: {role: fare_basis, relation_status: confirmed}}
+  record_payment:
+    handler: changeset
+    effects:
+      - create_object: {ref: payment, type: payment, name: $input.reference_no, properties: {reference_no: $input.reference_no, amount: $input.amount, payment_type: $input.payment_type, occurred_at: $input.occurred_at, result: $input.result, source_system: $input.source_system, source_type: $input.source_type, source_id: $input.source_id, details: $input.details}}
+      - create_relation: {type: references, from: $payment, to: $context, properties: {role: settles_charge, relation_status: confirmed}}
+      - create_relation: {type: associates, from: $payment, to: $input.account_id, properties: {role: debit_account, relation_status: confirmed}}

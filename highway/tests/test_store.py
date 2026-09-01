@@ -26,7 +26,8 @@ class UomWorkspaceServiceTest(unittest.TestCase):
             self.domain_root,
             ignore=shutil.ignore_patterns("__pycache__", "*.db", "*.db-*"),
         )
-        runtime = load_domain(self.domain_root)
+        self.passage_root = self.domain_root / "domains" / "passage_charging"
+        runtime = load_domain(self.passage_root)
         self.ontology = runtime.ontology
         self.repository = runtime.repository
         self.bindings = runtime.bindings
@@ -43,7 +44,7 @@ class UomWorkspaceServiceTest(unittest.TestCase):
         self.assertIn("passage", data["ontology"]["objects"])
         self.assertIn("derives", data["ontology"]["relations"])
         self.assertIn("passage", data["model"]["object_types"])
-        self.assertIn("clearing_result", data["model"]["object_types"])
+        self.assertNotIn("settlement", data["model"]["object_types"])
         self.assertTrue(data["model"]["actions"])
         self.assertTrue(all(
             "handler" not in action and "effects" not in action
@@ -92,15 +93,18 @@ class UomWorkspaceServiceTest(unittest.TestCase):
 
     def test_missing_database_is_initialized_empty(self) -> None:
         empty_database = self.domain_root / "data" / "empty.db"
-        model_path = self.domain_root / "model.yaml"
+        model_path = self.passage_root / "model.yaml"
         model_text = model_path.read_text(encoding="utf-8")
         model_path.write_text(
-            model_text.replace("database: data/graph.db", "database: data/empty.db"),
+            model_text.replace(
+                "database: ../../data/graph.db",
+                "database: ../../data/empty.db",
+            ),
             encoding="utf-8",
         )
         empty_repository = None
         try:
-            empty_runtime = load_domain(self.domain_root)
+            empty_runtime = load_domain(self.passage_root)
             empty_repository = empty_runtime.repository
             empty_store = empty_runtime.workspace
             self.assertEqual([], empty_store.list_objects())
@@ -121,15 +125,18 @@ class UomWorkspaceServiceTest(unittest.TestCase):
                 "INSERT INTO metadata(key, value) VALUES ('schema_version', '3')"
             )
 
-        model_path = self.domain_root / "model.yaml"
+        model_path = self.passage_root / "model.yaml"
         model_text = model_path.read_text(encoding="utf-8")
         model_path.write_text(
-            model_text.replace("database: data/graph.db", "database: data/legacy.db"),
+            model_text.replace(
+                "database: ../../data/graph.db",
+                "database: ../../data/legacy.db",
+            ),
             encoding="utf-8",
         )
         try:
             with self.assertRaisesRegex(ValueError, "expected 4"):
-                load_domain(self.domain_root)
+                load_domain(self.passage_root)
         finally:
             model_path.write_text(model_text, encoding="utf-8")
 
@@ -209,8 +216,6 @@ class UomWorkspaceServiceTest(unittest.TestCase):
                     "name": "渠道返佣",
                     "description": "按渠道合作约定形成的返佣成本。",
                     "properties": {
-                        "amount": {"required": False},
-                        "period": {"required": False},
                         "status": {"required": False},
                         "commission_rate": {"required": False},
                     },
@@ -224,8 +229,6 @@ class UomWorkspaceServiceTest(unittest.TestCase):
                     "name": "2026 年 8 月渠道返佣",
                     "properties": {
                         "status": "recognized",
-                        "amount": {"amount": 10000, "currency": "CNY"},
-                        "period": "2026-08",
                         "commission_rate": 0.1,
                     },
                 },
@@ -246,7 +249,7 @@ class UomWorkspaceServiceTest(unittest.TestCase):
         self.assertIn("properties", written_model)
         self.assertNotIn("data_sources", written_model)
 
-        reopened_runtime = load_domain(self.domain_root)
+        reopened_runtime = load_domain(self.passage_root)
         reopened_ontology = reopened_runtime.ontology
         reopened_repository = reopened_runtime.repository
         reopened = reopened_runtime.workspace
@@ -355,10 +358,10 @@ class UomWorkspaceServiceTest(unittest.TestCase):
             {
                 "action": "create_object",
                 "record": {
-                    "id": "road:invalid",
-                    "type": "toll_road",
-                    "name": "测试公路",
-                    "properties": {"code": "G99"},
+                    "id": "passage:invalid",
+                    "type": "passage",
+                    "name": "测试通行",
+                    "properties": {"reference_no": "PASS-INVALID", "mode": "etc"},
                 },
             },
             {
@@ -378,7 +381,7 @@ class UomWorkspaceServiceTest(unittest.TestCase):
                 "record": {
                     "id": "rel:invalid-contains",
                     "type": "contains",
-                    "from": "road:invalid",
+                    "from": "passage:invalid",
                     "to": "vehicle:invalid",
                 },
             },
@@ -538,21 +541,21 @@ class UomWorkspaceServiceTest(unittest.TestCase):
         create = [{
             "action": "create_object",
             "record": {
-                "id": "road:typed-property",
-                "type": "toll_road",
-                "name": "属性迁移测试公路",
-                "properties": {"code": "G99"},
+                "id": "vehicle:typed-property",
+                "type": "vehicle",
+                "name": "属性迁移测试车辆",
+                "properties": {"plate_no": "鲁A00001"},
             },
         }]
         self.store.preview_changes(create)
         self.store.apply_changes(create)
         definition = dict(
-            self.store.snapshot()["model"]["property_definitions"]["code"]
+            self.store.snapshot()["model"]["property_definitions"]["plate_no"]
         )
         definition["type"] = "number"
         result = self.store.preview_changes([{
             "action": "upsert_property_definition",
-            "property_id": "code",
+            "property_id": "plate_no",
             "definition": definition,
         }])
         self.assertFalse(result["valid"])

@@ -1,0 +1,53 @@
+schema: uom.action_plans.v1
+actions:
+  register_account:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: account
+          type: account
+          name: $input.name
+          properties:
+            account_kind: $input.account_kind
+            code: $input.code
+            balance: $input.balance
+            status: $input.status
+            details: $input.details
+  record_account_entry:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: entry
+          type: account_entry
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            entry_kind: $input.entry_kind
+            amount: $input.amount
+            occurred_at: $input.occurred_at
+            result: $input.result
+            balance_after: $input.balance_after
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: contains
+          from: $context
+          to: $entry
+          properties:
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $entry
+          to: $input.payment_id
+          properties:
+            role: payment
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $entry
+          to: $input.passage_id
+          properties:
+            role: passage
+            relation_status: confirmed

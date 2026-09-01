@@ -1,136 +1,37 @@
-"""Build read-only spatial projections from the OMS object-relation graph."""
+"""Build read-only map projections from the Highway cross-domain graph."""
 
 from __future__ import annotations
 
-import json
-import os
-import threading
 from collections import deque
-from typing import Any
-from urllib.parse import urlencode
-from urllib.request import urlopen
+from typing import Any, Protocol
 
 
-ROUTE_NODE_TYPES = {"toll_station", "toll_gantry"}
+ROUTE_NODE_TYPES = {"toll_station", "toll_gantry", "toll_interval"}
 FACILITY_TYPES = {
     "toll_station",
-    "toll_plaza",
     "toll_lane",
     "toll_gantry",
-    "service_facility",
-    "business_device",
+    "toll_interval",
 }
 NETWORK_TYPES = {"toll_road", "section", "toll_interval"}
 STAGE_LABELS = {"entry": "入口", "gantry": "门架", "exit": "出口"}
 
 
-class AmapRoutePlanner:
-    """Resolve a business node sequence to a display polyline using AMap."""
+class RoutePlanner(Protocol):
+    """Application port for turning business nodes into display geometry."""
 
-    endpoint = "https://restapi.amap.com/v3/direction/driving"
-
-    def __init__(self, api_key: str = "", timeout: float = 5.0):
-        self.api_key = api_key.strip()
-        self.timeout = timeout
-        self._cache: dict[tuple[tuple[float, float], ...], tuple[list[list[float]], str]] = {}
-        self._lock = threading.RLock()
-
-    def plan(self, coordinates: list[list[float]]) -> tuple[list[list[float]], str]:
-        normalized = self._deduplicate(coordinates)
-        if len(normalized) < 2:
-            return normalized, "object_coordinates"
-        key = tuple((point[0], point[1]) for point in normalized)
-        with self._lock:
-            cached = self._cache.get(key)
-        if cached is not None:
-            return cached
-
-        result = (normalized, "business_topology")
-        if self.api_key:
-            try:
-                planned: list[list[float]] = []
-                for chunk in self._chunks(normalized, 18):
-                    planned.extend(self._request(chunk))
-                planned = self._deduplicate(planned)
-                if len(planned) >= 2:
-                    result = (planned, "amap_route_planning")
-            except (OSError, ValueError, KeyError, json.JSONDecodeError):
-                pass
-        with self._lock:
-            self._cache[key] = result
-        return result
-
-    def _request(self, coordinates: list[list[float]]) -> list[list[float]]:
-        params = {
-            "key": self.api_key,
-            "origin": self._format_point(coordinates[0]),
-            "destination": self._format_point(coordinates[-1]),
-            "strategy": "0",
-            "extensions": "base",
-            "output": "json",
-        }
-        if len(coordinates) > 2:
-            params["waypoints"] = ";".join(
-                self._format_point(point) for point in coordinates[1:-1]
-            )
-        with urlopen(f"{self.endpoint}?{urlencode(params)}", timeout=self.timeout) as response:
-            payload = json.load(response)
-        if str(payload.get("status")) != "1":
-            raise ValueError(payload.get("info") or "AMap route planning failed")
-        paths = payload.get("route", {}).get("paths") or []
-        if not paths:
-            raise ValueError("AMap did not return a route")
-        result: list[list[float]] = []
-        for step in paths[0].get("steps") or []:
-            for value in str(step.get("polyline") or "").split(";"):
-                if not value:
-                    continue
-                longitude, latitude = value.split(",", 1)
-                result.append([float(longitude), float(latitude)])
-        return result
-
-    @staticmethod
-    def _format_point(point: list[float]) -> str:
-        return f"{point[0]:.6f},{point[1]:.6f}"
-
-    @staticmethod
-    def _deduplicate(coordinates: list[list[float]]) -> list[list[float]]:
-        result: list[list[float]] = []
-        for point in coordinates:
-            normalized = [round(float(point[0]), 6), round(float(point[1]), 6)]
-            if not result or normalized != result[-1]:
-                result.append(normalized)
-        return result
-
-    @staticmethod
-    def _chunks(values: list[list[float]], size: int):
-        start = 0
-        while start < len(values) - 1:
-            chunk = values[start:start + size]
-            yield chunk
-            start += len(chunk) - 1
+    def plan(
+        self,
+        coordinates: list[list[float]],
+    ) -> tuple[list[list[float]], str]: ...
 
 
 class SpatialViewService:
     """Project spatial objects and passages without adding GIS facts to the ontology."""
 
-    def __init__(self, repository, route_planner: AmapRoutePlanner | None = None):
+    def __init__(self, repository, route_planner: RoutePlanner):
         self.repository = repository
-        self.route_planner = route_planner or AmapRoutePlanner(
-            os.environ.get("AMAP_WEB_SERVICE_KEY", "")
-        )
-
-    @staticmethod
-    def map_config() -> dict[str, Any]:
-        api_key = os.environ.get("AMAP_API_KEY", "").strip()
-        security_key = os.environ.get("AMAP_SECURITY_KEY", "").strip()
-        return {
-            "provider": "amap",
-            "enabled": bool(api_key),
-            "api_key": api_key,
-            "security_key": security_key,
-            "coordinate_system": "GCJ-02",
-        }
+        self.route_planner = route_planner
 
     def get_view(self, object_id: str) -> dict[str, Any]:
         objects = [
@@ -209,35 +110,36 @@ class SpatialViewService:
         index: dict[str, dict[str, Any]],
         relations: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        transaction_ids = [
+        event_ids = [
             relation.get("to")
             for relation in relations
             if relation.get("from") == selected["id"]
-            and index.get(relation.get("to"), {}).get("type") == "toll_transaction"
+            and relation.get("type") == "contains"
+            and index.get(relation.get("to"), {}).get("type") == "passage_event"
         ]
-        transactions = [index[item_id] for item_id in transaction_ids if item_id in index]
-        transactions.sort(key=lambda item: (
+        events = [index[item_id] for item_id in event_ids if item_id in index]
+        events.sort(key=lambda item: (
             str(item.get("properties", {}).get("occurred_at") or ""),
             {"entry": 0, "gantry": 1, "exit": 2}.get(
                 item.get("properties", {}).get("stage"), 9
             ),
         ))
 
-        events: list[dict[str, Any]] = []
+        timeline: list[dict[str, Any]] = []
         points: list[dict[str, Any]] = []
         route_ids: list[str] = []
-        for transaction in transactions:
-            facility = self._transaction_facility(transaction["id"], index, relations)
+        for event_record in events:
+            facility = self._event_facility(event_record["id"], index, relations)
             if facility is None:
                 continue
             point = self._point(facility)
             if point is None:
                 continue
-            properties = transaction.get("properties") or {}
+            properties = event_record.get("properties") or {}
             stage = str(properties.get("stage") or "event")
-            event = {
-                "id": transaction["id"],
-                "name": transaction.get("name") or transaction["id"],
+            timeline_item = {
+                "id": event_record["id"],
+                "name": event_record.get("name") or event_record["id"],
                 "stage": stage,
                 "stage_label": STAGE_LABELS.get(stage, stage),
                 "occurred_at": properties.get("occurred_at"),
@@ -246,21 +148,21 @@ class SpatialViewService:
                 "facility_type": facility.get("type"),
                 "amount": properties.get("paid_amount") or properties.get("receivable_amount"),
             }
-            events.append(event)
+            timeline.append(timeline_item)
             points.append({
                 **point,
-                "id": transaction["id"],
+                "id": event_record["id"],
                 "object_id": facility["id"],
-                "name": event["facility_name"],
+                "name": timeline_item["facility_name"],
                 "role": stage,
-                "label": event["stage_label"],
-                "occurred_at": event["occurred_at"],
+                "label": timeline_item["stage_label"],
+                "occurred_at": timeline_item["occurred_at"],
             })
             route_ids.append(facility["id"])
 
         route_ids = self._deduplicate_ids(route_ids)
         lines = self._lines([route_ids], index) if len(route_ids) >= 2 else []
-        return self._result(selected, points, lines, events, "passage")
+        return self._result(selected, points, lines, timeline, "passage")
 
     def _interval_chain(
         self,
@@ -355,16 +257,16 @@ class SpatialViewService:
                 stack.extend((target, [*path, target]) for target in next_nodes)
         return chains
 
-    def _transaction_facility(
+    def _event_facility(
         self,
-        transaction_id: str,
+        event_id: str,
         index: dict[str, dict[str, Any]],
         relations: list[dict[str, Any]],
     ) -> dict[str, Any] | None:
         candidates = [
             index[relation["to"]]
             for relation in relations
-            if relation.get("from") == transaction_id
+            if relation.get("from") == event_id
             and relation.get("type") == "references"
             and relation.get("to") in index
             and index[relation["to"]].get("type") in FACILITY_TYPES

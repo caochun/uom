@@ -1,0 +1,152 @@
+schema: uom.action_plans.v1
+actions:
+  register_toll_road:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: road
+          type: toll_road
+          name: $input.name
+          properties:
+            code: $input.code
+            longitude: $input.longitude
+            latitude: $input.latitude
+            coordinate_system: $input.coordinate_system
+            status: $input.status
+            details: $input.details
+  register_section:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: section
+          type: section
+          name: $input.name
+          properties:
+            code: $input.code
+            mileage: $input.mileage
+            longitude: $input.longitude
+            latitude: $input.latitude
+            coordinate_system: $input.coordinate_system
+            status: $input.status
+            details: $input.details
+      - create_relation:
+          type: contains
+          from: $context
+          to: $section
+          properties:
+            relation_status: active
+  register_toll_interval:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: interval
+          type: toll_interval
+          name: $input.name
+          properties:
+            code: $input.code
+            direction: $input.direction
+            mileage: $input.mileage
+            longitude: $input.longitude
+            latitude: $input.latitude
+            coordinate_system: $input.coordinate_system
+            status: $input.status
+            details: $input.details
+      - create_relation:
+          type: contains
+          from: $context
+          to: $interval
+          properties:
+            relation_status: active
+  register_toll_station:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: station
+          type: toll_station
+          name: $input.name
+          properties:
+            code: $input.code
+            longitude: $input.longitude
+            latitude: $input.latitude
+            coordinate_system: $input.coordinate_system
+            status: $input.status
+            details: $input.details
+      - create_relation:
+          type: contains
+          from: $context
+          to: $station
+          properties:
+            relation_status: active
+  register_toll_gantry:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: gantry
+          type: toll_gantry
+          name: $input.name
+          properties:
+            code: $input.code
+            direction: $input.direction
+            mileage: $input.mileage
+            longitude: $input.longitude
+            latitude: $input.latitude
+            coordinate_system: $input.coordinate_system
+            status: $input.status
+            details: $input.details
+      - create_relation:
+          type: contains
+          from: $context
+          to: $gantry
+          properties:
+            relation_status: active
+  register_toll_lane:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: lane
+          type: toll_lane
+          name: $input.name
+          properties:
+            code: $input.code
+            category: $input.category
+            direction: $input.direction
+            longitude: $input.longitude
+            latitude: $input.latitude
+            coordinate_system: $input.coordinate_system
+            status: $input.status
+            details: $input.details
+      - create_relation:
+          type: contains
+          from: $context
+          to: $lane
+          properties:
+            relation_status: active
+  connect_route_nodes:
+    handler: changeset
+    effects:
+      - create_relation:
+          type: route_next
+          from: $context
+          to: $input.next_id
+          properties:
+            direction: $input.direction
+            mileage: $input.mileage
+            relation_status: $input.relation_status
+  register_equipment:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: equipment
+          type: equipment
+          name: $input.name
+          properties:
+            category: $input.category
+            code: $input.code
+            status: $input.status
+            details: $input.details
+      - create_relation:
+          type: contains
+          from: $context
+          to: $equipment
+          properties:
+            relation_status: active

@@ -8,6 +8,14 @@ __all__ = [
     "UomSqliteGraphSource",
     "UomWorkspaceService",
     "trace_object",
+    "compose_domain_models",
+    "load_composed_domain",
+    "DomainDescriptor",
+    "DomainRegistry",
+    "DomainMatch",
+    "DomainRouter",
+    "DomainSelection",
+    "UomRuntimeManager",
 ]
 
 
@@ -27,6 +35,30 @@ def __getattr__(name: str):
         from .graph import trace_object
 
         return trace_object
+    if name == "compose_domain_models":
+        from .composition import compose_domain_models
+
+        return compose_domain_models
+    if name == "load_composed_domain":
+        from .loader import load_composed_domain
+
+        return load_composed_domain
+    if name in {"DomainDescriptor", "DomainMatch", "DomainRegistry"}:
+        from .registry import DomainDescriptor, DomainMatch, DomainRegistry
+
+        return {
+            "DomainDescriptor": DomainDescriptor,
+            "DomainMatch": DomainMatch,
+            "DomainRegistry": DomainRegistry,
+        }[name]
+    if name in {"DomainRouter", "DomainSelection"}:
+        from .routing import DomainRouter, DomainSelection
+
+        return {"DomainRouter": DomainRouter, "DomainSelection": DomainSelection}[name]
+    if name == "UomRuntimeManager":
+        from .loader import UomRuntimeManager
+
+        return UomRuntimeManager
     if name == "UomSqliteGraphSource":
         from .sqlite_adapter import UomSqliteGraphSource
 

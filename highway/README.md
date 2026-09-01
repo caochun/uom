@@ -1,158 +1,78 @@
 # Highway 高速联网收费领域
 
-`highway` 是一个基于 UOM（Unified Ontology Modeling）的高速联网收费领域。它用两个稳定的
-本体概念保存业务图：
-
-- `Object`：可独立识别和追溯的主体、设施、业务事实或计算结果。
-- `Relation`：两个 Object 之间由业务行为建立或确认的有方向联系。
-
-`model.yaml` 是 UOM 领域源模型，直接定义高速业务词汇、关系约束、只读 Function、业务 Action、
-Repository 映射和 Agent 策略。UOM 将它编译为 OAG 原生 Ontology，并提供 SQLite 图适配、ChangeSet、
-审计、Action 执行和模型编辑能力；OAG 只理解编译结果及其 Repository 协议。
-
-```text
-model.yaml (UOM source model) --compile--> OAG Ontology --> Repository / Agent
-             |                                  |
-             +-- repositories -----------------> UOM Source
-             +-- Action contracts ------------> UOM Action runtime
-action_plans.yaml (private templates) ---------> UOM ChangeSet compiler
-```
-
-## V3.4 抽象
-
-V3.1 文档同时描述业务实体、设备、参数、名单和数据库属性。为便于 LLM 理解，本领域保留业务主干，
-只把生命周期和业务行为相同的概念收敛到 `category` 或 `details`。OBU、ETC 卡、CPC 卡，以及资金账户、
-库存账户等角色不同的对象保持独立类型：
-
-```text
-主体与介质：party / user / vehicle / obu / etc_card / cpc_card / paper_ticket
-路网设施：toll_road / section / toll_interval / toll_station / toll_plaza /
-          toll_lane / toll_gantry / service_facility / business_device
-通行清分：passage / toll_transaction / vehicle_id_record /
-          vehicle_check_result / second_charge_result / split_record /
-          split_basis / split_detail / clearing_result / invoice_basis_data
-客服资金：customer_service_record / user_account / card_account / stock_account /
-          account_transaction / account_entry / consumption_detail / bill / bill_settlement / stock_movement /
-          business_day_summary / reconciliation_result
-费率控制：fee_module / fee_rule / control_record / operating_parameter
-```
-
-五种关系保持稳定：
-
-| 关系 | 含义 | 示例 |
-| --- | --- | --- |
-| `route_next` | 两个路网设施在某行驶方向上相邻 | 收费站的下一节点是门架 |
-| `contains` | 整体包含依附的组成部分 | 公路包含路段，路段包含收费站 |
-| `references` | 业务事实引用独立对象的信息 | 通行引用入口、门架、出口交易 |
-| `associates` | 两个独立对象之间存在业务联系 | 车辆长期关联 OBU 和 ETC 卡 |
-| `derives` | 来源事实产生计算或汇总结果 | 通行派生拆分，拆分派生清分 |
-
-`derives` 统一使用“来源对象 -> 结果对象”的方向。相同生命周期的硬件、名单和运行参数不再为每个数据库表
-建立类型，而是在 `business_device`、`control_record` 或 `operating_parameter` 中用 `category` 表达种类。
-名单成员和运行配置不会混为同一对象。
-
-V3.1 的 `RoadNode` 不再复制收费站和门架的身份，`NodeRelation` 也不建立中间业务对象。收费站和门架
-本身就是路网节点，二者之间的 `route_next` 有向边表达拓扑；收费单元通过 `start_node`、`end_node`
-引用边界节点。这样既能计算路径，又不会出现设施对象与路网节点对象需要同步的问题。
-
-来源文档中的 `passId`、`vehicleId`、`obuId`、`laneId` 等字段用于识别对象联系，在本模型中转成关系，
-不再作为记录属性。若一项联系可沿图唯一推导，也不建立捷径边。例如入口交易只指向入口车道，收费站由
-`transaction -> toll_lane <- toll_station` 推导；交易所属车辆和介质由
-`transaction <- passage -> vehicle / medium` 推导。交易仍保留计费车型、轴数、金额、交易结果和时间，
-因为这些是当时发生的事实，不能用车辆或设施档案代替。
-
-## 文件
-
-```text
-model.yaml            UOM 领域源模型：高速对象、关系、Function、Action、Repository 和 Agent 策略
-action_plans.yaml     私有的 Action ChangeSet 模板，不提供给 LLM 或前端
-data/graph.db         Object / Relation 实例的唯一 SQLite 数据源
-provider.py           可选运行时绑定：注册 Python Function 实现和高速领域服务
-business.py           高速领域确定性查询
-spatial.py            高速空间视图派生服务
-app/                  高速 Web UI、HTTP API 和 OAG Agent 适配
-docs/                 高速领域原始模型与问题分析资料
-scripts/              山东场景 seed
-```
-
-UOM 图查询、Action、ChangeSet、SQLite、审计和模型编辑运行时位于仓库根目录 [`../uom`](../uom)。
-
-`uom.loader` 校验并编译 `model.yaml`，再用最终 OAG Ontology 创建 Repository。随后可选的领域
-`provider.py` 注册数据源适配器、运行时服务和 Python Function 实现。OAG 只读取编译本体，不理解也不需要
-读取 `action_plans.yaml`；后者仅由 UOM Action runtime 在预览和执行有副作用操作时使用。
+Highway 以一次车辆通行为经营主链，并把账户、清分结算、设施运营和费率控制拆成独立业务域。所有领域使用 UOM 的 Object/Relation 图模型，共享一份 SQLite 图数据。
 
 ## 业务主链
 
 ```text
-toll_road ->contains-> section ->contains-> toll_station ->contains-> toll_lane
-passage ->associates-> vehicle
-vehicle ->associates(bound_obu)-> obu
-vehicle ->associates(bound_etc_card)-> etc_card
-obu ->associates(paired_etc_card)-> etc_card
-passage ->references(used_obu / used_cpc_card / used_paper_ticket)-> 通行介质
-entry/exit transaction ->references-> toll_lane
-gantry transaction ->references-> toll_gantry
-entry_transaction ->references(issued_cpc_card)-> cpc_card
-exit_transaction ->references(recovered_cpc_card)-> cpc_card
-passage ->references-> entry/gantry/exit toll_transaction
-toll_transaction ->references(vehicle_identification)-> vehicle_id_record
-passage ->references-> vehicle_check_result ->derives-> second_charge_result
-passage ->contains-> second_charge_result
-passage ->derives-> split_record ->derives-> clearing_result
-split_record ->contains-> split_basis / split_detail
-split_detail ->references-> toll_interval
-consumption_detail ->references-> passage
-consumption_detail ->associates-> card_account
-consumption_detail ->derives-> bill ->derives-> bill_settlement
-account_transaction ->derives-> account_entry <-contains- user_account / card_account
-station / gantry ->route_next-> station / gantry
-toll_interval ->references(start_node / end_node)-> station / gantry
-fee_rule ->references(applies_to)-> toll_interval
+vehicle / toll_medium
+          |
+          v
+       passage -> passage_event
+          |
+          v
+        charge <- payment
 ```
 
-对象保留原始业务事实；后续计算、拆分、结算和对账通过新对象及关系追溯，不覆盖来源对象。
-这里的“覆盖 V3.1”指核心业务语义和追溯路径可表达，不是把文档中的约 138 个实体或数据库字段一对一复制成类型。
+五个平级业务域都位于 [`domains`](domains)。其中
+[`passage_charging`](domains/passage_charging) 是 `highway.passage_charging` 通行收费域，拥有 `party`、`vehicle`、`toll_medium`、`passage`、`passage_event`、`charge` 和 `payment`。账户、设施和费率对象在该域中只是 Action 输入和关系端点所需的跨域锚点。
 
-空间设施可使用 `longitude`、`latitude` 和 `coordinate_system` 保存代表点，三者必须同时出现。山东 seed
-中的收费站和服务设施坐标取自高德 POI，门架和收费单元代表点取自高德驾车路线，坐标系统一为
-`GCJ-02`。收费公路、路段和收费单元本质上是线或区间；当前 MVP 保存的是代表点，完整线路几何应由
-后续地图或 GIS 数据源提供，不能把代表点解释成对象的全部边界。
+- `passage_charging`：车辆通行、计费和支付。
+- `customer_accounts`：账户和账户记账明细。
+- `clearing_settlement`：拆分结果和资金结算。
+- `facility_operations`：收费公路、路段、收费单元、收费站、门架、车道、设备及路网拓扑。
+- `pricing_control`：费率版本、费率规则和业务控制记录。
 
-对象详情抽屉通过关系图即时生成空间视图。点状设施使用自身坐标；收费单元按
-`start_node -> route_next -> end_node` 生成线路；路段和收费公路组合所包含收费单元的线路；通行记录按
-交易时间和关联设施生成入口、门架、出口事件链。配置 `AMAP_API_KEY`、`AMAP_SECURITY_KEY` 和
-`AMAP_WEB_SERVICE_KEY` 后，前端加载高德底图，后端用高德驾车规划细化线路。规划线路仅是派生展示，
-不写入业务图，也不作为车辆 GPS 轨迹或权威路网边界。
+完整模型共有 21 个对象类型、5 个关系类型和 9 个只读 Function。对象所有权、跨域链路和运行时规则详见 [`domains/README.md`](domains/README.md)。
 
-## 模型驱动操作
+## 关键语义
 
-`actions` 不是第三个图概念，也不写入业务图。它描述用户意图如何生成 Object/Relation ChangeSet，
-前端和 Agent 共用同一套定义。运行时流程为：
+OBU、ETC 卡、CPC 卡和纸券统一为 `toll_medium`，用 `medium_kind` 区分。车辆与 OBU/ETC 卡的长期绑定使用 `associates`；某次通行实际使用介质则使用 `passage -> references -> toll_medium`。CPC 卡的入口发放和出口回收由 `passage_event` 引用介质，不建立车辆长期绑定。
+
+入口、门架和出口事实统一为 `passage_event`，用 `event_kind` 区分交易与识别，用 `stage` 区分通行阶段。`passId`、`vehicleId`、`obuId`、`laneId` 等外键语义优先表达为 Relation，而不是重复字符串属性。
+
+费率版本和费率规则由 `pricing_control` 维护，计费结果引用实际依据。计费后的拆分、业主分配和结算由 `clearing_settlement` 维护，因此 `passage_charging` 的通行经济函数只计算应收、优惠、计费和支付，不冒充清分结算口径。
+
+## 应用运行时
+
+Highway Web 工作台使用五域只读组合模型展示完整业务图和空间视图。Agent 根据用户意图按需加载单域或多域。页面汇总各域 Action，但写入始终路由到 Action 所属领域；通用模型编辑必须选择一个明确领域。
 
 ```text
-list_actions -> prepare_action / 前端表单 -> preview_action -> 用户确认 -> execute_action
+workbench -> 五域只读组合 -> 完整图查询/地图/模型浏览
+agent     -> 按会话选域    -> 单域或多域推理
+action    -> 唯一所属域    -> preview -> confirm -> ChangeSet
 ```
 
-OAG 从本体 Action 目录统一注册 `get_available_actions` 和 `request_action_input` 工具，领域前端不再
-重复注册。模型扩展由 Workspace 使用 `preview_changes` / `apply_changes`；它属于模型管理能力，
-不是面向智能体的只读 Function。
+## 文件结构
 
-## 验证
+```text
+contracts/highway_core.yaml  跨域共享语义契约，不是运行时业务域
+domains/                     五个平级、可独立加载的业务域
+  passage_charging/          通行收费模型、Action、Function 及绑定
+  customer_accounts/         客户账户域
+  clearing_settlement/       清分结算域
+  facility_operations/       设施运营域
+  pricing_control/           费率控制域
+data/graph.db                共享 SQLite Object/Relation 图
+app/services/spatial_view.py 跨域设施坐标和通行路线投影
+integrations/amap.py         高德地图配置和路线规划适配器
+scripts/seed_shandong.py     覆盖五域完整模型的山东 seed
+app/                         Web 工作台和 OAG Agent 接口
+docs/                        V3.0/V3.1/V3.2 领域资料
+```
 
-需要 PyYAML 的 Python 环境：
+## 验证与 seed
 
 ```bash
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m uom.validation --root highway
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s highway/tests -v
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --with pyyaml \
+  python highway/scripts/seed_shandong.py
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --with pyyaml \
+  python highway/scripts/seed_shandong.py --confirm-clear
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --with pyyaml \
+  python -m unittest discover -s highway/tests -v
 node --check highway/app/static/app.js
 ```
 
-山东 seed 覆盖 `model.yaml` 中全部对象类型和关系类型；如果新增类型却没有代表性实例，seed 校验会失败：
+seed 脚本先组合五域模型，再校验全部对象、关系、端点和属性；只有显式传入 `--confirm-clear` 才替换数据库。
 
-```bash
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python highway/scripts/seed_shandong.py
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python highway/scripts/seed_shandong.py --confirm-clear
-```
-
-`data/graph.db` 中已有实例不会被模型重建自动清空；未知 `type` 仍可作为开放词汇保留。新登记对象和关系应
-优先使用 Action 或经过预览的 ChangeSet。
+`highway/` 是应用边界，不是第六个领域。领域发现只加载 `domains/*/model.yaml`；`contracts/` 只在编译时被具体领域按需导入。

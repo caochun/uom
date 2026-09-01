@@ -11,7 +11,7 @@ import yaml
 from oag.ontology.schema import Ontology
 
 from uom.compiler import compile_ontology, compile_ontology_payload
-from uom.schema import DomainModel
+from uom.schema import DomainContract, DomainModel
 
 
 ACTION_PLAN_SCHEMA = "uom.action_plans.v1"
@@ -45,10 +45,118 @@ def load_yaml_mapping(path: str | Path) -> dict[str, Any]:
 
 
 def load_domain_model(domain_dir: str | Path) -> tuple[dict[str, Any], DomainModel]:
-    payload = load_yaml_mapping(Path(domain_dir) / "model.yaml")
+    root = Path(domain_dir).resolve()
+    payload = load_yaml_mapping(root / "model.yaml")
     if payload.get("schema") != MODEL_SCHEMA:
         raise ValueError(f"model.yaml schema must be {MODEL_SCHEMA}")
-    return payload, DomainModel.model_validate(payload)
+    return payload, DomainModel.model_validate(_compose_imports(payload, root))
+
+
+def _compose_imports(payload: dict[str, Any], domain_dir: Path) -> dict[str, Any]:
+    """Merge selected shared contracts into a domain model before validation.
+
+    Local definitions are allowed to refine an imported definition. Public
+    property types remain invariant, while local descriptions, endpoint
+    restrictions and requiredness stay owned by the importing domain.
+    """
+    result = deepcopy(payload)
+    for index, import_item in enumerate(payload.get("imports") or []):
+        if not isinstance(import_item, dict):
+            raise ValueError(f"model.imports[{index}] must be a mapping")
+        import_path = import_item.get("path")
+        if not isinstance(import_path, str) or not import_path:
+            raise ValueError(f"model.imports[{index}].path must be a non-empty string")
+        contract_path = (domain_dir / import_path).resolve()
+        contract_payload = load_yaml_mapping(contract_path)
+        contract = DomainContract.model_validate(contract_payload).model_dump(by_alias=True)
+        _merge_contract_section(
+            result,
+            contract,
+            "properties",
+            import_item.get("properties"),
+            contract_path,
+        )
+        _merge_contract_section(
+            result,
+            contract,
+            "objects",
+            import_item.get("objects"),
+            contract_path,
+        )
+        _merge_contract_section(
+            result,
+            contract,
+            "relations",
+            import_item.get("relations"),
+            contract_path,
+        )
+    return result
+
+
+def _merge_contract_section(
+    target: dict[str, Any],
+    contract: dict[str, Any],
+    section: str,
+    selected: Any,
+    contract_path: Path,
+) -> None:
+    imported = contract.get(section) or {}
+    if not isinstance(imported, dict):
+        raise ValueError(f"contract {contract_path}.{section} must be a mapping")
+    if selected is None:
+        selected = []
+    if not isinstance(selected, list):
+        raise ValueError(f"contract {contract_path}.{section} selection must be a list")
+    names = set(selected)
+    unknown = names - set(imported)
+    if unknown:
+        raise ValueError(
+            f"contract {contract_path}.{section} has unknown exports: "
+            + ", ".join(sorted(unknown))
+        )
+    current = target.setdefault(section, {})
+    if not isinstance(current, dict):
+        raise ValueError(f"model.{section} must be a mapping")
+    current_properties = set(_mapping(target.get("properties")))
+    for name in names:
+        incoming = deepcopy(imported[name])
+        existing = current.get(name)
+        if existing is None:
+            if section in {"objects", "relations"} and isinstance(incoming, dict):
+                if isinstance(incoming.get("properties"), dict):
+                    incoming["properties"] = {
+                        property_id: usage
+                        for property_id, usage in incoming["properties"].items()
+                        if property_id in current_properties
+                    }
+            current[name] = incoming
+            continue
+        if section == "properties":
+            existing_type = existing.get("type", "string") if isinstance(existing, dict) else None
+            incoming_type = incoming.get("type", "string") if isinstance(incoming, dict) else None
+            if existing_type != incoming_type:
+                raise ValueError(
+                    f"model.properties.{name} conflicts with imported contract type"
+                )
+            continue
+        if not isinstance(existing, dict) or not isinstance(incoming, dict):
+            raise ValueError(f"model.{section}.{name} conflicts with imported contract")
+        if isinstance(incoming.get("properties"), dict):
+            existing.setdefault("properties", {})
+            if not isinstance(existing["properties"], dict):
+                raise ValueError(f"model.{section}.{name}.properties must be a mapping")
+            for property_id, usage in incoming["properties"].items():
+                # A selective contract import may intentionally omit optional
+                # properties that are irrelevant to this domain.
+                if property_id in current_properties:
+                    existing["properties"].setdefault(property_id, usage)
+        if section == "objects":
+            aliases = list(existing.get("aliases") or [])
+            existing["aliases"] = aliases + [item for item in incoming.get("aliases", []) if item not in aliases]
+        elif section == "relations":
+            # An importing domain may narrow endpoint types; an empty endpoint
+            # list in the contract is intentionally open.
+            existing["acyclic"] = bool(existing.get("acyclic") or incoming.get("acyclic"))
 
 
 def load_public_ontology(domain_dir: str | Path) -> tuple[dict[str, Any], Ontology]:
@@ -179,11 +287,15 @@ def update_source_vocabulary(
         if key in metadata:
             result[key] = deepcopy(metadata[key])
     property_definitions = _mapping(editor_model.get("property_definitions"))
+    local_properties = set(_mapping(source_model.get("properties")))
+    imported_properties = _imported_names(source_model, "properties") - local_properties
     result["properties"] = {
         property_id: _source_property(property_id, definition)
         for property_id, definition in property_definitions.items()
+        if property_id not in imported_properties
     }
     current_objects = _mapping(result.get("objects"))
+    imported_objects = _imported_names(source_model, "objects") - set(current_objects)
     result["objects"] = {
         type_id: _source_type(
             type_id,
@@ -192,8 +304,10 @@ def update_source_vocabulary(
             kind="object",
         )
         for type_id, definition in _mapping(editor_model.get("object_types")).items()
+        if type_id not in imported_objects
     }
     current_relations = _mapping(result.get("relations"))
+    imported_relations = _imported_names(source_model, "relations") - set(current_relations)
     result["relations"] = {
         type_id: _source_type(
             type_id,
@@ -202,9 +316,21 @@ def update_source_vocabulary(
             kind="relation",
         )
         for type_id, definition in _mapping(editor_model.get("relation_types")).items()
+        if type_id not in imported_relations
     }
-    compile_ontology(DomainModel.model_validate(result))
+    # Imported references need their contract context for full validation; the
+    # caller writes the compact source and load_domain_model composes it again.
+    if not result.get("imports"):
+        compile_ontology(DomainModel.model_validate(result))
     return result
+
+
+def _imported_names(source_model: dict[str, Any], section: str) -> set[str]:
+    names: set[str] = set()
+    for item in source_model.get("imports") or []:
+        if isinstance(item, dict) and isinstance(item.get(section), list):
+            names.update(str(name) for name in item[section])
+    return names
 
 
 def storage_contract_payload() -> dict[str, Any]:

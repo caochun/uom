@@ -51,7 +51,7 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 
 def load_data(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    database_path = root / "data" / "graph.db"
+    database_path = _database_path_from_model(root)
     if not database_path.exists():
         raise FileNotFoundError(
             f"UOM database not found: {database_path}"
@@ -73,6 +73,25 @@ def load_data(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         {"schema": "uom.data.objects.v1", "objects": objects},
         {"schema": "uom.data.relations.v1", "relations": relations},
     )
+
+
+def _database_path_from_model(root: Path) -> Path:
+    """Resolve the graph database declared by a domain's default repository."""
+    model_path = root / "model.yaml"
+    if not model_path.is_file():
+        return root / "data" / "graph.db"
+    payload = load_yaml(model_path)
+    repositories = payload.get("repositories")
+    default_repository = payload.get("default_repository")
+    if not isinstance(repositories, dict) or not isinstance(default_repository, str):
+        return root / "data" / "graph.db"
+    repository = repositories.get(default_repository)
+    config = repository.get("config") if isinstance(repository, dict) else None
+    configured = config.get("database") if isinstance(config, dict) else None
+    if not isinstance(configured, str) or not configured:
+        return root / "data" / "graph.db"
+    path = Path(configured)
+    return path.resolve() if path.is_absolute() else (root / path).resolve()
 
 
 class ModelValidator:
@@ -983,6 +1002,20 @@ class ModelValidator:
 
 
 def validate_model(root: Path) -> ValidationResult:
+    root = Path(root).resolve()
+    if not (root / "model.yaml").is_file():
+        result = ValidationResult()
+        domain_models = sorted((root / "domains").glob("*/model.yaml"))
+        if not domain_models:
+            result.error("model", f"no UOM domain model found below {root}")
+            return result
+        for model_path in domain_models:
+            domain_result = validate_model(model_path.parent)
+            result.errors.extend(
+                f"{model_path.parent.name}.{error}"
+                for error in domain_result.errors
+            )
+        return result
     result = ValidationResult()
     object_data, relation_data = load_data(root)
     try:
@@ -993,6 +1026,11 @@ def validate_model(root: Path) -> ValidationResult:
     except (TypeError, ValueError, ValidationError) as exc:
         result.error("model", str(exc))
         return result
+    object_data, relation_data = _scope_data_to_model(
+        object_data,
+        relation_data,
+        editor_model,
+    )
     validated = ModelValidator(
         storage_contract_payload(),
         object_data,
@@ -1001,6 +1039,65 @@ def validate_model(root: Path) -> ValidationResult:
     ).validate()
     result.errors.extend(validated.errors)
     return result
+
+
+def _scope_data_to_model(
+    object_data: dict[str, Any],
+    relation_data: dict[str, Any],
+    model: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Validate only this domain's vocabulary when repositories are shared.
+
+    A shared graph may contain objects owned by sibling business domains. They
+    remain in SQLite, but must not make a focused domain validation fail.
+    Relations are included only when their type and both endpoints belong to
+    the focused model.
+    """
+    object_types = model.get("object_types")
+    relation_types = model.get("relation_types")
+    known_objects = set(object_types) if isinstance(object_types, dict) else set()
+    known_relations = set(relation_types) if isinstance(relation_types, dict) else set()
+    objects = [
+        item for item in object_data.get("objects", [])
+        if isinstance(item, dict) and item.get("type") in known_objects
+    ]
+    object_ids = {item.get("id") for item in objects}
+    object_type_by_id = {item.get("id"): item.get("type") for item in objects}
+    relations = [
+        item for item in relation_data.get("relations", [])
+        if (
+            isinstance(item, dict)
+            and item.get("type") in known_relations
+            and item.get("from") in object_ids
+            and item.get("to") in object_ids
+            and _relation_endpoints_match(
+                item,
+                relation_types.get(item.get("type"), {})
+                if isinstance(relation_types, dict)
+                else {},
+                object_type_by_id,
+            )
+        )
+    ]
+    return (
+        {**object_data, "objects": objects},
+        {**relation_data, "relations": relations},
+    )
+
+
+def _relation_endpoints_match(
+    relation: dict[str, Any],
+    definition: dict[str, Any],
+    object_type_by_id: dict[Any, Any],
+) -> bool:
+    from_types = definition.get("from_types") or definition.get("from") or []
+    to_types = definition.get("to_types") or definition.get("to") or []
+    source_type = object_type_by_id.get(relation.get("from"))
+    target_type = object_type_by_id.get(relation.get("to"))
+    return (
+        (not from_types or source_type in from_types)
+        and (not to_types or target_type in to_types)
+    )
 
 
 def main(default_root: Path | None = None) -> int:

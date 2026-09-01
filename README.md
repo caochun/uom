@@ -19,12 +19,13 @@ UOM DSL。Action 不是第三种图记录，而是创建或改变 Object/Relatio
 ```text
 oag-agent/  本体元模型、Agent、Tool、逻辑 Repository、SourceManager 和 ActionRuntime 协议
 uom/        领域源模型 schema、编译器、Source adapter、UomChangeStore、Action、审计和模型编辑
-highway/    高速领域模型、数据、函数、空间能力和 Web 应用
+highway/    高速主链模型、业务域模型、数据、函数、空间能力和 Web 应用
 leasing/    融资租赁模型、数据、Action、确定性函数、领域资料和 Web 应用
 foxoms/     企业日常运营模型、Mock 数据、Agent 和 Web 应用
 ```
 
-每个领域只维护一个 UOM 源模型，例如 [`highway/model.yaml`](highway/model.yaml)，其中定义具体对象、关系、
+每个可独立加载的业务域维护自己的 UOM 源模型，例如
+[`highway/domains/passage_charging/model.yaml`](highway/domains/passage_charging/model.yaml)，其中定义具体对象、关系、
 只读 Function、业务 Action、命名 Repository 和 Agent 策略。编译后的 OAG Ontology 只存在于运行时，供
 LLM、Prompt、Tool 和 Repository 使用。Action 的公开契约包含输入、适用上下文、前置条件和副作用摘要；
 具体 ChangeSet 模板放在领域私有的 `action_plans.yaml`，不会进入 LLM 本体或浏览器 bootstrap。
@@ -59,11 +60,17 @@ UOM 的 `load_domain(domain_dir)` 在此基础上返回 `UomDomainRuntime`，显
 `SpatialViewService`，不会注册进 OAG。
 
 对象或关系可在源模型中通过 `repository`、`selector`、`mapping` 映射到不同的 ERP、CRM 或 API；
-当前三个领域的默认实现是 UOM SQLite 属性图。
+当前各领域的默认实现是 UOM SQLite 属性图。
+领域模型可以通过 `imports` 选择性导入 `uom.contract.v1` 共享契约。UOM 在编译前合并公共属性、对象和关系，
+本域仍负责 Repository 绑定和细化端点约束；导入内容不会写回本域源模型。
 可选的 `provider.py` 只负责绑定数据 Source、Python Function 实现和 ActionRuntime；领域或应用服务
 由 UOM runtime 或具体应用显式持有。当前高速模型基于
-[`highway/docs/高速联网收费领域本体模型 V3.1.md`](highway/docs/高速联网收费领域本体模型%20V3.1.md) 做了面向 LLM 的抽象，
+[`highway/docs/高速联网收费领域本体模型 V3.2.md`](highway/docs/高速联网收费领域本体模型%20V3.2.md) 做了面向 LLM 的抽象，
 没有把设备、名单和运行参数逐表展开。
+
+高速业务按责任拆为 `passage_charging`、`customer_accounts`、`clearing_settlement`、
+`facility_operations`、`pricing_control` 五个平级业务域。它们共享 Highway 的 SQLite 图，但分别拥有通行收费、账户记账、
+清分结算、设施运营和费率控制语义。Web 工作台读取五域只读组合模型，Action 写入仍路由到唯一所属域。
 
 融资租赁领域位于 [`leasing`](leasing)，它围绕授信、方案、合同、放款、应收、收款、核销、结清和凭证
 建立经营与资金追溯主链。详细设计见 [`leasing/README.md`](leasing/README.md)，原始 PlantUML 资料位于
@@ -76,7 +83,7 @@ UOM 的 `load_domain(domain_dir)` 在此基础上返回 `UomDomainRuntime`，显
 ```bash
 git submodule update --init --recursive
 uv sync --project oag-agent
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --env-file .env -- python -m highway.app.server
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --with pyyaml --env-file .env -- python -m highway.app.server
 ```
 
 打开 <http://127.0.0.1:8765>。LLM 配置写在根目录 `.env` 中；没有 LLM 配置时，图数据、模型和表单仍可使用。
@@ -84,7 +91,7 @@ PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --env-file .env -- p
 融资租赁工作台使用独立领域入口和端口：
 
 ```bash
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --env-file .env -- python -m leasing.app.server
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --with pyyaml --env-file .env -- python -m leasing.app.server
 ```
 
 打开 <http://127.0.0.1:8766>。
@@ -92,10 +99,60 @@ PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --env-file .env -- p
 FoxOMS 企业运营工作台使用独立领域入口和端口：
 
 ```bash
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --env-file .env -- python -m foxoms.app.server
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --with pyyaml --env-file .env -- python -m foxoms.app.server
 ```
 
 打开 <http://127.0.0.1:8768>。
+
+Highway 子域目前以独立模型目录加载，暂不单独启动 Web 服务：
+
+```python
+from uom.loader import load_domain
+
+runtime = load_domain("highway/domains/clearing_settlement")
+```
+
+需要让同一个 Agent 同时理解多个业务域时，由 UOM 组合领域模型。组合运行时复用各域的
+Repository 和 Function 实现，读取同一份共享图数据；为了避免把临时组合模型误用于写入，组合运行时
+不暴露源领域的 Action，使用完毕调用 `close()` 清理临时模型目录：
+
+```python
+from uom.loader import load_composed_domain
+
+runtime = load_composed_domain([
+    "highway/domains/passage_charging",
+    "highway/domains/customer_accounts",
+    "highway/domains/clearing_settlement",
+    "highway/domains/facility_operations",
+    "highway/domains/pricing_control",
+])
+try:
+    result = runtime.bindings.call(
+        "get_settlement_trace", settlement_id="settlement:etc_001"
+    )
+finally:
+    runtime.close()
+```
+
+确需在联合 Agent 中执行业务操作时，可显式传入 `expose_actions=True`。此时组合层只负责 Action
+目录和预览令牌，实际预览、确认、提交仍由 Action 所属领域的原始运行时完成。Highway Web 工作台本身
+保持组合模型只读，并在应用层汇总 Action 后路由到对应的单域运行时。
+
+组合器属于 UOM，负责合并对象、关系、属性和 Function 语义，并检查同名定义冲突；OAG 只接收组合后的
+`Ontology`，不感知领域来源或组合过程。
+
+UOM 还提供 `DomainRegistry`、`DomainRouter` 和 `UomRuntimeManager`：它们分别负责读取模型元数据建立领域目录、
+按会话选择领域，以及按领域 ID 懒加载并缓存运行时。OAG 不参与领域发现和组合，只接收本次会话已经选好的本体。
+
+Highway Agent 默认处于自动模式。每条消息先用各领域自己声明的对象、Function 和 Action 词汇做可解释匹配：
+明确的业务操作只进入一个所属领域，跨域查询最多组合三个领域，并使用只读联合运行时。用户也可以在 Agent
+抽屉中手工固定某个领域，再切回自动模式；有待回答问题或待确认写操作时，当前领域会锁定，避免把后续确认交给
+另一个 Agent。每个领域组合拥有独立的 OAG Agent、Repository 和对话历史，但共享同一个浏览器会话标识。
+
+`UOM_DOMAIN_IDS` 只设置进程启动后的默认领域，不会关闭会话路由。领域目录可通过 `GET /api/domains` 查看，
+当前会话选中的领域会在 `selected` 字段返回；传入 `?intent=登记收费站` 可得到最多三个匹配结果。
+匹配过程只读取领域模型元数据，不会打开数据库。当前 MVP 不支持跨域事务，所有 Action 始终在其所属的单一领域
+中预览和执行。
 
 ## 用户级 systemd 服务
 
@@ -148,12 +205,12 @@ UOM 使用“当前状态图 + 不可变 Action 历史”处理业务变化。�
 ## 校验
 
 ```bash
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m uom.validation --root highway
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s highway/tests -v
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m uom.validation --root leasing
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s leasing/tests -v
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m uom.validation --root foxoms
-PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent -- python -m unittest discover -s foxoms/tests -v
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --with pyyaml -- python -m uom.validation --root highway
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --with pyyaml -- python -m unittest discover -s highway/tests -v
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --with pyyaml -- python -m uom.validation --root leasing
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --with pyyaml -- python -m unittest discover -s leasing/tests -v
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --with pyyaml -- python -m uom.validation --root foxoms
+PYTHONPATH="$PWD/oag-agent:$PWD" uv run --project oag-agent --with pyyaml -- python -m unittest discover -s foxoms/tests -v
 node --check foxoms/app/static/app.js
 node --check highway/app/static/app.js
 node --check leasing/app/static/app.js
