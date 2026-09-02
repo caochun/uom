@@ -49,6 +49,8 @@ class SpatialViewService:
 
         if selected.get("type") == "passage":
             return self._passage_view(selected, index, relations)
+        if selected.get("type") == "pricing_path":
+            return self._pricing_path_view(selected, index, relations)
         if selected.get("type") in NETWORK_TYPES:
             return self._network_view(selected, index, relations)
         point = self._point(selected)
@@ -163,6 +165,67 @@ class SpatialViewService:
         route_ids = self._deduplicate_ids(route_ids)
         lines = self._lines([route_ids], index) if len(route_ids) >= 2 else []
         return self._result(selected, points, lines, timeline, "passage")
+
+    def _pricing_path_view(
+        self,
+        selected: dict[str, Any],
+        index: dict[str, dict[str, Any]],
+        relations: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        path_relations = [
+            relation for relation in relations
+            if relation.get("from") == selected["id"]
+            and relation.get("type") == "references"
+            and (relation.get("properties") or {}).get("role") == "path_node"
+            and relation.get("to") in index
+        ]
+        path_relations.sort(key=lambda relation: (
+            self._sequence(relation), str(relation.get("id") or "")
+        ))
+
+        points: list[dict[str, Any]] = []
+        timeline: list[dict[str, Any]] = []
+        node_ids: list[str] = []
+        for position, relation in enumerate(path_relations, start=1):
+            node = index[relation["to"]]
+            point = self._point(node)
+            if point is None:
+                continue
+            properties = relation.get("properties") or {}
+            sequence = properties.get("sequence", position)
+            mileage = properties.get("mileage")
+            timeline.append({
+                "id": relation.get("id"),
+                "name": node.get("name") or node["id"],
+                "stage": "path_node",
+                "stage_label": f"第 {sequence} 节点",
+                "sequence": sequence,
+                "mileage": mileage,
+                "facility_id": node["id"],
+                "facility_name": node.get("name") or node["id"],
+                "facility_type": node.get("type"),
+            })
+            points.append({
+                **point,
+                "role": "path_node",
+                "label": str(sequence),
+                "sequence": sequence,
+                "mileage": mileage,
+            })
+            node_ids.append(node["id"])
+
+        lines = self._lines([node_ids], index) if len(node_ids) >= 2 else []
+        return self._result(selected, points, lines, timeline, "pricing_path")
+
+    @staticmethod
+    def _sequence(relation: dict[str, Any]) -> float:
+        value = (relation.get("properties") or {}).get("sequence")
+        if isinstance(value, bool):
+            return float("inf")
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float("inf")
 
     def _interval_chain(
         self,

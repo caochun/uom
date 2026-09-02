@@ -1,12 +1,12 @@
 schema: uom.domain.v1
 name: Highway 通行收费域
-version: 5.0.0
+version: 5.1.0
 description: >-
   面向车辆一次通行形成计费与支付的业务链。本域拥有车辆、通行介质、通行事实以及通行、计费、支付行为；
   设施、客户账户、清分结算和费率控制只作为跨域引用，不在本域重复维护。
 imports:
   - path: ../../contracts/highway_core.yaml
-    properties: [category, code, reference_no, status, details, plate_no, vehicle_type, medium_kind, valid_from, valid_to, mode, stage, occurred_at, result, charged_vehicle_type, axle_count, transaction_type, operation_channel, receivable_amount, discount_amount, paid_amount, payment_type, fee_type, multi_province, amount, version, role, relation_status, source_system, source_type, source_id, event_kind]
+    properties: [category, code, reference_no, status, details, plate_no, vehicle_type, medium_kind, valid_from, valid_to, mode, stage, occurred_at, result, charged_vehicle_type, axle_count, transaction_type, operation_channel, receivable_amount, discount_amount, paid_amount, payment_type, fee_type, multi_province, amount, version, reason, role, relation_status, source_system, source_type, source_id, event_kind]
     objects: [party, passage, charge, payment, account, toll_station, toll_gantry, toll_lane, rate_version, rate_rule]
     relations: [contains, associates, references, derives]
 repositories:
@@ -48,6 +48,8 @@ properties:
   source_type: {name: 来源记录类型, type: string, description: 外部系统中的记录类别。}
   source_id: {name: 来源记录标识, type: string, description: 外部系统中的稳定记录标识。}
   event_kind: {name: 事实类别, type: string, description: 交易事实或车辆识别事实。}
+  inspection_kind: {name: 查验类型, type: string, description: 预约、绿通或其他特殊车辆查验类型。}
+  adjustment_kind: {name: 调整类型, type: string, description: 二次计费、补收、退费或其他计费调整类型。}
 objects:
   party:
     name: 业务主体
@@ -96,6 +98,35 @@ objects:
       source_type: optional
       source_id: optional
       details: optional
+  inspection_result:
+    name: 通行查验结果
+    description: 对预约、绿色通道或其他特殊车辆在通行过程中进行查验形成的结果。
+    properties:
+      reference_no: required
+      inspection_kind: required
+      occurred_at: required
+      result: required
+      reason: optional
+      status: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
+  charge_adjustment:
+    name: 计费调整结果
+    description: 基于查验或复核对原计费结果形成的二次计费、补收或退费调整事实。
+    properties:
+      reference_no: required
+      adjustment_kind: required
+      amount: required
+      occurred_at: required
+      result: required
+      reason: optional
+      status: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
 relations:
   contains:
     name: 包含
@@ -105,21 +136,21 @@ relations:
     properties: {relation_status: optional}
   associates:
     name: 关联
-    description: 主体、车辆、介质、通行、支付和账户之间可独立存在的业务联系。
-    from: [party, vehicle, passage, payment]
-    to: [vehicle, toll_medium, account]
+    description: 主体、车辆、介质、通行、支付和账户之间可独立存在的业务联系，包括介质发行、持有及 OBU 与 ETC 卡配套。
+    from: [party, vehicle, toll_medium, passage, payment, inspection_result, charge_adjustment]
+    to: [party, vehicle, toll_medium, account, passage, charge]
     properties: {role: required, relation_status: optional}
   references:
     name: 引用
     description: 通行事实、计费或支付引用介质、发生位置、费率、账户或来源事实。
-    from: [passage, passage_event, charge, payment]
+    from: [passage, passage_event, charge, payment, inspection_result, charge_adjustment]
     to: []
     properties: {role: required, amount: optional, relation_status: optional}
   derives:
     name: 派生
     description: 一次通行根据通行事实与计费依据形成计费结果。
-    from: [passage]
-    to: [charge]
+    from: [passage, charge, inspection_result]
+    to: [charge, inspection_result, charge_adjustment]
     properties: {role: optional, amount: optional, relation_status: optional}
     acyclic: true
 functions:
@@ -195,8 +226,33 @@ actions:
     inputs:
       medium_id: {name: 通行介质, objects: [toll_medium], required: true}
       role: {name: 绑定角色, property: role, required: true}
+    requires:
+      - object_status: {object: $context, in: [active], message: 只有有效车辆可以绑定 OBU 或 ETC 卡。}
+      - object_status: {object: $input.medium_id, in: [active], message: 只有有效的 OBU 或 ETC 卡可以绑定车辆。}
     changes: {create: {objects: [], relations: [associates]}}
     confirmation: 建立车辆与长期通行介质的绑定关系。
+  pair_toll_media:
+    name: 配套 OBU 与 ETC 卡
+    description: 为当前 OBU 关联配套使用的有效 ETC 卡；CPC 卡和纸券不使用此操作。
+    icon: panels_top_left
+    "on": [toll_medium]
+    inputs:
+      card_id: {name: 配套 ETC 卡, objects: [toll_medium], required: true}
+    requires:
+      - object_status: {object: $context, in: [active], message: 当前 OBU 必须处于有效状态。}
+      - object_status: {object: $input.card_id, in: [active], message: 配套 ETC 卡必须处于有效状态。}
+    changes: {create: {objects: [], relations: [associates]}}
+    confirmation: 建立 OBU 与 ETC 卡的配套关系。
+  assign_medium_party:
+    name: 关联介质业务主体
+    description: 记录当前 OBU 或 ETC 卡的发行机构或持有人，不重复保存发行机构编号、用户编号等外键属性。
+    icon: building_2
+    "on": [toll_medium]
+    inputs:
+      party_id: {name: 业务主体, objects: [party], required: true}
+      role: {name: 主体角色, property: role, required: true, options: [issuer, holder]}
+    changes: {create: {objects: [], relations: [associates]}}
+    confirmation: 建立通行介质与发行机构或持有人的关系。
   record_passage:
     name: 登记通行过程
     description: 为当前车辆登记一次通行，并关联本次实际使用的通行介质。
@@ -282,12 +338,53 @@ actions:
       details: {name: 支付详情, property: details, required: false}
     changes: {create: {objects: [payment], relations: [references, associates]}}
     confirmation: 登记支付事实并关联计费结果和支付账户。
+  record_inspection_result:
+    name: 登记通行查验
+    description: 为当前通行登记预约、绿色通道或其他特殊车辆查验结果。
+    icon: clipboard_check
+    "on": [passage]
+    inputs:
+      reference_no: {name: 查验流水号, property: reference_no, required: true}
+      inspection_kind: {name: 查验类型, property: inspection_kind, required: true, options: [reservation, green_channel, special_vehicle]}
+      occurred_at: {name: 查验时间, property: occurred_at, required: true}
+      result: {name: 查验结果, property: result, required: true}
+      reason: {name: 查验说明, property: reason, required: false}
+      event_id: {name: 对应通行事实, objects: [passage_event], required: false}
+      status: {name: 状态, property: status, required: false, default: completed}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 查验详情, property: details, required: false}
+    changes: {create: {objects: [inspection_result], relations: [derives, references]}}
+    confirmation: 登记通行查验结果。
+  record_charge_adjustment:
+    name: 登记计费调整
+    description: 基于当前计费结果登记二次计费、补收或退费调整。
+    icon: calculator
+    "on": [charge]
+    inputs:
+      reference_no: {name: 调整流水号, property: reference_no, required: true}
+      adjustment_kind: {name: 调整类型, property: adjustment_kind, required: true, options: [second_charge, supplementary_charge, refund]}
+      amount: {name: 调整金额, property: amount, required: true}
+      occurred_at: {name: 调整时间, property: occurred_at, required: true}
+      result: {name: 调整结果, property: result, required: true}
+      reason: {name: 调整原因, property: reason, required: false}
+      inspection_id: {name: 依据查验, objects: [inspection_result], required: false}
+      status: {name: 状态, property: status, required: false, default: completed}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 调整详情, property: details, required: false}
+    changes: {create: {objects: [charge_adjustment], relations: [derives, references]}}
+    confirmation: 登记计费调整结果。
 agent:
   excluded_tools: [dispatch_workers]
   instructions:
   - 本域只解释车辆一次通行形成计费与支付的经营主链；账户记账、拆分结算、设施运营和费率发布由相应业务域负责。
   - passage 聚合一次完整通行，入口、门架和出口是 passage_event，不是多次独立通行。
   - 车辆与 OBU 或 ETC 卡的长期绑定使用 associates；某次通行实际使用介质使用 references，CPC 卡和纸券不能解释为长期绑定。
+  - OBU 与 ETC 卡是两个独立通行介质；配套关系使用 associates(role=paired_card)，发行机构和持有人使用 associates(role=issuer/holder)，不要把相关对象 ID 冗余写成属性。
+  - 绑定车辆或配套介质时必须使用有效对象；CPC 卡和纸券只能在具体通行事实中发放、回收或使用。
   - CPC 卡入口发放和出口回收由 passage_event 引用 toll_medium，并使用 issued_medium、recovered_medium 角色。
   - 解释一次通行优先使用 get_passage_trace；询问计费和支付金额使用 get_passage_economics。
   - 询问账户余额、拆分结算、路网设施或费率规则时，应切换或组合相应业务域。

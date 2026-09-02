@@ -1,6 +1,6 @@
 schema: uom.domain.v1
 name: Highway 清分结算业务域
-version: 1.0.0
+version: 1.1.0
 description: >-
   面向通行费拆分、业主分配和资金结算的业务域。计费和支付作为来源事实，拆分结果与结算结果形成可追溯的资金链。
 imports:
@@ -39,6 +39,7 @@ properties:
   source_system: {name: 来源系统, type: string, description: 产生该事实的外部系统。}
   source_type: {name: 来源记录类型, type: string, description: 外部系统中的记录类别。}
   source_id: {name: 来源记录标识, type: string, description: 外部系统中的稳定记录标识。}
+  transaction_count: {name: 交易笔数, type: number, description: 汇总结果包含的交易数量。}
 objects:
   split_result:
     name: 拆分结果
@@ -58,7 +59,7 @@ objects:
       details: optional
   settlement:
     name: 清分结算
-    description: 根据拆分结果确认应结金额和实际划拨结果的资金事实。
+    description: 根据清分结果确认业务主体应结金额的结算结果；实际资金划拨由 allocation 单独记录。
     properties:
       reference_no: required
       amount: required
@@ -66,7 +67,84 @@ objects:
       occurred_at: required
       result: required
       due_amount: optional
-      allocated_amount: optional
+      status: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
+  clearing_result:
+    name: 清分结果
+    description: 将拆分结果按收费公路业主或结算期间汇总形成的应分配结果。
+    properties:
+      reference_no: required
+      amount: required
+      period: required
+      result: required
+      split_basis: optional
+      local_amount: optional
+      external_amount: optional
+      status: optional
+      version: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
+  invoice_basis:
+    name: 发票依据
+    description: 从通行、计费或拆分结果整理出的可开票业务依据。
+    properties:
+      reference_no: required
+      amount: required
+      period: optional
+      category: required
+      status: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
+  collection_summary:
+    name: 收款汇总
+    description: 按期间和收款方式汇总的通行费收款事实，为上缴提供依据。
+    properties:
+      reference_no: required
+      amount: required
+      period: required
+      category: required
+      transaction_count: optional
+      local_amount: optional
+      external_amount: optional
+      status: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
+  remittance:
+    name: 通行费上缴
+    description: 收款主体向省级联网中心或其他结算主体实际上缴通行费的资金事实。
+    properties:
+      reference_no: required
+      amount: required
+      period: required
+      category: required
+      occurred_at: required
+      result: required
+      status: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
+  allocation:
+    name: 通行费划拨
+    description: 根据应结结果向收费公路业主或其他收款主体实际划拨资金的事实。
+    properties:
+      reference_no: required
+      amount: required
+      period: required
+      category: required
+      due_amount: optional
+      allocated_amount: required
+      occurred_at: required
+      result: required
       status: optional
       source_system: optional
       source_type: optional
@@ -75,9 +153,9 @@ objects:
 relations:
   derives:
     name: 派生
-    description: 通行产生计费，计费产生拆分，拆分产生结算。
-    from: [passage, charge, split_result]
-    to: [charge, split_result, settlement]
+    description: 通行和计费经过拆分、清分或汇总形成发票依据、上缴和划拨结果。
+    from: [passage, charge, split_result, clearing_result, collection_summary, settlement]
+    to: [charge, split_result, clearing_result, invoice_basis, collection_summary, remittance, settlement, allocation]
     properties:
       role: optional
       amount: optional
@@ -85,8 +163,8 @@ relations:
     acyclic: true
   references:
     name: 引用
-    description: 业务结果引用收费单元、业主、计费或支付来源。
-    from: [charge, payment, split_result, settlement]
+    description: 业务结果引用收费单元、业主、计费、支付或其他来源事实。
+    from: [charge, payment, split_result, clearing_result, invoice_basis, collection_summary, remittance, settlement, allocation]
     to: []
     properties:
       role: required
@@ -94,8 +172,8 @@ relations:
       relation_status: optional
   associates:
     name: 关联
-    description: 结算事实与结算主体之间的业务联系。
-    from: [settlement]
+    description: 清分、收款、上缴或划拨事实与相关业务主体之间的业务联系。
+    from: [clearing_result, collection_summary, remittance, settlement, allocation]
     to: [party]
     properties:
       role: required
@@ -103,13 +181,13 @@ relations:
 functions:
   get_settlement_trace:
     name: 获取清分结算追溯链
-    description: 返回指定清分结算向上关联的拆分结果、计费、支付和通行，并列出拆分对应的收费单元与业主。
-    usage_prompt: 用户询问某笔结算如何产生、对应哪笔通行或由哪些收费单元和业主分配时使用。
+    description: 返回指定结算向上关联的拆分、清分、发票依据、收款、上缴、计费、支付和通行，并列出收费单元与业务主体。
+    usage_prompt: 用户询问某笔清分、结算、上缴或划拨如何产生、对应哪笔通行或由哪些主体分配时使用。
     inputs:
       settlement_id: {type: string, description: 清分结算对象 ID}
     reads:
-      objects: [settlement, split_result, charge, payment, passage, toll_interval, party]
-      relations: [derives, references]
+      objects: [settlement, allocation, remittance, collection_summary, invoice_basis, clearing_result, split_result, charge, payment, passage, toll_interval, party]
+      relations: [derives, references, associates]
 actions:
   record_split:
     name: 登记拆分结果
@@ -136,9 +214,9 @@ actions:
     confirmation: 登记拆分结果。
   record_settlement:
     name: 登记清分结算
-    description: 根据当前拆分结果登记应结和已划拨的结算事实。
+    description: 根据当前清分结果登记业务主体应结金额；实际划拨需另行登记。
     icon: badge_check
-    "on": [split_result]
+    "on": [clearing_result]
     inputs:
       reference_no: {name: 结算流水号, property: reference_no, required: true}
       amount: {name: 结算金额, property: amount, required: true}
@@ -146,7 +224,6 @@ actions:
       occurred_at: {name: 结算时间, property: occurred_at, required: true}
       result: {name: 结算结果, property: result, required: true}
       due_amount: {name: 应结金额, property: due_amount, required: false}
-      allocated_amount: {name: 已划拨金额, property: allocated_amount, required: false}
       recipient_id: {name: 接收主体, objects: [party], required: false}
       status: {name: 状态, property: status, required: false, default: completed}
       source_system: {name: 来源系统, property: source_system, required: false}
@@ -156,7 +233,126 @@ actions:
     changes:
       create: {objects: [settlement], relations: [derives, references]}
     confirmation: 登记清分结算。
+  record_clearing_result:
+    name: 登记清分结果
+    description: 将当前拆分结果按期间和业务主体汇总为清分结果。
+    icon: file_check_2
+    "on": [split_result]
+    inputs:
+      reference_no: {name: 清分流水号, property: reference_no, required: true}
+      amount: {name: 清分金额, property: amount, required: true}
+      period: {name: 清分期间, property: period, required: true}
+      result: {name: 清分结果, property: result, required: true}
+      split_basis: {name: 清分依据, property: split_basis, required: false}
+      owner_id: {name: 收费公路业主, objects: [party], required: false}
+      interval_id: {name: 收费单元, objects: [toll_interval], required: false}
+      status: {name: 状态, property: status, required: false, default: completed}
+      version: {name: 业务版本, property: version, required: false}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 清分详情, property: details, required: false}
+    changes: {create: {objects: [clearing_result], relations: [derives, associates, references]}}
+    confirmation: 登记清分结果并关联收费主体。
+  add_split_to_clearing:
+    name: 追加清分来源拆分
+    description: 将另一条同期间、同清分口径的拆分结果纳入当前清分结果的来源集合。
+    icon: list_plus
+    "on": [clearing_result]
+    inputs:
+      split_id: {name: 来源拆分结果, objects: [split_result], required: true}
+    changes: {create: {objects: [], relations: [derives]}}
+    confirmation: 将拆分结果追加为当前清分结果的来源。
+  record_invoice_basis:
+    name: 登记发票依据
+    description: 为当前拆分或清分结果登记可开票的业务依据。
+    icon: file_text
+    "on": [split_result, clearing_result]
+    inputs:
+      reference_no: {name: 发票依据编号, property: reference_no, required: true}
+      amount: {name: 可开票金额, property: amount, required: true}
+      period: {name: 业务期间, property: period, required: false}
+      category: {name: 依据类型, property: category, required: true}
+      status: {name: 状态, property: status, required: false, default: ready}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 发票依据详情, property: details, required: false}
+    changes: {create: {objects: [invoice_basis], relations: [derives]}}
+    confirmation: 登记发票开具依据。
+  record_collection_summary:
+    name: 登记收款汇总
+    description: 按期间登记 ETC 或非 ETC 通行费的收款汇总，为上缴提供依据。
+    icon: wallet_minimal
+    "on": [passage]
+    inputs:
+      reference_no: {name: 汇总编号, property: reference_no, required: true}
+      amount: {name: 汇总金额, property: amount, required: true}
+      period: {name: 汇总期间, property: period, required: true}
+      category: {name: 收款类型, property: category, required: true, options: [etc, non_etc]}
+      transaction_count: {name: 交易笔数, property: transaction_count, required: false}
+      status: {name: 状态, property: status, required: false, default: completed}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 收款详情, property: details, required: false}
+    changes: {create: {objects: [collection_summary], relations: [derives]}}
+    confirmation: 登记通行费收款汇总。
+  add_passage_to_collection:
+    name: 追加收款汇总来源
+    description: 将另一笔同期间、同收款类型的通行事实纳入当前收款汇总。
+    icon: list_plus
+    "on": [collection_summary]
+    inputs:
+      passage_id: {name: 来源通行, objects: [passage], required: true}
+    changes: {create: {objects: [], relations: [derives]}}
+    confirmation: 将通行追加为当前收款汇总的来源。
+  record_remittance:
+    name: 登记通行费上缴
+    description: 登记 ETC 或非 ETC 收款主体实际向结算中心上缴的通行费。
+    icon: send
+    "on": [collection_summary]
+    inputs:
+      reference_no: {name: 上缴流水号, property: reference_no, required: true}
+      amount: {name: 上缴金额, property: amount, required: true}
+      period: {name: 上缴期间, property: period, required: true}
+      category: {name: 上缴类型, property: category, required: true, options: [etc, non_etc]}
+      occurred_at: {name: 上缴时间, property: occurred_at, required: true}
+      result: {name: 上缴结果, property: result, required: true}
+      payer_id: {name: 上缴主体, objects: [party], required: false}
+      payee_id: {name: 接收主体, objects: [party], required: false}
+      status: {name: 状态, property: status, required: false, default: completed}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 上缴详情, property: details, required: false}
+    changes: {create: {objects: [remittance], relations: [derives, associates]}}
+    confirmation: 登记通行费上缴事实。
+  record_allocation:
+    name: 登记通行费划拨
+    description: 根据当前结算结果登记应结金额和实际划拨金额。
+    icon: arrow_right_left
+    "on": [settlement]
+    inputs:
+      reference_no: {name: 划拨流水号, property: reference_no, required: true}
+      amount: {name: 划拨金额, property: amount, required: true}
+      period: {name: 划拨期间, property: period, required: true}
+      category: {name: 划拨类型, property: category, required: true}
+      due_amount: {name: 应结金额, property: due_amount, required: false}
+      allocated_amount: {name: 实际划拨金额, property: allocated_amount, required: true}
+      occurred_at: {name: 划拨时间, property: occurred_at, required: true}
+      result: {name: 划拨结果, property: result, required: true}
+      recipient_id: {name: 收款主体, objects: [party], required: false}
+      status: {name: 状态, property: status, required: false, default: completed}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 划拨详情, property: details, required: false}
+    changes: {create: {objects: [allocation], relations: [derives, associates]}}
+    confirmation: 登记通行费划拨事实。
 agent:
   instructions:
   - 一笔计费可以对应多条 split_result，不能把拆分结果汇总成一个业主。
-  - 清分金额沿 passage -> charge -> split_result -> settlement 追溯。
+  - clearing_result 可以由多条 split_result 聚合，collection_summary 可以由多笔 passage 聚合；创建时关联首个来源，后续来源通过追加操作逐条建立 derives 关系。
+  - 应结和实拨是两个事实：清分金额沿 passage -> charge -> split_result -> clearing_result -> settlement 追溯，实际划拨继续追溯到 allocation。
+  - 非 ETC 代收和 ETC 发行方收款分别通过 collection_summary.category 表达，上缴资金沿 collection_summary -> remittance 追溯。

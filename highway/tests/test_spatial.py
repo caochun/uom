@@ -54,6 +54,37 @@ class SpatialViewServiceTest(unittest.TestCase):
         self.assertEqual(["entry", "gantry", "exit"], [item["stage"] for item in view["events"]])
         self.assertEqual(["lane:jinan_entry", "gantry:g20_mid_1", "lane:qingdao_exit"], view["lines"][0]["node_ids"])
 
+    def test_pricing_path_uses_relation_sequence_and_mileage(self) -> None:
+        view = self.service.get_view("path:etc_001")
+
+        self.assertEqual("pricing_path", view["mode"])
+        self.assertEqual([1, 2, 3, 4, 5], [item["sequence"] for item in view["events"]])
+        self.assertEqual([0, 52, 102, 210, 317], [item["mileage"] for item in view["events"]])
+        self.assertEqual(
+            [
+                "station:jinan_east",
+                "gantry:g20_mid_1",
+                "station:zibo",
+                "gantry:g20_mid_2",
+                "station:qingdao",
+            ],
+            view["lines"][0]["node_ids"],
+        )
+
+    def test_minimum_fee_path_keeps_declared_business_order(self) -> None:
+        view = self.service.get_view("path:g20_min_2026_08")
+
+        self.assertEqual("pricing_path", view["mode"])
+        self.assertEqual(
+            [
+                "station:jinan_east",
+                "interval:g20_jinan_zibo",
+                "interval:g20_zibo_qingdao",
+                "station:qingdao",
+            ],
+            view["lines"][0]["node_ids"],
+        )
+
     def test_non_spatial_object_has_no_map_view(self) -> None:
         self.assertFalse(self.service.get_view("vehicle:lu_a12345")["available"])
 

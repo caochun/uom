@@ -14,3 +14,169 @@ actions:
     effects:
       - create_object: {ref: control, type: control_record, name: $input.name, properties: {category: $input.category, status: $input.status, valid_from: $input.valid_from, valid_to: $input.valid_to, reason: $input.reason, source_system: $input.source_system, source_type: $input.source_type, source_id: $input.source_id, details: $input.details}}
       - create_relation: {type: references, from: $control, to: $input.target_id, properties: {role: controlled_object, relation_status: active}}
+  register_interval_rate:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: interval_rate
+          type: interval_rate
+          name: $input.name
+          properties:
+            code: $input.code
+            vehicle_type: $input.vehicle_type
+            unit_rate: $input.unit_rate
+            fee_type: $input.fee_type
+            valid_from: $input.valid_from
+            valid_to: $input.valid_to
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: references
+          from: $interval_rate
+          to: $context
+          properties:
+            role: rate_version
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $interval_rate
+          to: $input.interval_id
+          properties:
+            role: toll_interval
+            relation_status: confirmed
+  record_pricing_path:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: path
+          type: pricing_path
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            path_kind: $input.path_kind
+            occurred_at: $input.occurred_at
+            result: $input.result
+            version: $input.version
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: derives
+          from: $context
+          to: $path
+          properties:
+            role: pricing_path
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $path
+          to: $input.node_id
+          properties:
+            role: path_node
+            sequence: $input.sequence
+            mileage: $input.node_mileage
+            relation_status: confirmed
+  register_minimum_fee_path:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: path
+          type: pricing_path
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            path_kind: national_minimum
+            occurred_at: $input.occurred_at
+            result: $input.result
+            version: $input.version
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: references
+          from: $context
+          to: $path
+          properties: {role: national_minimum_path, relation_status: active}
+      - create_relation:
+          type: references
+          from: $path
+          to: $input.node_id
+          properties:
+            role: path_node
+            sequence: $input.sequence
+            mileage: $input.node_mileage
+            relation_status: confirmed
+  append_pricing_path_node:
+    handler: changeset
+    effects:
+      - create_relation:
+          type: references
+          from: $context
+          to: $input.node_id
+          properties:
+            role: path_node
+            sequence: $input.sequence
+            mileage: $input.mileage
+            relation_status: confirmed
+  record_charge_breakdown:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: breakdown
+          type: charge_breakdown
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            amount: $input.amount
+            calculation_kind: $input.calculation_kind
+            occurred_at: $input.occurred_at
+            result: $input.result
+            sequence: $input.sequence
+            mileage: $input.mileage
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: derives
+          from: $context
+          to: $breakdown
+          properties:
+            role: charge_breakdown
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $breakdown
+          to: $input.interval_id
+          properties:
+            role: toll_interval
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $breakdown
+          to: $input.interval_rate_id
+          properties:
+            role: interval_rate
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $breakdown
+          to: $input.rate_rule_id
+          properties:
+            role: rate_rule
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $breakdown
+          to: $input.pricing_path_id
+          properties:
+            role: pricing_path
+            relation_status: confirmed

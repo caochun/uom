@@ -4,11 +4,11 @@ Highway 按业务责任拆成五个平级、可独立加载的业务域：
 
 | 领域 ID | 负责的语义 | 自有对象 |
 | --- | --- | --- |
-| `highway.passage_charging` | 车辆一次通行形成计费和支付 | `party`、`vehicle`、`toll_medium`、`passage`、`passage_event`、`charge`、`payment` |
-| `highway.customer_accounts` | 客户账户、余额和账户记账 | `account`、`account_entry` |
-| `highway.clearing_settlement` | 通行费拆分、业主分配和资金结算 | `split_result`、`settlement` |
+| `highway.passage_charging` | 车辆一次通行形成计费、支付及特殊处理 | `party`、`vehicle`、`toll_medium`、`passage`、`passage_event`、`charge`、`payment`、`inspection_result`、`charge_adjustment` |
+| `highway.customer_accounts` | 客户账户、电子钱包、客服办理、资金交易和账单结算 | `account`、`wallet`、`account_entry`、`service_operation`、`fund_transaction`、`bill`、`bill_settlement` |
+| `highway.clearing_settlement` | 通行费拆分、清分、发票依据、收款、上缴和实际划拨 | `split_result`、`clearing_result`、`invoice_basis`、`collection_summary`、`remittance`、`settlement`、`allocation` |
 | `highway.facility_operations` | 道路设施组成和路网拓扑 | `toll_road`、`section`、`toll_interval`、`toll_station`、`toll_gantry`、`toll_lane`、`equipment` |
-| `highway.pricing_control` | 费率发布和车辆、介质、设备控制 | `rate_version`、`rate_rule`、`control_record` |
+| `highway.pricing_control` | 费率发布、计费路径/明细和车辆、介质、设备控制 | `rate_version`、`rate_rule`、`interval_rate`、`pricing_path`、`charge_breakdown`、`control_record` |
 
 各域共享 `../../data/graph.db`，同一个对象只保存一份。跨域对象通过
 [`../contracts/highway_core.yaml`](../contracts/highway_core.yaml) 与 `domains/` 平级，作为编译期语义锚点导入，不是运行时业务域，也不等于导入它的领域拥有全部定义。
@@ -16,9 +16,10 @@ Highway 按业务责任拆成五个平级、可独立加载的业务域：
 ```text
 facility_operations  road -> section -> interval/station/gantry/lane/equipment
 passage_charging     vehicle/medium -> passage -> event -> charge <- payment
-customer_accounts    account -> account_entry -> payment
-clearing_settlement  charge -> split_result -> settlement
-pricing_control      rate_version -> rate_rule <- charge
+customer_accounts    account -> wallet/account_entry -> fund_transaction -> bill
+clearing_settlement  charge -> split_result -> clearing_result/invoice_basis -> settlement -> allocation
+                     passage -> collection_summary -> remittance
+pricing_control      rate_version -> interval_rate -> charge_breakdown <- charge
 ```
 
 ## 运行时边界

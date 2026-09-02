@@ -17,6 +17,14 @@ actions:
     handler: changeset
     effects:
       - create_relation: {type: associates, from: $context, to: $input.medium_id, properties: {role: $input.role, relation_status: active}}
+  pair_toll_media:
+    handler: changeset
+    effects:
+      - create_relation: {type: associates, from: $context, to: $input.card_id, properties: {role: paired_card, relation_status: active}}
+  assign_medium_party:
+    handler: changeset
+    effects:
+      - create_relation: {type: associates, from: $context, to: $input.party_id, properties: {role: $input.role, relation_status: active}}
   record_passage:
     handler: changeset
     effects:
@@ -47,3 +55,68 @@ actions:
       - create_object: {ref: payment, type: payment, name: $input.reference_no, properties: {reference_no: $input.reference_no, amount: $input.amount, payment_type: $input.payment_type, occurred_at: $input.occurred_at, result: $input.result, source_system: $input.source_system, source_type: $input.source_type, source_id: $input.source_id, details: $input.details}}
       - create_relation: {type: references, from: $payment, to: $context, properties: {role: settles_charge, relation_status: confirmed}}
       - create_relation: {type: associates, from: $payment, to: $input.account_id, properties: {role: debit_account, relation_status: confirmed}}
+  record_inspection_result:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: inspection
+          type: inspection_result
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            inspection_kind: $input.inspection_kind
+            occurred_at: $input.occurred_at
+            result: $input.result
+            reason: $input.reason
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: derives
+          from: $context
+          to: $inspection
+          properties:
+            role: inspection
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $inspection
+          to: $input.event_id
+          properties:
+            role: passage_event
+            relation_status: confirmed
+  record_charge_adjustment:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: adjustment
+          type: charge_adjustment
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            adjustment_kind: $input.adjustment_kind
+            amount: $input.amount
+            occurred_at: $input.occurred_at
+            result: $input.result
+            reason: $input.reason
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: derives
+          from: $context
+          to: $adjustment
+          properties:
+            role: charge_adjustment
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $adjustment
+          to: $input.inspection_id
+          properties:
+            role: inspection
+            relation_status: confirmed

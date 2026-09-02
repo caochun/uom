@@ -1,13 +1,13 @@
 schema: uom.domain.v1
 name: Highway 费率与业务控制域
-version: 1.0.0
+version: 1.1.0
 description: >-
   面向计费依据发布以及车辆、通行介质和设备的运营控制。本域维护费率规则、费率版本和控制记录；
   计费结果只引用这些对象，不在本域形成通行收费事实。
 imports:
   - path: ../../contracts/highway_core.yaml
-    properties: [category, code, reference_no, status, details, plate_no, vehicle_type, medium_kind, valid_from, valid_to, mode, occurred_at, result, paid_amount, fee_type, version, reason, role, relation_status, source_system, source_type, source_id, unit_rate, discount_rule]
-    objects: [vehicle, toll_medium, passage, charge, equipment, rate_version, rate_rule]
+    properties: [category, code, reference_no, status, details, plate_no, vehicle_type, medium_kind, valid_from, valid_to, mode, occurred_at, result, paid_amount, amount, fee_type, version, reason, role, relation_status, source_system, source_type, source_id, unit_rate, discount_rule, mileage]
+    objects: [vehicle, toll_medium, passage, charge, equipment, toll_interval, toll_station, toll_gantry, rate_version, rate_rule]
     relations: [references, derives]
 repositories:
   graph:
@@ -40,6 +40,10 @@ properties:
   source_id: {name: 来源记录标识, type: string, description: 外部系统稳定记录标识。}
   unit_rate: {name: 单位费率, type: number, description: 费率规则基础单价。}
   discount_rule: {name: 优惠规则, type: json, description: 优惠、折扣或减免条件。}
+  mileage: {name: 计费里程, type: number, description: 费率或计费路径使用的里程。}
+  sequence: {name: 顺序, type: number, description: 路径节点或费用明细中的顺序。}
+  path_kind: {name: 路径类型, type: string, description: 实际路径、计费路径或最小费额路径。}
+  calculation_kind: {name: 计算类型, type: string, description: 按收费单元、车型、优惠或最低费额等计算口径。}
 objects:
   rate_version:
     name: 费率版本
@@ -62,18 +66,64 @@ objects:
       source_type: optional
       source_id: optional
       details: optional
+  interval_rate:
+    name: 收费单元费率
+    description: 某收费单元在指定版本下针对车型和收费方式适用的计费规则。
+    properties:
+      code: required
+      vehicle_type: required
+      unit_rate: required
+      fee_type: required
+      valid_from: required
+      valid_to: optional
+      status: optional
+      version: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
+  pricing_path:
+    name: 计费路径
+    description: 为一次通行确定的用于计费或最低费额兜底的有序路网路径。
+    properties:
+      reference_no: required
+      path_kind: required
+      occurred_at: required
+      result: required
+      version: optional
+      status: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
+  charge_breakdown:
+    name: 计费明细
+    description: 计费结果按收费单元、费率和优惠规则拆开的可解释金额明细。
+    properties:
+      reference_no: required
+      amount: required
+      calculation_kind: required
+      occurred_at: required
+      result: required
+      sequence: optional
+      mileage: optional
+      status: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
 relations:
   references:
     name: 引用
-    description: 费率版本引用具体费率规则，控制记录引用被控制对象。
-    from: [rate_version, control_record, charge]
-    to: [rate_version, rate_rule, vehicle, toll_medium, equipment]
-    properties: {role: required, relation_status: optional}
+    description: 费率、计费路径和计费明细引用版本、路网、设备或业务事实。
+    from: [rate_version, control_record, charge, interval_rate, pricing_path, charge_breakdown]
+    to: [rate_version, rate_rule, vehicle, toll_medium, equipment, toll_interval, toll_station, toll_gantry, passage, charge, pricing_path, interval_rate]
+    properties: {role: required, sequence: optional, mileage: optional, relation_status: optional}
   derives:
     name: 派生
-    description: 通行产生可引用费率依据的计费结果。
-    from: [passage]
-    to: [charge]
+    description: 通行和计费依据形成计费路径、计费结果及其可解释明细。
+    from: [passage, pricing_path, charge]
+    to: [charge, pricing_path, charge_breakdown]
     properties: {role: optional, relation_status: optional}
     acyclic: true
 functions:
@@ -83,13 +133,13 @@ functions:
     usage_prompt: 用户询问当前费率版本、车型单价、优惠规则、追缴名单或车辆介质控制时使用。
     inputs:
       object_id: {type: string, description: 可选的费率、控制记录或受控对象 ID, default: ""}
-    reads: {objects: [rate_version, rate_rule, control_record, vehicle, toll_medium, equipment], relations: [references]}
+    reads: {objects: [rate_version, rate_rule, control_record, interval_rate, pricing_path, charge_breakdown, vehicle, toll_medium, equipment, toll_interval], relations: [references, derives]}
   get_passage_fare_basis:
     name: 获取通行计费依据
     description: 返回指定通行的计费结果所引用的费率版本与具体费率规则。
     usage_prompt: 用户询问某次通行按什么车型、单价、费率版本或优惠规则计费时使用。
     inputs: {passage_id: {type: string, description: 通行过程对象 ID}}
-    reads: {objects: [passage, charge, rate_version, rate_rule], relations: [derives, references]}
+    reads: {objects: [passage, charge, rate_version, rate_rule, interval_rate, pricing_path, charge_breakdown, toll_interval], relations: [derives, references]}
 actions:
   register_rate_rule:
     name: 登记费率规则
@@ -147,8 +197,107 @@ actions:
       details: {name: 控制详情, property: details, required: false}
     changes: {create: {objects: [control_record], relations: [references]}}
     confirmation: 登记业务控制记录并关联受控对象。
+  register_interval_rate:
+    name: 登记收费单元费率
+    description: 为指定收费单元登记一个版本化的车型费率。
+    icon: route
+    "on": [rate_version]
+    inputs:
+      name: {name: 费率名称, type: string, required: true}
+      code: {name: 费率编码, property: code, required: true}
+      vehicle_type: {name: 适用车型, property: vehicle_type, required: true}
+      unit_rate: {name: 单位费率, property: unit_rate, required: true}
+      fee_type: {name: 计费类型, property: fee_type, required: true}
+      valid_from: {name: 生效日期, property: valid_from, required: true}
+      valid_to: {name: 失效日期, property: valid_to, required: false}
+      interval_id: {name: 收费单元, objects: [toll_interval], required: true}
+      status: {name: 状态, property: status, required: false, default: active}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 收费单元费率详情, property: details, required: false}
+    changes: {create: {objects: [interval_rate], relations: [references]}}
+    confirmation: 登记收费单元费率。
+  record_pricing_path:
+    name: 登记计费路径
+    description: 为当前通行登记实际行驶路径或最终采用的计费路径，并记录第一个有序路径节点。
+    icon: route
+    "on": [passage]
+    inputs:
+      reference_no: {name: 路径编号, property: reference_no, required: true}
+      path_kind: {name: 路径类型, property: path_kind, required: true, options: [actual, charging]}
+      occurred_at: {name: 确定时间, property: occurred_at, required: true}
+      result: {name: 路径结果, property: result, required: true}
+      version: {name: 路径版本, property: version, required: false}
+      node_id: {name: 首个路径节点, objects: [toll_station, toll_gantry, toll_interval], required: true}
+      sequence: {name: 节点顺序, property: sequence, required: true, default: 1}
+      node_mileage: {name: 节点对应里程, property: mileage, required: false}
+      status: {name: 状态, property: status, required: false, default: confirmed}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, type: string, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 路径详情, property: details, required: false}
+    changes: {create: {objects: [pricing_path], relations: [derives, references]}}
+    confirmation: 登记计费路径。
+  register_minimum_fee_path:
+    name: 登记全网最小费额路径
+    description: 在当前费率版本下登记可复用的站到站最低费额兜底路径，并记录第一个有序节点。
+    icon: route
+    "on": [rate_version]
+    inputs:
+      reference_no: {name: 路径编号, property: reference_no, required: true}
+      occurred_at: {name: 发布时间, property: occurred_at, required: true}
+      result: {name: 发布结果, property: result, required: true}
+      version: {name: 路径版本, property: version, required: false}
+      node_id: {name: 首个路径节点, objects: [toll_station, toll_gantry, toll_interval], required: true}
+      sequence: {name: 节点顺序, property: sequence, required: true, default: 1}
+      node_mileage: {name: 节点对应里程, property: mileage, required: false}
+      status: {name: 状态, property: status, required: false, default: published}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 路径详情, property: details, required: false}
+    changes: {create: {objects: [pricing_path], relations: [references]}}
+    confirmation: 登记全网最小费额路径。
+  append_pricing_path_node:
+    name: 追加计费路径节点
+    description: 按明确顺序向当前计费路径追加收费站、门架或收费单元节点。
+    icon: list_plus
+    "on": [pricing_path]
+    inputs:
+      node_id: {name: 路径节点, objects: [toll_station, toll_gantry, toll_interval], required: true}
+      sequence: {name: 节点顺序, property: sequence, required: true}
+      mileage: {name: 节点对应里程, property: mileage, required: false}
+    changes: {create: {objects: [], relations: [references]}}
+    confirmation: 向计费路径追加有序节点。
+  record_charge_breakdown:
+    name: 登记计费明细
+    description: 将当前计费结果按收费单元或费率规则登记可解释的金额明细。
+    icon: list_tree
+    "on": [charge]
+    inputs:
+      reference_no: {name: 明细编号, property: reference_no, required: true}
+      amount: {name: 明细金额, type: money, required: true}
+      calculation_kind: {name: 计算类型, property: calculation_kind, required: true}
+      occurred_at: {name: 计算时间, property: occurred_at, required: true}
+      result: {name: 明细结果, property: result, required: true}
+      sequence: {name: 明细顺序, property: sequence, required: false}
+      mileage: {name: 计费里程, property: mileage, required: false}
+      interval_id: {name: 收费单元, objects: [toll_interval], required: false}
+      interval_rate_id: {name: 收费单元费率, objects: [interval_rate], required: false}
+      rate_rule_id: {name: 费率规则, objects: [rate_rule], required: false}
+      pricing_path_id: {name: 计费路径, objects: [pricing_path], required: false}
+      status: {name: 状态, property: status, required: false, default: calculated}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 明细详情, property: details, required: false}
+    changes: {create: {objects: [charge_breakdown], relations: [derives, references]}}
+    confirmation: 登记计费明细。
 agent:
   instructions:
   - 费率规则是具体车型、单价和优惠口径；费率版本是一次发布的规则集合，二者不能合并为同一对象。
   - 计费结果由经营主链域维护，本域只提供被计费结果引用的依据。
   - 业务控制记录是针对车辆、通行介质或设备的控制事实，不应改写被控制对象的身份。
+  - pricing_path 是路径整体，路径引用节点的 references 关系通过 sequence 和 mileage 表达顺序及里程，不能依赖关系返回顺序推断路径。
+  - actual/charging 路径属于某次 passage；national_minimum 路径属于费率版本，是可被多次通行复用的兜底计费参数。

@@ -13,6 +13,17 @@ actions:
             balance: $input.balance
             status: $input.status
             details: $input.details
+      - create_relation: {type: associates, from: $account, to: $input.holder_id, properties: {role: account_holder, relation_status: active}}
+      - create_relation: {type: associates, from: $account, to: $input.medium_id, properties: {role: account_medium, relation_status: active}}
+  register_wallet:
+    handler: changeset
+    effects:
+      - create_object: {ref: wallet, type: wallet, name: $input.name, properties: {wallet_kind: $input.wallet_kind, code: $input.code, balance: $input.balance, status: $input.status, details: $input.details}}
+      - create_relation: {type: contains, from: $context, to: $wallet, properties: {relation_status: active}}
+  link_deduction_account:
+    handler: changeset
+    effects:
+      - create_relation: {type: references, from: $context, to: $input.deduction_account_id, properties: {role: deduction_account, relation_status: active}}
   record_account_entry:
     handler: changeset
     effects:
@@ -50,4 +61,198 @@ actions:
           to: $input.passage_id
           properties:
             role: passage
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $entry
+          to: $input.transaction_id
+          properties:
+            role: fund_transaction
+            relation_status: confirmed
+  record_service_operation:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: operation
+          type: service_operation
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            operation_kind: $input.operation_kind
+            occurred_at: $input.occurred_at
+            result: $input.result
+            operation_channel: $input.operation_channel
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: associates
+          from: $operation
+          to: $context
+          properties:
+            role: service_subject
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $operation
+          to: $input.related_object_id
+          properties:
+            role: related_object
+            relation_status: confirmed
+  record_fund_transaction:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: transaction
+          type: fund_transaction
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            transaction_kind: $input.transaction_kind
+            amount: $input.amount
+            occurred_at: $input.occurred_at
+            result: $input.result
+            payment_type: $input.payment_type
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: associates
+          from: $transaction
+          to: $context
+          properties:
+            role: $input.account_role
+            relation_status: confirmed
+      - create_relation:
+          type: associates
+          from: $transaction
+          to: $input.related_account_id
+          properties:
+            role: $input.related_account_role
+            relation_status: confirmed
+      - create_relation:
+          type: associates
+          from: $transaction
+          to: $input.wallet_id
+          properties:
+            role: $input.wallet_role
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $transaction
+          to: $input.operation_id
+          properties:
+            role: service_operation
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $transaction
+          to: $input.payment_id
+          properties:
+            role: payment
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $transaction
+          to: $input.passage_id
+          properties:
+            role: passage
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $transaction
+          to: $input.bill_id
+          properties:
+            role: bill
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $transaction
+          to: $input.original_transaction_id
+          properties:
+            role: original_transaction
+            relation_status: confirmed
+  record_bill:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: bill
+          type: bill
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            billing_period: $input.billing_period
+            amount: $input.amount
+            transaction_count: $input.transaction_count
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: associates
+          from: $bill
+          to: $context
+          properties:
+            role: account
+            relation_status: confirmed
+      - create_relation:
+          type: derives
+          from: $input.first_transaction_id
+          to: $bill
+          properties:
+            role: bill_source
+            relation_status: confirmed
+  add_transaction_to_bill:
+    handler: changeset
+    effects:
+      - create_relation:
+          type: derives
+          from: $input.transaction_id
+          to: $context
+          properties:
+            role: bill_source
+            relation_status: confirmed
+  record_bill_settlement:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: settlement
+          type: bill_settlement
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            amount: $input.amount
+            occurred_at: $input.occurred_at
+            result: $input.result
+            payment_type: $input.payment_type
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: derives
+          from: $context
+          to: $settlement
+          properties:
+            role: bill_settlement
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $settlement
+          to: $input.payment_id
+          properties:
+            role: payment
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $settlement
+          to: $input.transaction_id
+          properties:
+            role: fund_transaction
             relation_status: confirmed

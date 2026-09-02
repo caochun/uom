@@ -18,11 +18,11 @@ class HighwayAgentRuntimeTest(unittest.TestCase):
         runtime = OagAgentRuntime(ROOT, ROOT / "highway")
         try:
             self.assertEqual(["highway.passage_charging"], runtime.domain_ids)
-            self.assertEqual(8, len(runtime.runtime.ontology.actions))
+            self.assertEqual(12, len(runtime.runtime.ontology.actions))
             self.assertEqual(0, len(runtime.ontology.actions))
             self.assertEqual(5, len(runtime.domain_catalog()))
             self.assertIn("settlement", runtime.ontology.objects)
-            self.assertEqual(23, len(runtime.bootstrap(include_graph=False)["model"]["actions"]))
+            self.assertEqual(46, len(runtime.bootstrap(include_graph=False)["model"]["actions"]))
             self.assertEqual(
                 "highway.facility_operations",
                 runtime.match_domains("登记收费站", limit=1)[0]["id"],
@@ -166,7 +166,7 @@ class HighwayAgentRuntimeTest(unittest.TestCase):
         try:
             bootstrap = runtime.bootstrap(include_graph=False)
 
-            self.assertEqual(21, len(bootstrap["model"]["object_types"]))
+            self.assertEqual(36, len(bootstrap["model"]["object_types"]))
             self.assertEqual(
                 ["highway.facility_operations"],
                 bootstrap["domain_ownership"]["objects"]["toll_interval"],

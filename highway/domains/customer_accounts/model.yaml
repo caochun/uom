@@ -1,13 +1,13 @@
 schema: uom.domain.v1
 name: Highway 客户账户业务域
-version: 1.0.0
+version: 1.1.0
 description: >-
   面向通行扣款和客户账户记账的业务域。账户记录余额和账户明细，支付、计费和通行作为跨域事实通过关系关联。
 imports:
   - path: ../../contracts/highway_core.yaml
-    properties: [category, code, reference_no, status, details, plate_no, mode, occurred_at, result, paid_amount, payment_type, amount, role, relation_status, source_system, source_type, source_id]
-    objects: [party, passage, charge, payment, vehicle]
-    relations: [contains, associates, references]
+    properties: [category, code, reference_no, status, details, plate_no, mode, occurred_at, result, paid_amount, payment_type, amount, period, role, relation_status, source_system, source_type, source_id]
+    objects: [party, passage, charge, payment, vehicle, toll_medium]
+    relations: [contains, associates, references, derives]
 repositories:
   graph:
     type: sqlite_graph
@@ -37,6 +37,12 @@ properties:
   source_id: {name: 来源记录标识, type: string, description: 外部系统中的稳定记录标识。}
   role: {name: 关系角色, type: string, description: 关系端点在当前业务联系中的角色。}
   relation_status: {name: 关系状态, type: string, description: 关系当前状态。}
+  operation_kind: {name: 客服业务类型, type: string, description: 开户、换卡、车辆变更等客户服务业务类型。}
+  operation_channel: {name: 办理渠道, type: string, description: 客服业务办理所使用的网点、线上或银行渠道。}
+  transaction_kind: {name: 资金交易类型, type: string, description: 充值、转账、圈存、消费、退费、退款或冲正等交易类型。}
+  billing_period: {name: 账单期间, type: period, description: 账单覆盖的业务期间。}
+  transaction_count: {name: 交易笔数, type: number, description: 账单或汇总包含的交易数量。}
+  wallet_kind: {name: 钱包类型, type: string, description: ETC 卡内电子钱包或其他受账户管理的资金载体类型。}
 objects:
   account:
     name: 客户账户
@@ -61,29 +67,102 @@ objects:
       source_type: optional
       source_id: optional
       details: optional
+  wallet:
+    name: 电子钱包
+    description: ETC 储值卡内实际承载可圈存和消费余额的电子钱包，由卡账户包含但不等同于卡账户。
+    properties:
+      wallet_kind: required
+      code: required
+      balance: optional
+      status: optional
+      details: optional
+  service_operation:
+    name: 客服业务办理
+    description: 一次围绕用户、车辆、通行介质或账户完成的客户服务办理事实。
+    properties:
+      reference_no: required
+      operation_kind: required
+      occurred_at: required
+      result: required
+      status: optional
+      operation_channel: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
+  fund_transaction:
+    name: 账户资金交易
+    description: 客户账户或卡账户发生的充值、转移、圈存、消费、退费、退款或冲正事实。
+    properties:
+      reference_no: required
+      transaction_kind: required
+      amount: required
+      occurred_at: required
+      result: required
+      payment_type: optional
+      status: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
+  bill:
+    name: ETC 账单
+    description: 按账期汇总 ETC 消费及其调整交易形成的应结业务结果。
+    properties:
+      reference_no: required
+      billing_period: required
+      amount: required
+      transaction_count: optional
+      status: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
+  bill_settlement:
+    name: 账单结算结果
+    description: 账单经客服缴费或银行扣款后形成的实际结算结果。
+    properties:
+      reference_no: required
+      amount: required
+      occurred_at: required
+      result: required
+      payment_type: optional
+      status: optional
+      source_system: optional
+      source_type: optional
+      source_id: optional
+      details: optional
 relations:
   contains:
     name: 包含
-    description: 账户包含其账户记账明细。
+    description: 账户包含其账户记账明细；储值卡账户还可以包含卡内电子钱包。
     from: [account]
-    to: [account_entry]
+    to: [account_entry, wallet]
     properties:
       relation_status: optional
   associates:
     name: 关联
-    description: 主体、车辆、账户和支付事实之间的业务联系。
-    from: [party, account, payment]
-    to: [account, vehicle, party]
+    description: 客服、账户、资金交易、账单与相关主体或业务事实之间的业务联系。
+    from: [party, account, payment, service_operation, fund_transaction, bill, bill_settlement]
+    to: [account, wallet, vehicle, party, payment, passage, toll_medium, bill]
     properties:
       role: required
       relation_status: optional
   references:
     name: 引用
-    description: 账户明细或支付事实引用其对应的计费、通行或账户来源。
-    from: [account_entry, payment]
+    description: 账户、客服或资金业务引用其对应的计费、通行、支付、账单或原始交易来源。
+    from: [account, account_entry, payment, service_operation, fund_transaction, bill, bill_settlement]
     to: []
     properties:
       role: required
+      relation_status: optional
+  derives:
+    name: 派生
+    description: 资金交易或消费事实汇总形成账单、结算结果或账户记账结果。
+    from: [payment, fund_transaction, bill]
+    to: [account_entry, bill, bill_settlement]
+    properties:
+      role: optional
       relation_status: optional
 functions:
   get_account_ledger:
@@ -94,8 +173,8 @@ functions:
       account_id: {type: string, description: 客户账户对象 ID}
       limit: {type: integer, description: 最多返回的账户明细数量, default: 100}
     reads:
-      objects: [account, account_entry, payment, charge, passage]
-      relations: [contains, references]
+      objects: [account, wallet, account_entry, service_operation, fund_transaction, bill, bill_settlement, party, toll_medium, payment, charge, passage]
+      relations: [contains, associates, references, derives]
 actions:
   register_account:
     name: 登记客户账户
@@ -106,11 +185,36 @@ actions:
       account_kind: {name: 账户类型, property: account_kind, required: true}
       code: {name: 账户编码, property: code, required: true}
       balance: {name: 初始余额, property: balance, required: false}
+      holder_id: {name: 账户持有人, objects: [party], required: false}
+      medium_id: {name: 对应 ETC 卡, objects: [toll_medium], required: false}
       status: {name: 状态, property: status, required: false, default: active}
       details: {name: 账户详情, property: details, required: false}
     changes:
-      create: {objects: [account], relations: []}
+      create: {objects: [account], relations: [associates]}
     confirmation: 登记客户账户。
+  register_wallet:
+    name: 登记电子钱包
+    description: 在当前储值卡账户下登记卡内电子钱包，账户与钱包分别维护自己的余额事实。
+    icon: wallet
+    "on": [account]
+    inputs:
+      name: {name: 钱包名称, type: string, required: true}
+      wallet_kind: {name: 钱包类型, property: wallet_kind, required: true, default: card_wallet}
+      code: {name: 钱包编码, property: code, required: true}
+      balance: {name: 初始余额, property: balance, required: false}
+      status: {name: 状态, property: status, required: false, default: active}
+      details: {name: 钱包详情, property: details, required: false}
+    changes: {create: {objects: [wallet], relations: [contains]}}
+    confirmation: 登记卡账户内的电子钱包。
+  link_deduction_account:
+    name: 关联扣款账户
+    description: 为当前记账卡账户关联实际承担银行代扣的账户。
+    icon: link_2
+    "on": [account]
+    inputs:
+      deduction_account_id: {name: 扣款账户, objects: [account], required: true}
+    changes: {create: {objects: [], relations: [references]}}
+    confirmation: 建立卡账户与扣款账户的引用关系。
   record_account_entry:
     name: 登记账户记账
     description: 在当前账户下登记一次充值、扣款、退款或冲正明细，并可关联支付或通行事实。
@@ -125,6 +229,7 @@ actions:
       balance_after: {name: 记账后余额, property: balance_after, required: false}
       payment_id: {name: 对应支付, objects: [payment], required: false}
       passage_id: {name: 对应通行, objects: [passage], required: false}
+      transaction_id: {name: 来源资金交易, objects: [fund_transaction], required: false}
       source_system: {name: 来源系统, property: source_system, required: false}
       source_type: {name: 来源记录类型, property: source_type, required: false}
       source_id: {name: 来源记录标识, property: source_id, required: false}
@@ -132,7 +237,105 @@ actions:
     changes:
       create: {objects: [account_entry], relations: [contains, references]}
     confirmation: 登记账户记账明细。
+  record_service_operation:
+    name: 登记客服业务办理
+    description: 登记一次开户、换卡、车辆变更或其他客户服务办理及其结果。
+    icon: headset
+    "on": [party, vehicle, toll_medium, account]
+    inputs:
+      reference_no: {name: 办理流水号, property: reference_no, required: true}
+      operation_kind: {name: 业务类型, property: operation_kind, required: true}
+      occurred_at: {name: 办理时间, property: occurred_at, required: true}
+      result: {name: 办理结果, property: result, required: true}
+      operation_channel: {name: 办理渠道, property: operation_channel, required: false}
+      status: {name: 状态, property: status, required: false, default: completed}
+      related_object_id: {name: 关联业务对象, objects: [party, vehicle, toll_medium, account], required: false}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 办理详情, property: details, required: false}
+    changes: {create: {objects: [service_operation], relations: [associates, references]}}
+    confirmation: 登记客服业务办理。
+  record_fund_transaction:
+    name: 登记账户资金交易
+    description: 登记充值、转移、圈存、消费、退费、退款或冲正事实，并明确资金的来源账户、目标账户或电子钱包。
+    icon: arrow_down_up
+    "on": [account]
+    inputs:
+      reference_no: {name: 交易流水号, property: reference_no, required: true}
+      transaction_kind: {name: 交易类型, property: transaction_kind, required: true}
+      amount: {name: 交易金额, property: amount, required: true}
+      occurred_at: {name: 交易时间, property: occurred_at, required: true}
+      result: {name: 交易结果, property: result, required: true}
+      payment_type: {name: 支付方式, property: payment_type, required: false}
+      account_role: {name: 当前账户角色, property: role, required: true, default: source_account, options: [source_account, target_account, card_account]}
+      related_account_id: {name: 另一账户, objects: [account], required: false}
+      related_account_role: {name: 另一账户角色, property: role, required: false, default: target_account, options: [source_account, target_account, deduction_account, card_account]}
+      wallet_id: {name: 关联电子钱包, objects: [wallet], required: false}
+      wallet_role: {name: 钱包角色, property: role, required: false, default: wallet, options: [source_wallet, target_wallet, wallet]}
+      operation_id: {name: 关联客服办理, objects: [service_operation], required: false}
+      payment_id: {name: 关联支付, objects: [payment], required: false}
+      passage_id: {name: 关联通行, objects: [passage], required: false}
+      bill_id: {name: 关联账单, objects: [bill], required: false}
+      original_transaction_id: {name: 原始交易, objects: [fund_transaction], required: false}
+      status: {name: 状态, property: status, required: false, default: completed}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 交易详情, property: details, required: false}
+    changes: {create: {objects: [fund_transaction], relations: [associates, references]}}
+    confirmation: 登记账户资金交易。
+  record_bill:
+    name: 生成 ETC 账单
+    description: 根据当前账户相关的消费或调整交易登记一个账单。
+    icon: receipt_text
+    "on": [account]
+    inputs:
+      reference_no: {name: 账单编号, property: reference_no, required: true}
+      billing_period: {name: 账单期间, property: billing_period, required: true}
+      amount: {name: 账单金额, property: amount, required: true}
+      transaction_count: {name: 交易笔数, property: transaction_count, required: false}
+      first_transaction_id: {name: 首笔账单来源交易, objects: [fund_transaction], required: true}
+      status: {name: 状态, property: status, required: false, default: issued}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 账单详情, property: details, required: false}
+    changes: {create: {objects: [bill], relations: [associates, derives]}}
+    confirmation: 生成 ETC 账单。
+  add_transaction_to_bill:
+    name: 追加账单来源交易
+    description: 将另一笔消费、退费、补交或调整资金交易纳入当前账单的来源集合。
+    icon: list_plus
+    "on": [bill]
+    inputs:
+      transaction_id: {name: 来源资金交易, objects: [fund_transaction], required: true}
+    changes: {create: {objects: [], relations: [derives]}}
+    confirmation: 将资金交易追加为账单来源。
+  record_bill_settlement:
+    name: 登记账单结算
+    description: 为当前账单登记客服缴费或银行扣款形成的结算结果。
+    icon: badge_check
+    "on": [bill]
+    inputs:
+      reference_no: {name: 结算流水号, property: reference_no, required: true}
+      amount: {name: 结算金额, property: amount, required: true}
+      occurred_at: {name: 结算时间, property: occurred_at, required: true}
+      result: {name: 结算结果, property: result, required: true}
+      payment_type: {name: 结算方式, property: payment_type, required: false}
+      payment_id: {name: 支付事实, objects: [payment], required: false}
+      transaction_id: {name: 资金交易, objects: [fund_transaction], required: false}
+      status: {name: 状态, property: status, required: false, default: completed}
+      source_system: {name: 来源系统, property: source_system, required: false}
+      source_type: {name: 来源记录类型, property: source_type, required: false}
+      source_id: {name: 来源记录标识, property: source_id, required: false}
+      details: {name: 结算详情, property: details, required: false}
+    changes: {create: {objects: [bill_settlement], relations: [derives, references]}}
+    confirmation: 登记账单结算结果。
 agent:
   instructions:
   - 账户余额变化以 account_entry 为事实依据，不要只根据 account.balance 推断历史。
   - 通行扣款应沿 account_entry -> references -> payment -> references -> charge 追溯。
+  - UserAccount、CardAccount 和 DeductionAccount 不拆成不同对象类型，而由 account.account_kind 区分；账户之间通过 references 表达资金结构。
+  - 储值卡的 CardAccount contains wallet；记账卡的 CardAccount references DeductionAccount，两种账户结构不要混为一谈。
+  - 资金交易必须通过 associates 的角色说明来源账户、目标账户或电子钱包；账单由一笔或多笔 fund_transaction 派生，不能只依赖账单汇总金额解释来源。

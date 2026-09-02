@@ -102,6 +102,26 @@ class HighwaySubdomainTest(unittest.TestCase):
         )
         self.assertEqual("payment:etc_001", result["linked_facts"]["payment"][0]["id"])
         self.assertEqual("charge:etc_001", result["linked_facts"]["charge"][0]["id"])
+        self.assertEqual(
+            ["transaction:consumption_001", "transaction:load_001", "transaction:recharge_001"],
+            [item["id"] for item in result["transactions"]],
+        )
+        self.assertEqual(["wallet:etc_a12345"], [item["id"] for item in result["wallets"]])
+        self.assertEqual(
+            ["account:bank_a12345"],
+            [item["id"] for item in result["related_accounts"]],
+        )
+        self.assertEqual(
+            ["bill:etc_2026_08"], [item["id"] for item in result["bills"]]
+        )
+        self.assertEqual(
+            ["bill_settlement:etc_2026_08"],
+            [item["id"] for item in result["bill_settlements"]],
+        )
+        self.assertEqual(
+            ["operation:account_open_001"],
+            [item["id"] for item in result["service_operations"]],
+        )
 
     def test_settlement_trace_returns_upstream_business_chain(self) -> None:
         runtime = self._copy_runtime("clearing_settlement")
@@ -109,10 +129,40 @@ class HighwaySubdomainTest(unittest.TestCase):
             "get_settlement_trace", settlement_id="settlement:etc_001"
         )
 
+        self.assertEqual(
+            ["clearing:etc_2026_08"],
+            [item["id"] for item in result["clearing_results"]],
+        )
         self.assertEqual(["split:etc_001"], [item["id"] for item in result["split_results"]])
         self.assertEqual(["charge:etc_001"], [item["id"] for item in result["charges"]])
         self.assertEqual(["passage:etc_001"], [item["id"] for item in result["passages"]])
         self.assertEqual(["payment:etc_001"], [item["id"] for item in result["payments"]])
+        self.assertEqual(["invoice:etc_001"], [item["id"] for item in result["invoice_basis"]])
+        self.assertEqual(["allocation:etc_001"], [item["id"] for item in result["allocations"]])
+        self.assertEqual({"amount": 120, "currency": "CNY"}, result["summary"]["due_amount"])
+        self.assertEqual(
+            [{"amount": 120, "currency": "CNY"}],
+            result["summary"]["allocated_amounts"],
+        )
+
+    def test_non_etc_settlement_trace_returns_collection_and_remittance(self) -> None:
+        runtime = self._copy_runtime("clearing_settlement")
+        result = runtime.bindings.call(
+            "get_settlement_trace", settlement_id="settlement:cpc_001"
+        )
+
+        self.assertEqual(
+            ["collection:non_etc_2026_08"],
+            [item["id"] for item in result["collection_summaries"]],
+        )
+        self.assertEqual(
+            ["remit:non_etc_2026_08"],
+            [item["id"] for item in result["remittances"]],
+        )
+        self.assertEqual(
+            {"amount": 131, "currency": "CNY"},
+            result["remittances"][0]["amount"],
+        )
 
     def test_facility_overview_returns_network_and_coordinates(self) -> None:
         runtime = self._copy_runtime("facility_operations")
@@ -134,6 +184,19 @@ class HighwaySubdomainTest(unittest.TestCase):
         self.assertEqual(["rate:sd_2026_08"], result["summary"][0]["rate_version_ids"])
         self.assertEqual(
             ["rate_rule:passenger_1"], result["summary"][0]["rate_rule_ids"]
+        )
+        self.assertEqual(
+            ["path:etc_001"], result["summary"][0]["pricing_path_ids"]
+        )
+        path_nodes = result["charges"][0]["pricing_path_details"][0]["nodes"]
+        self.assertEqual([1, 2, 3, 4, 5], [item["sequence"] for item in path_nodes])
+        self.assertEqual(
+            ["breakdown:etc_001_i1"],
+            result["summary"][0]["charge_breakdown_ids"],
+        )
+        self.assertEqual(
+            ["interval_rate:g20_i1_passenger"],
+            result["summary"][0]["interval_rate_ids"],
         )
 
 

@@ -96,6 +96,122 @@ class ModelActionServiceTest(unittest.TestCase):
         self.actions.execute_action(preview["preview_token"])
         self.assertEqual(1, len(self.workspace_objects("passage")))
 
+    def test_obu_card_pairing_and_issuer_are_explicit_relations(self) -> None:
+        self.insert_object({"id": "medium:obu", "type": "toll_medium", "name": "测试 OBU", "properties": {"medium_kind": "obu", "code": "OBU-TEST", "status": "active"}})
+        self.insert_object({"id": "medium:etc", "type": "toll_medium", "name": "测试 ETC 卡", "properties": {"medium_kind": "etc_card", "code": "ETC-TEST", "status": "active"}})
+        self.insert_object({"id": "party:issuer", "type": "party", "name": "测试发行方", "properties": {"category": "issuer", "status": "active"}})
+
+        paired = self.actions.preview_action(
+            "pair_toll_media", {"card_id": "medium:etc"}, "medium:obu"
+        )
+        self.assertTrue(paired["valid"])
+        self.assertEqual(
+            "paired_card", paired["operations"][0]["record"]["properties"]["role"]
+        )
+        issuer = self.actions.preview_action(
+            "assign_medium_party",
+            {"party_id": "party:issuer", "role": "issuer"},
+            "medium:etc",
+        )
+        self.assertTrue(issuer["valid"])
+        self.assertEqual(
+            ("medium:etc", "party:issuer"),
+            (issuer["operations"][0]["record"]["from"], issuer["operations"][0]["record"]["to"]),
+        )
+
+    def test_account_fund_flow_and_bill_source_actions_are_role_aware(self) -> None:
+        actions = self.child_actions("customer_accounts")
+        self.insert_object({"id": "account:source", "type": "account", "name": "来源账户", "properties": {"account_kind": "user_account", "code": "SOURCE", "status": "active"}})
+        self.insert_object({"id": "account:target", "type": "account", "name": "卡账户", "properties": {"account_kind": "card_account", "code": "TARGET", "status": "active"}})
+
+        wallet = actions.preview_action(
+            "register_wallet",
+            {"name": "测试钱包", "wallet_kind": "card_wallet", "code": "WALLET"},
+            "account:target",
+        )
+        self.assertTrue(wallet["valid"])
+        actions.execute_action(wallet["preview_token"])
+        wallet_id = wallet["operations"][0]["record"]["id"]
+
+        transaction = actions.preview_action(
+            "record_fund_transaction",
+            {
+                "reference_no": "TX-TEST",
+                "transaction_kind": "account_transfer",
+                "amount": {"amount": 100, "currency": "CNY"},
+                "occurred_at": "2026-09-01T10:00:00+08:00",
+                "result": "success",
+                "account_role": "source_account",
+                "related_account_id": "account:target",
+                "related_account_role": "target_account",
+                "wallet_id": wallet_id,
+                "wallet_role": "target_wallet",
+            },
+            "account:source",
+        )
+        self.assertTrue(transaction["valid"])
+        roles = {
+            item["record"]["properties"]["role"]
+            for item in transaction["operations"]
+            if item["action"] == "create_relation" and item["record"]["type"] == "associates"
+        }
+        self.assertEqual({"source_account", "target_account", "target_wallet"}, roles)
+        actions.execute_action(transaction["preview_token"])
+        transaction_id = transaction["operations"][0]["record"]["id"]
+
+        bill = actions.preview_action(
+            "record_bill",
+            {
+                "reference_no": "BILL-TEST",
+                "billing_period": "2026-09",
+                "amount": {"amount": 100, "currency": "CNY"},
+                "first_transaction_id": transaction_id,
+            },
+            "account:target",
+        )
+        self.assertTrue(bill["valid"])
+        source_link = next(
+            item["record"] for item in bill["operations"]
+            if item["action"] == "create_relation" and item["record"]["type"] == "derives"
+        )
+        self.assertEqual(transaction_id, source_link["from"])
+
+    def test_pricing_path_actions_preserve_node_order(self) -> None:
+        actions = self.child_actions("pricing_control")
+        self.insert_object({"id": "passage:path", "type": "passage", "name": "路径通行", "properties": {"reference_no": "PASS-PATH", "mode": "etc"}})
+        self.insert_object({"id": "station:start", "type": "toll_station", "name": "起点站", "properties": {"code": "START"}})
+        self.insert_object({"id": "gantry:next", "type": "toll_gantry", "name": "下一门架", "properties": {"code": "NEXT"}})
+
+        path = actions.preview_action(
+            "record_pricing_path",
+            {
+                "reference_no": "PATH-TEST",
+                "path_kind": "charging",
+                "occurred_at": "2026-09-01T11:00:00+08:00",
+                "result": "matched",
+                "node_id": "station:start",
+                "sequence": 1,
+                "node_mileage": 0,
+            },
+            "passage:path",
+        )
+        self.assertTrue(path["valid"])
+        first_link = next(
+            item["record"] for item in path["operations"]
+            if item["action"] == "create_relation" and item["record"]["type"] == "references"
+        )
+        self.assertEqual(1, first_link["properties"]["sequence"])
+        actions.execute_action(path["preview_token"])
+        path_id = path["operations"][0]["record"]["id"]
+
+        appended = actions.preview_action(
+            "append_pricing_path_node",
+            {"node_id": "gantry:next", "sequence": 2, "mileage": 52},
+            path_id,
+        )
+        self.assertTrue(appended["valid"])
+        self.assertEqual(2, appended["operations"][0]["record"]["properties"]["sequence"])
+
     def workspace_objects(self, object_type: str) -> list[dict]:
         return [item for item in self.runtime.workspace.list_objects() if item.get("type") == object_type]
 

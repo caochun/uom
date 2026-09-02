@@ -55,7 +55,6 @@ actions:
             occurred_at: $input.occurred_at
             result: $input.result
             due_amount: $input.due_amount
-            allocated_amount: $input.allocated_amount
             status: $input.status
             source_system: $input.source_system
             source_type: $input.source_type
@@ -71,6 +70,190 @@ actions:
       - create_relation:
           type: references
           from: $settlement
+          to: $input.recipient_id
+          properties:
+            role: recipient
+            relation_status: confirmed
+  record_clearing_result:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: clearing
+          type: clearing_result
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            amount: $input.amount
+            period: $input.period
+            result: $input.result
+            split_basis: $input.split_basis
+            status: $input.status
+            version: $input.version
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: derives
+          from: $context
+          to: $clearing
+          properties:
+            role: clearing
+            relation_status: confirmed
+      - create_relation:
+          type: associates
+          from: $clearing
+          to: $input.owner_id
+          properties:
+            role: owner
+            relation_status: confirmed
+      - create_relation:
+          type: references
+          from: $clearing
+          to: $input.interval_id
+          properties:
+            role: toll_interval
+            relation_status: confirmed
+  add_split_to_clearing:
+    handler: changeset
+    effects:
+      - create_relation:
+          type: derives
+          from: $input.split_id
+          to: $context
+          properties:
+            role: clearing_source
+            relation_status: confirmed
+  record_invoice_basis:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: invoice
+          type: invoice_basis
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            amount: $input.amount
+            period: $input.period
+            category: $input.category
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: derives
+          from: $context
+          to: $invoice
+          properties:
+            role: invoice_basis
+            relation_status: confirmed
+  record_collection_summary:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: collection
+          type: collection_summary
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            amount: $input.amount
+            period: $input.period
+            category: $input.category
+            transaction_count: $input.transaction_count
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: derives
+          from: $context
+          to: $collection
+          properties:
+            role: collection_summary
+            relation_status: confirmed
+  add_passage_to_collection:
+    handler: changeset
+    effects:
+      - create_relation:
+          type: derives
+          from: $input.passage_id
+          to: $context
+          properties:
+            role: collection_source
+            relation_status: confirmed
+  record_remittance:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: remittance
+          type: remittance
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            amount: $input.amount
+            period: $input.period
+            category: $input.category
+            occurred_at: $input.occurred_at
+            result: $input.result
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: derives
+          from: $context
+          to: $remittance
+          properties:
+            role: remittance
+            relation_status: confirmed
+      - create_relation:
+          type: associates
+          from: $remittance
+          to: $input.payer_id
+          properties:
+            role: payer
+            relation_status: confirmed
+      - create_relation:
+          type: associates
+          from: $remittance
+          to: $input.payee_id
+          properties:
+            role: payee
+            relation_status: confirmed
+  record_allocation:
+    handler: changeset
+    effects:
+      - create_object:
+          ref: allocation
+          type: allocation
+          name: $input.reference_no
+          properties:
+            reference_no: $input.reference_no
+            amount: $input.amount
+            period: $input.period
+            category: $input.category
+            due_amount: $input.due_amount
+            allocated_amount: $input.allocated_amount
+            occurred_at: $input.occurred_at
+            result: $input.result
+            status: $input.status
+            source_system: $input.source_system
+            source_type: $input.source_type
+            source_id: $input.source_id
+            details: $input.details
+      - create_relation:
+          type: derives
+          from: $context
+          to: $allocation
+          properties:
+            role: allocation
+            relation_status: confirmed
+      - create_relation:
+          type: associates
+          from: $allocation
           to: $input.recipient_id
           properties:
             role: recipient

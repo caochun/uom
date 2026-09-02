@@ -45,17 +45,21 @@ class UomDomainModelTest(unittest.TestCase):
             self.domain_model if model is None else model,
         ).validate()
 
-    def test_model_is_small_oag_native_ontology(self) -> None:
+    def test_model_is_compact_oag_native_ontology(self) -> None:
         self.assertEqual("oag.ontology.v1", self.public_model["schema"])
-        self.assertEqual(21, len(self.public_model["objects"]))
+        self.assertEqual(36, len(self.public_model["objects"]))
         self.assertEqual(5, len(self.public_model["relations"]))
         self.assertEqual(0, len(self.public_model["actions"]))
-        self.assertEqual(8, len(self.passage_public_model["actions"]))
+        self.assertEqual(12, len(self.passage_public_model["actions"]))
         self.assertIn("get_passage_economics", self.public_model["functions"])
         self.assertIn("get_passage_fare_basis", self.public_model["functions"])
         self.assertIn("rate_rule", self.public_model["objects"])
         self.assertNotIn("toll_transaction", self.public_model["objects"])
-        self.assertNotIn("clearing_result", self.public_model["objects"])
+        self.assertIn("clearing_result", self.public_model["objects"])
+        self.assertIn("invoice_basis", self.public_model["objects"])
+        self.assertIn("fund_transaction", self.public_model["objects"])
+        self.assertIn("charge_breakdown", self.public_model["objects"])
+        self.assertIn("wallet", self.public_model["objects"])
 
     def test_seed_covers_every_model_type_and_is_valid(self) -> None:
         result = self.validate()
@@ -86,8 +90,66 @@ class UomDomainModelTest(unittest.TestCase):
         self.assertIn(("passage:etc_001", "charge:etc_001"), edges)
         self.assertIn(("charge:etc_001", "split:etc_001"), edges)
         self.assertIn(("charge:etc_001", "split:etc_external"), edges)
-        self.assertIn(("split:etc_001", "settlement:etc_001"), edges)
-        self.assertIn(("split:etc_external", "settlement:etc_external"), edges)
+        self.assertIn(("split:etc_001", "clearing:etc_2026_08"), edges)
+        self.assertIn(("clearing:etc_2026_08", "settlement:etc_001"), edges)
+        self.assertIn(("settlement:etc_001", "allocation:etc_001"), edges)
+        self.assertIn(
+            ("split:etc_external", "clearing:etc_external_2026_08"), edges
+        )
+        self.assertIn(
+            ("clearing:etc_external_2026_08", "settlement:etc_external"), edges
+        )
+
+    def test_medium_account_and_wallet_structure_is_explicit(self) -> None:
+        edges = {
+            (item["from"], item["to"], item.get("properties", {}).get("role"))
+            for item in self.relations
+        }
+        self.assertIn(
+            ("medium:obu_a12345", "medium:etc_a12345", "paired_card"), edges
+        )
+        self.assertIn(
+            ("medium:etc_a12345", "party:sd_issuer", "issuer"), edges
+        )
+        self.assertIn(
+            ("account:etc_a12345", "account:bank_a12345", "deduction_account"),
+            edges,
+        )
+        self.assertIn(
+            ("account:etc_a12345", "wallet:etc_a12345", None), edges
+        )
+        self.assertIn(
+            ("transaction:recharge_001", "account:user_a12345", "source_account"),
+            edges,
+        )
+        self.assertIn(
+            ("transaction:recharge_001", "account:etc_a12345", "target_account"),
+            edges,
+        )
+
+    def test_paths_and_aggregates_keep_all_ordered_sources(self) -> None:
+        path_links = [
+            item for item in self.relations
+            if item["type"] == "references"
+            and item["from"] == "path:etc_001"
+            and item.get("properties", {}).get("role") == "path_node"
+        ]
+        self.assertEqual(
+            [1, 2, 3, 4, 5],
+            sorted(item["properties"]["sequence"] for item in path_links),
+        )
+        clearing_sources = {
+            item["from"] for item in self.relations
+            if item["type"] == "derives"
+            and item["to"] == "clearing:cpc_2026_08"
+        }
+        self.assertEqual({"split:cpc_001", "split:cpc_002"}, clearing_sources)
+        collection_sources = {
+            item["from"] for item in self.relations
+            if item["type"] == "derives"
+            and item["to"] == "collection:non_etc_2026_08"
+        }
+        self.assertEqual({"passage:cpc_001", "passage:cpc_002"}, collection_sources)
 
     def test_spatial_coordinates_are_complete_and_in_range(self) -> None:
         spatial = [item for item in self.objects if item["type"] in {"toll_road", "section", "toll_interval", "toll_station", "toll_gantry", "toll_lane"}]
