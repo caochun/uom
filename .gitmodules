@@ -1,3 +1,6 @@
 [submodule "oag-agent"]
 	path = oag-agent
 	url = git@github.com:caochun/oag-agent.git
+[submodule "uom-forge"]
+	path = uom-forge
+	url = git@github.com:caochun/uom-forge.git
